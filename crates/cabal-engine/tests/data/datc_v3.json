@@ -40,7 +40,7 @@
    "orders": {
     "ENG: F nth convoys yor -> yor": null,
     "ENG: A yor -> yor": "Fails",
-    "ENG: A lvp supports A yor -> yor": "Succeeds",
+    "ENG: A lvp supports A yor -> yor": "Fails",
     "GER: F lon -> yor": "Succeeds",
     "GER: A wal supports F lon -> yor": "Succeeds"
    }
@@ -125,7 +125,7 @@
    "url": "https://webdiplomacy.net/doc/DATC_v3_0.html#6.B.2",
    "phase": "Main",
    "orders": {
-    "FRA: F gas -> spa": "Fails"
+    "FRA: F gas -> spa": "Succeeds"
    }
   },
   {
@@ -173,8 +173,8 @@
    "url": "https://webdiplomacy.net/doc/DATC_v3_0.html#6.B.7",
    "phase": "Main",
    "orders": {
-    "FRA: F por supports F mao -> spa": null,
-    "FRA: F mao -> spa(nc)": "Succeeds",
+    "FRA: F por supports F mao -> spa": "Succeeds",
+    "FRA: F mao -> spa(nc)": "Fails",
     "ITA: F lyo supports F wes -> spa(sc)": null,
     "ITA: F wes -> spa(sc)": "Fails"
    }
@@ -184,8 +184,8 @@
    "url": "https://webdiplomacy.net/doc/DATC_v3_0.html#6.B.8",
    "phase": "Main",
    "orders": {
-    "FRA: F por supports F gas -> spa": null,
-    "FRA: F gas -> spa(nc)": "Succeeds",
+    "FRA: F por supports F gas -> spa": "Succeeds",
+    "FRA: F gas -> spa(nc)": "Fails",
     "ITA: F lyo supports F wes -> spa(sc)": null,
     "ITA: F wes -> spa(sc)": "Fails"
    }
@@ -253,8 +253,8 @@
    "url": "https://webdiplomacy.net/doc/DATC_v3_0.html#6.B.15",
    "phase": "Main",
    "orders": {
-    "FRA: F por supports F mao -> spa": null,
-    "ENG: F mao -> spa(nc)": "Succeeds",
+    "FRA: F por supports F mao -> spa": "Succeeds",
+    "ENG: F mao -> spa(nc)": "Fails",
     "ITA: F lyo supports F wes -> spa(sc)": null,
     "ITA: F wes -> spa(sc)": "Fails"
    }
@@ -1439,8 +1439,8 @@
    "phase": "Main",
    "orders": {
     "ENG: F nwy Supports F nth -> ska": null,
-    "ENG: F nth -> ska": "Fails",
-    "RUS: A swe -> nwy": "Succeeds",
+    "ENG: F nth -> ska": "Succeeds",
+    "RUS: A swe -> nwy": "Fails",
     "RUS: F ska convoys swe -> nwy": null,
     "RUS: F bar Supports A swe -> nwy": null
    }
