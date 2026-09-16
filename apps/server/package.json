@@ -1,0 +1,29 @@
+{
+  "name": "@cabal/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cabal API worker and GameRoom Durable Object",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --deny-warnings src test",
+    "test": "vitest run --passWithNoTests",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@cabal/engine": "workspace:*",
+    "@cabal/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20260915.1",
+    "oxlint": "^1.83.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.132.0"
+  }
+}

@@ -1,0 +1,20 @@
+name: Feature
+description: Propose a mechanic, variant or improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+    validations:
+      required: true
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Layer
+      options: [engine (rules), server, web, agents, platform, docs]
+  - type: textarea
+    id: rules
+    attributes:
+      label: Does it change adjudication?
+      description: If yes, cite DATC and propose an ADR.

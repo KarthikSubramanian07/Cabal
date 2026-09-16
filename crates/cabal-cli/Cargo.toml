@@ -1,0 +1,17 @@
+[package]
+name = "cabal-cli"
+description = "Command line tools for the Cabal engine: datc, adjudicate, explain, bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "cabal"
+path = "src/main.rs"
+
+[dependencies]
+cabal-engine = { path = "../cabal-engine" }
+serde_json.workspace = true
