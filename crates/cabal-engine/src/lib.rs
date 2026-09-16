@@ -5,6 +5,7 @@
 
 pub mod geo;
 pub mod order;
+pub mod parse;
 pub mod rulebook;
 pub mod state;
 
