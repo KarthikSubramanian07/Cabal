@@ -18,7 +18,7 @@ env:
 
 jobs:
   rust:
-    name: Rust: fmt, clippy, tests, DATC
+    name: "Rust: fmt, clippy, tests, DATC"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -61,7 +61,7 @@ jobs:
           retention-days: 7
 
   node:
-    name: Node: typecheck, lint, unit, workerd
+    name: "Node: typecheck, lint, unit, workerd"
     runs-on: ubuntu-latest
     needs: wasm
     steps:
