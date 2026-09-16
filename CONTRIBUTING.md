@@ -33,4 +33,4 @@ pnpm check
 
 ## Issue etiquette
 
-Phase 1 work is tracked as seven issues, one per engineer. Each issue states scope, non-goals, the interfaces it must honour and its test plan. Claim it by assigning yourself, keep the checklist updated, and open PRs early as drafts.
+Phase 1 work is tracked as seven issues, one per engineer, grouped into three subteams (Adjudicators, Couriers, Cartographers). Start with [docs/ONBOARDING.md](docs/ONBOARDING.md). Each issue states scope, non-goals, the interfaces it must honour and its test plan. Claim it by assigning yourself, keep the checklist updated, and open PRs early as drafts.
