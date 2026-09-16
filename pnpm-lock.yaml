@@ -23,7 +23,7 @@ importers:
     devDependencies:
       '@cloudflare/vitest-pool-workers':
         specifier: ^0.22.0
-        version: 0.22.0(@cloudflare/workers-types@5.20260915.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(vite@8.3.0(esbuild@0.28.2)))
+        version: 0.22.0(@cloudflare/workers-types@5.20260915.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@24.13.5)(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2)))
       '@cloudflare/workers-types':
         specifier: ^5.20260915.1
         version: 5.20260915.1
@@ -35,10 +35,10 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(vite@8.3.0(esbuild@0.28.2))
+        version: 4.1.11(@types/node@24.13.5)(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2))
       wrangler:
         specifier: ^4.132.0
-        version: 4.132.0(@cloudflare/workers-types@5.20260915.1)
+        version: 4.132.0(@cloudflare/workers-types@5.20260915.1)(@types/node@24.13.5)
 
   apps/web:
     dependencies:
@@ -58,6 +58,9 @@ importers:
       '@playwright/test':
         specifier: ^1.63.0
         version: 1.63.0
+      '@types/node':
+        specifier: ^24.6.0
+        version: 24.13.5
       '@types/react':
         specifier: ^19.3.0
         version: 19.3.0
@@ -66,7 +69,7 @@ importers:
         version: 19.3.0(@types/react@19.3.0)
       '@vitejs/plugin-react':
         specifier: ^6.1.1
-        version: 6.1.1(vite@8.3.0(esbuild@0.28.2))
+        version: 6.1.1(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2))
       oxlint:
         specifier: ^1.83.0
         version: 1.83.0
@@ -75,13 +78,13 @@ importers:
         version: 5.9.3
       vite:
         specifier: ^8.3.0
-        version: 8.3.0(esbuild@0.28.2)
+        version: 8.3.0(@types/node@24.13.5)(esbuild@0.28.2)
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(vite@8.3.0(esbuild@0.28.2))
+        version: 4.1.11(@types/node@24.13.5)(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2))
       wrangler:
         specifier: ^4.132.0
-        version: 4.132.0(@cloudflare/workers-types@5.20260915.1)
+        version: 4.132.0(@cloudflare/workers-types@5.20260915.1)(@types/node@24.13.5)
 
   packages/agents:
     devDependencies:
@@ -93,7 +96,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(vite@8.3.0(esbuild@0.28.2))
+        version: 4.1.11(@types/node@24.13.5)(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2))
 
   packages/engine:
     devDependencies:
@@ -105,7 +108,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(vite@8.3.0(esbuild@0.28.2))
+        version: 4.1.11(@types/node@24.13.5)(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2))
 
   packages/protocol:
     dependencies:
@@ -121,7 +124,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(vite@8.3.0(esbuild@0.28.2))
+        version: 4.1.11(@types/node@24.13.5)(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2))
 
 packages:
 
@@ -1068,6 +1071,9 @@ packages:
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
 
+  '@types/node@24.13.5':
+    resolution: {integrity: sha512-TXyindR+lBr22aJIdMQzCFHPHR6cR4js838mRDCSz5hOKWZvZwsXSSiXDmjRj4iJmgl+sR9O+1mkoVBSMadNug==}
+
   '@types/react-dom@19.3.0':
     resolution: {integrity: sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q==}
     peerDependencies:
@@ -1395,6 +1401,9 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
+  undici-types@7.18.2:
+    resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
+
   undici@7.29.0:
     resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
     engines: {node: '>=20.18.1'}
@@ -1561,14 +1570,14 @@ snapshots:
     optionalDependencies:
       workerd: 1.20260915.1
 
-  '@cloudflare/vitest-pool-workers@0.22.0(@cloudflare/workers-types@5.20260915.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(vite@8.3.0(esbuild@0.28.2)))':
+  '@cloudflare/vitest-pool-workers@0.22.0(@cloudflare/workers-types@5.20260915.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@24.13.5)(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2)))':
     dependencies:
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
       cjs-module-lexer: 1.2.3
       esbuild: 0.28.1
       miniflare: 5.20260815.0-alpha
-      vitest: 4.1.11(vite@8.3.0(esbuild@0.28.2))
+      vitest: 4.1.11(@types/node@24.13.5)(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2))
       wrangler: 4.124.0(@cloudflare/workers-types@5.20260915.1)
       zod: 4.4.3
     transitivePeerDependencies:
@@ -2129,6 +2138,10 @@ snapshots:
 
   '@types/estree@1.0.9': {}
 
+  '@types/node@24.13.5':
+    dependencies:
+      undici-types: 7.18.2
+
   '@types/react-dom@19.3.0(@types/react@19.3.0)':
     dependencies:
       '@types/react': 19.3.0
@@ -2137,10 +2150,10 @@ snapshots:
     dependencies:
       csstype: 3.2.3
 
-  '@vitejs/plugin-react@6.1.1(vite@8.3.0(esbuild@0.28.2))':
+  '@vitejs/plugin-react@6.1.1(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
-      vite: 8.3.0(esbuild@0.28.2)
+      vite: 8.3.0(@types/node@24.13.5)(esbuild@0.28.2)
 
   '@vitest/expect@4.1.11':
     dependencies:
@@ -2151,13 +2164,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.1
 
-  '@vitest/mocker@4.1.11(vite@8.3.0(esbuild@0.28.2))':
+  '@vitest/mocker@4.1.11(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2))':
     dependencies:
       '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.3.0(esbuild@0.28.2)
+      vite: 8.3.0(@types/node@24.13.5)(esbuild@0.28.2)
 
   '@vitest/pretty-format@4.1.11':
     dependencies:
@@ -2342,10 +2355,10 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  miniflare@5.20260915.0-alpha:
+  miniflare@5.20260915.0-alpha(@types/node@24.13.5):
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
-      sharp: 0.35.4
+      sharp: 0.35.4(@types/node@24.13.5)
       undici: 7.29.0
       workerd: 1.20260915.1
       ws: 8.21.0
@@ -2465,7 +2478,7 @@ snapshots:
       '@img/sharp-win32-ia32': 0.35.2
       '@img/sharp-win32-x64': 0.35.2
 
-  sharp@0.35.4:
+  sharp@0.35.4(@types/node@24.13.5):
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
@@ -2496,6 +2509,7 @@ snapshots:
       '@img/sharp-win32-arm64': 0.35.4
       '@img/sharp-win32-ia32': 0.35.4
       '@img/sharp-win32-x64': 0.35.4
+      '@types/node': 24.13.5
 
   siginfo@2.0.0: {}
 
@@ -2523,13 +2537,15 @@ snapshots:
 
   typescript@5.9.3: {}
 
+  undici-types@7.18.2: {}
+
   undici@7.29.0: {}
 
   unenv@2.0.0-rc.24:
     dependencies:
       pathe: 2.0.3
 
-  vite@8.3.0(esbuild@0.28.2):
+  vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
@@ -2537,13 +2553,14 @@ snapshots:
       rolldown: 1.2.8
       tinyglobby: 0.2.17
     optionalDependencies:
+      '@types/node': 24.13.5
       esbuild: 0.28.2
       fsevents: 2.3.3
 
-  vitest@4.1.11(vite@8.3.0(esbuild@0.28.2)):
+  vitest@4.1.11(@types/node@24.13.5)(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2)):
     dependencies:
       '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(vite@8.3.0(esbuild@0.28.2))
+      '@vitest/mocker': 4.1.11(vite@8.3.0(@types/node@24.13.5)(esbuild@0.28.2))
       '@vitest/pretty-format': 4.1.11
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
@@ -2560,8 +2577,10 @@ snapshots:
       tinyexec: 1.3.1
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.1
-      vite: 8.3.0(esbuild@0.28.2)
+      vite: 8.3.0(@types/node@24.13.5)(esbuild@0.28.2)
       why-is-node-running: 2.3.0
+    optionalDependencies:
+      '@types/node': 24.13.5
     transitivePeerDependencies:
       - msw
 
@@ -2603,13 +2622,13 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  wrangler@4.132.0(@cloudflare/workers-types@5.20260915.1):
+  wrangler@4.132.0(@cloudflare/workers-types@5.20260915.1)(@types/node@24.13.5):
     dependencies:
       '@cloudflare/kv-asset-handler': 0.5.0
       '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260915.1)
       blake3-wasm: 2.1.5
       esbuild: 0.28.1
-      miniflare: 5.20260915.0-alpha
+      miniflare: 5.20260915.0-alpha(@types/node@24.13.5)
       path-to-regexp: 6.3.0
       unenv: 2.0.0-rc.24
       workerd: 1.20260915.1
