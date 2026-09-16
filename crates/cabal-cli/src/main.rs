@@ -106,50 +106,7 @@ fn explain(lines: &[String]) -> ExitCode {
 }
 
 fn describe(map: &Map, out: &OrderOutcome) -> String {
-    use cabal_engine::outcome::{ConvoyOutcome, HoldOutcome, MoveOutcome, SupportOutcome};
-    let name = |p: cabal_engine::ProvinceId| map.province(p).name.to_ascii_uppercase();
-    match out {
-        OrderOutcome::Illegal {
-            reason,
-            dislodged_by,
-        } => match dislodged_by {
-            Some(by) => format!("illegal ({reason:?}), holds, dislodged by {}", name(*by)),
-            None => format!("illegal ({reason:?}), holds"),
-        },
-        OrderOutcome::Hold(HoldOutcome::Holds) => "holds".into(),
-        OrderOutcome::Hold(HoldOutcome::Dislodged { by }) => format!("dislodged by {}", name(*by)),
-        OrderOutcome::Move(MoveOutcome::Succeeds) => "moves".into(),
-        OrderOutcome::Move(MoveOutcome::NoPath) => "no convoy path".into(),
-        OrderOutcome::Move(MoveOutcome::FriendlyFire) => "cannot dislodge own unit".into(),
-        OrderOutcome::Move(MoveOutcome::LostHeadToHead { opponent }) => {
-            format!("lost head-to-head with {}", name(*opponent))
-        }
-        OrderOutcome::Move(MoveOutcome::Repelled { occupant }) => {
-            format!("repelled by {}", name(*occupant))
-        }
-        OrderOutcome::Move(MoveOutcome::Bounced { by }) => {
-            format!(
-                "bounced with {}",
-                by.iter().map(|&p| name(p)).collect::<Vec<_>>().join(", ")
-            )
-        }
-        OrderOutcome::Support(SupportOutcome::Succeeds) => "support given".into(),
-        OrderOutcome::Support(SupportOutcome::Cut { by }) => {
-            format!("support cut by {}", name(*by))
-        }
-        OrderOutcome::Support(SupportOutcome::Dislodged { by }) => {
-            format!("supporter dislodged by {}", name(*by))
-        }
-        OrderOutcome::Support(SupportOutcome::Void) => "support void (no matching order)".into(),
-        OrderOutcome::Convoy(ConvoyOutcome::Succeeds) => "convoys".into(),
-        OrderOutcome::Convoy(ConvoyOutcome::Dislodged { by }) => {
-            format!("convoy dislodged by {}", name(*by))
-        }
-        OrderOutcome::Convoy(ConvoyOutcome::Paradox) => {
-            "convoy fails (paradox, Szykman rule)".into()
-        }
-        OrderOutcome::Convoy(ConvoyOutcome::Void) => "convoy void (no matching move)".into(),
-    }
+    cabal_engine::text::describe_outcome(map, out)
 }
 
 fn legal(args: &[String]) -> ExitCode {

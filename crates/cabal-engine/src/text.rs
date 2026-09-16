@@ -1,9 +1,10 @@
 //! Canonical MILA text for orders and units.
 
-use crate::geo::{Map, Region, UnitKind};
+use crate::geo::{Map, ProvinceId, Region, UnitKind};
 use crate::order::{
     AdjustCommand, AdjustOrder, Command, Order, RetreatCommand, RetreatOrder, Unit,
 };
+use crate::outcome::{ConvoyOutcome, HoldOutcome, MoveOutcome, OrderOutcome, SupportOutcome};
 use crate::state::Position;
 
 /// `A PAR` or `F STP/NC`.
@@ -94,5 +95,70 @@ pub fn adjust_text(map: &Map, position: &Position, order: &AdjustOrder) -> Strin
             format!("{k} {} D", map.region_name(Region::land(unit)))
         }
         AdjustCommand::Waive => "WAIVE".to_string(),
+    }
+}
+
+/// One line, human readable explanation of a movement outcome.
+pub fn describe_outcome(map: &Map, out: &OrderOutcome) -> String {
+    let name = |p: ProvinceId| map.province(p).name.to_ascii_uppercase();
+    match out {
+        OrderOutcome::Illegal {
+            reason,
+            dislodged_by,
+        } => match dislodged_by {
+            Some(by) => format!("illegal ({reason:?}), holds, dislodged by {}", name(*by)),
+            None => format!("illegal ({reason:?}), holds"),
+        },
+        OrderOutcome::Hold(HoldOutcome::Holds) => "holds".into(),
+        OrderOutcome::Hold(HoldOutcome::Dislodged { by }) => format!("dislodged by {}", name(*by)),
+        OrderOutcome::Move(MoveOutcome::Succeeds) => "moves".into(),
+        OrderOutcome::Move(MoveOutcome::NoPath) => "no convoy path".into(),
+        OrderOutcome::Move(MoveOutcome::FriendlyFire) => "cannot dislodge own unit".into(),
+        OrderOutcome::Move(MoveOutcome::LostHeadToHead { opponent }) => {
+            format!("lost head-to-head with {}", name(*opponent))
+        }
+        OrderOutcome::Move(MoveOutcome::Repelled { occupant }) => {
+            format!("repelled by {}", name(*occupant))
+        }
+        OrderOutcome::Move(MoveOutcome::Bounced { by }) => format!(
+            "bounced with {}",
+            by.iter().map(|&p| name(p)).collect::<Vec<_>>().join(", ")
+        ),
+        OrderOutcome::Support(SupportOutcome::Succeeds) => "support given".into(),
+        OrderOutcome::Support(SupportOutcome::Cut { by }) => {
+            format!("support cut by {}", name(*by))
+        }
+        OrderOutcome::Support(SupportOutcome::Dislodged { by }) => {
+            format!("supporter dislodged by {}", name(*by))
+        }
+        OrderOutcome::Support(SupportOutcome::Void) => "support void (no matching order)".into(),
+        OrderOutcome::Convoy(ConvoyOutcome::Succeeds) => "convoys".into(),
+        OrderOutcome::Convoy(ConvoyOutcome::Dislodged { by }) => {
+            format!("convoy dislodged by {}", name(*by))
+        }
+        OrderOutcome::Convoy(ConvoyOutcome::Paradox) => {
+            "convoy fails (paradox, Szykman rule)".into()
+        }
+        OrderOutcome::Convoy(ConvoyOutcome::Void) => "convoy void (no matching move)".into(),
+    }
+}
+
+/// Short machine code for an outcome (`ok`, `bounce`, `cut`, `void`, `dislodged`, `no_path`, `illegal`, `paradox`).
+pub fn outcome_code(out: &OrderOutcome) -> &'static str {
+    match out {
+        OrderOutcome::Illegal { .. } => "illegal",
+        OrderOutcome::Hold(HoldOutcome::Holds) => "ok",
+        OrderOutcome::Hold(HoldOutcome::Dislodged { .. }) => "dislodged",
+        OrderOutcome::Move(MoveOutcome::Succeeds) => "ok",
+        OrderOutcome::Move(MoveOutcome::NoPath) => "no_path",
+        OrderOutcome::Move(_) => "bounce",
+        OrderOutcome::Support(SupportOutcome::Succeeds) => "ok",
+        OrderOutcome::Support(SupportOutcome::Cut { .. }) => "cut",
+        OrderOutcome::Support(SupportOutcome::Dislodged { .. }) => "dislodged",
+        OrderOutcome::Support(SupportOutcome::Void) => "void",
+        OrderOutcome::Convoy(ConvoyOutcome::Succeeds) => "ok",
+        OrderOutcome::Convoy(ConvoyOutcome::Dislodged { .. }) => "dislodged",
+        OrderOutcome::Convoy(ConvoyOutcome::Paradox) => "paradox",
+        OrderOutcome::Convoy(ConvoyOutcome::Void) => "void",
     }
 }
