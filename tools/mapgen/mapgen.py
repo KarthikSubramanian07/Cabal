@@ -298,17 +298,25 @@ def anchors(frame: Frame, geoms: dict, kinds: dict):
         if code in P.SUPPLY_CENTERS:
             sc = inside_point(body, frame.point(*P.SUPPLY_CENTERS[code]), 5.0)
             entry["sc"] = [round(sc.x, 1), round(sc.y, 1)]
-            if unit.distance(sc) < 16:
-                # push the unit away from the centre dot along the dot -> centre direction
-                dx, dy = center.x - sc.x, center.y - sc.y
-                norm = math.hypot(dx, dy) or 1.0
-                target = Point(sc.x + dx / norm * 18, sc.y + dy / norm * 18)
-                unit = inside_point(body, target, 7.0)
+            # units stand beside their supply centre, a step toward the middle of the province,
+            # so a fleet in Sevastopol sits by Sevastopol rather than out on the Volga
+            dx, dy = center.x - sc.x, center.y - sc.y
+            norm = math.hypot(dx, dy) or 1.0
+            step = min(20.0, norm) if norm >= 16 else 18.0
+            target = Point(sc.x + dx / norm * step, sc.y + dy / norm * step)
+            unit = inside_point(body, target, 7.0)
         entry["unit"] = [round(unit.x, 1), round(unit.y, 1)]
-        # the label sits under the unit when there is room
-        below = Point(unit.x, unit.y + 15)
-        if kinds.get(code) != "sea" and body.buffer(-3).contains(below):
-            entry["label"] = [round(below.x, 1), round(below.y, 1)]
+        # the label stays in the middle of the province unless a unit or centre dot is in the way;
+        # then it moves under the unit, or failing that, over it
+        sc_pt = Point(entry["sc"]) if "sc" in entry else None
+        crowded = center.distance(unit) < 16 or (sc_pt is not None and center.distance(sc_pt) < 12)
+        if crowded:
+            for dy in (16, -16, 22, -22):
+                spot = Point(unit.x, unit.y + dy)
+                clear_of_sc = sc_pt is None or spot.distance(sc_pt) >= 10
+                if body.buffer(-3).contains(spot) and clear_of_sc:
+                    entry["label"] = [round(spot.x, 1), round(spot.y, 1)]
+                    break
         result[code] = entry
     return result
 
