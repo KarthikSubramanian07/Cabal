@@ -3,6 +3,7 @@
 //! No I/O, no randomness, no host dependencies: the same crate runs natively
 //! and in WebAssembly.
 
+pub mod adjudicate;
 pub mod geo;
 pub mod order;
 pub mod outcome;
@@ -12,6 +13,7 @@ pub mod rulebook;
 pub mod state;
 pub mod text;
 
+pub use adjudicate::movement::{MovementResult, resolve_movement};
 pub use geo::{Coast, Map, Power, ProvinceId, Region, UnitKind};
 pub use order::{AdjustCommand, AdjustOrder, Command, Order, RetreatCommand, RetreatOrder, Unit};
 pub use outcome::OrderOutcome;

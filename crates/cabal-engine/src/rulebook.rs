@@ -38,6 +38,8 @@ pub struct Rulebook {
     pub edition: Edition,
     pub convoy_intent: ConvoyIntent,
     pub disband_distance: DisbandDistance,
+    /// 1971 only: an army whose (unwanted) convoy is disrupted takes the land route instead (DATC 6.G.4).
+    pub convoy_fallback: bool,
     /// Variant flag: build in any owned supply centre.
     pub build_anywhere: bool,
     /// Supply centres needed for a solo victory.
@@ -48,6 +50,7 @@ impl Rulebook {
     pub const fn edition_2023() -> Self {
         Rulebook {
             edition: Edition::E2023,
+            convoy_fallback: false,
             convoy_intent: ConvoyIntent::SamePowerFleet,
             disband_distance: DisbandDistance::OwnedCenters,
             build_anywhere: false,
@@ -58,6 +61,7 @@ impl Rulebook {
     pub const fn edition_1982() -> Self {
         Rulebook {
             edition: Edition::E1982,
+            convoy_fallback: false,
             convoy_intent: ConvoyIntent::SamePowerFleet,
             disband_distance: DisbandDistance::HomeCenters,
             build_anywhere: false,
@@ -68,6 +72,7 @@ impl Rulebook {
     pub const fn edition_1971() -> Self {
         Rulebook {
             edition: Edition::E1971,
+            convoy_fallback: true,
             convoy_intent: ConvoyIntent::AnyFleet,
             disband_distance: DisbandDistance::HomeCenters,
             build_anywhere: false,
@@ -78,6 +83,7 @@ impl Rulebook {
     pub const fn dptg() -> Self {
         Rulebook {
             edition: Edition::Dptg,
+            convoy_fallback: false,
             convoy_intent: ConvoyIntent::Explicit,
             disband_distance: DisbandDistance::OwnedCenters,
             build_anywhere: false,
