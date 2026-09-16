@@ -9,6 +9,7 @@ pub mod outcome;
 pub mod parse;
 pub mod rulebook;
 pub mod state;
+pub mod text;
 
 pub use geo::{Coast, Map, Power, ProvinceId, Region, UnitKind};
 pub use order::{AdjustCommand, AdjustOrder, Command, Order, RetreatCommand, RetreatOrder, Unit};
