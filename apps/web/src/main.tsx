@@ -1,9 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-
-function App() {
-  return <main>Cabal scaffold</main>;
-}
+import { App } from "./App.jsx";
+import "./styles.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
