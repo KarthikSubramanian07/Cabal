@@ -1,6 +1,6 @@
 <div align="center">
 
-# Cabal
+<img src="docs/brand/wordmark.svg" alt="CABAL" width="360" />
 
 **Diplomacy with receipts.** Seven powers. One board. Every promise can be sealed, verified, and held against you.
 
@@ -20,12 +20,12 @@
 </div>
 
 <p align="center">
-  <img src="docs/images/sandbox-desktop.png" width="900" alt="The Cabal war room: a dark metro-style map of Europe with units, supply rings and a receipts panel" />
+  <img src="docs/images/board-orders.png" width="900" alt="The classic Diplomacy board in Cabal with Spring 1901 orders drawn as arrows and the order sidebar" />
 </p>
 
 ---
 
-Diplomacy is the greatest negotiation game ever designed and every online version of it feels like a forum from 2006. Cabal keeps the rules exactly (a Rust adjudicator that passes the full Diplomacy Adjudicator Test Cases) and rebuilds everything around them: a war-room map you can order from with two taps, press with cryptographic pledges, a trust ledger that follows you between games, secret cabals, vendettas, ghosts who keep talking after they die, and AI players who negotiate through the same protocol you do.
+Diplomacy is the greatest negotiation game ever designed and every online version of it feels like a forum from 2006. Cabal keeps the rules exactly (a Rust adjudicator that passes the full Diplomacy Adjudicator Test Cases) and rebuilds everything around them: the classic board you can order from with two clicks, press with cryptographic pledges, a trust ledger that follows you between games, secret cabals, vendettas, ghosts who keep talking after they die, and AI players who negotiate through the same protocol you do.
 
 ## What makes it Cabal
 
@@ -40,6 +40,18 @@ Diplomacy is the greatest negotiation game ever designed and every online versio
 | **No dead games** | Sealed default orders, ready-to-advance deadlines, substitutes and AI takeover after two missed phases. |
 
 None of these change the rules. They are layers that read the adjudication result. See [ADR 0004](docs/adr/0004-cabal-layer-above-adjudication.md).
+
+## The board
+
+The board is the one Diplomacy players know, drawn fresh from real geography. `tools/mapgen` assigns every Natural Earth region (public domain) to one of the 75 classic provinces, dissolves and simplifies them with shared borders intact, cuts the seas along the printed board's straight lines, and checks every drawn border against the engine's adjacency table. Nothing is traced from anyone else's artwork, so the map ships under MIT with the rest of the code.
+
+| Orders, then receipts | On a phone |
+|---|---|
+| <img src="docs/images/board-receipts.png" width="560" alt="Spring 1901 results: bounces marked with a vermilion cross and the reason for every order" /> | <img src="docs/images/board-phone.png" width="200" alt="The board on a phone with pinch zoom controls" /> |
+
+Ordering works the way Backstabbr players expect. Click a unit, then where it goes. Click it twice to hold. Press <kbd>S</kbd> to support or <kbd>C</kbd> to convoy, and the buttons under the map do the same on touch screens. Only legal orders are ever offered, fleets moving to Spain, Bulgaria or St Petersburg get a coast picker, and every phase can be replayed, undone, exported and imported as a MILA saved game.
+
+See [tools/mapgen/README.md](tools/mapgen/README.md) for how the map is built and [docs/BRAND.md](docs/BRAND.md) for the palette and wordmark.
 
 ## Architecture
 
@@ -111,7 +123,8 @@ cargo run -p cabal-cli -- explain "ENG: F NTH - HOL" "ENG: A BEL S F NTH - HOL" 
 | `cabal-wasm`, `@cabal/engine` | one 201 KB gzipped module for browser and Workers, generated TypeScript types |
 | `@cabal/protocol` | zod schemas for every frame, settings, pledges and scoring |
 | `apps/server` | GameRoom Durable Object: seats, deadlines, orders, press, sealed pledges with receipts, replay export |
-| `apps/web` | the war-room sandbox: tap-to-order from the legal list, receipts with reasons, phone and desktop |
+| `apps/web` | the classic board sandbox: click-to-order from the legal list, coast picker, receipts with reasons, phase replay, undo, MILA import and export, phone and desktop |
+| `tools/mapgen` | the board itself, generated from Natural Earth and checked against the engine's borders |
 | `@cabal/agents` | Claude players with narrative prompts, structured decisions and legal order validation |
 
 ## Repository
@@ -125,7 +138,8 @@ packages/protocol     @cabal/protocol zod schemas for the WebSocket and HTTP pro
 packages/agents       @cabal/agents   Claude powered player harness
 apps/web              @cabal/web      Vite + React 19 on Cloudflare Pages
 apps/server           @cabal/server   Worker + GameRoom Durable Object
-docs                  plan, architecture, rules, protocol, ADRs
+tools/mapgen          board generator: Natural Earth to board.json
+docs                  plan, architecture, rules, protocol, brand, ADRs
 ```
 
 ## Quickstart
@@ -142,7 +156,7 @@ cargo test --workspace && pnpm check
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 | Foundation: DATC complete engine, wasm, protocol, GameRoom server, war-room sandbox, Claude players, docs, CI | done |
+| 0 | Foundation: DATC complete engine, wasm, protocol, GameRoom server, classic board sandbox, Claude players, docs, CI | done |
 | 1 | A complete ranked game end to end on playcabal.pages.dev: seven issues, one per engineer ([#6](https://github.com/KarthikSubramanian07/Cabal/issues/6) to [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12)) | issues open |
 | 2 | Cabal layer: cabals, vendettas, ghost votes, press modes, variants, spectators | planned |
 | 3 | Prediction markets, tournaments, streaming overlay, seasonal ladders | planned |

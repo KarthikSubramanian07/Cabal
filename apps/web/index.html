@@ -4,9 +4,49 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Cabal: Diplomacy with receipts</title>
-    <meta name="description" content="Seven powers, one board, and every promise can be sealed, verified, and held against you." />
+    <meta
+      name="description"
+      content="Play Diplomacy on the classic 1901 board, in your browser. Seven powers, simultaneous orders, and every order resolved with a reason by a DATC-complete adjudicator."
+    />
+    <link rel="canonical" href="https://playcabal.pages.dev/" />
+    <meta name="theme-color" content="#121110" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Cabal" />
+    <meta property="og:url" content="https://playcabal.pages.dev/" />
+    <meta property="og:title" content="Cabal: Diplomacy with receipts" />
+    <meta
+      property="og:description"
+      content="The classic 1901 board in your browser. Order by clicking, see every result explained, replay any phase."
+    />
+    <meta property="og:image" content="https://playcabal.pages.dev/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="The Cabal wordmark beside the classic Diplomacy board" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Cabal: Diplomacy with receipts" />
+    <meta name="twitter:description" content="The classic 1901 board in your browser, adjudicated by a DATC-complete Rust engine." />
+    <meta name="twitter:image" content="https://playcabal.pages.dev/og.png" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "VideoGame",
+        "name": "Cabal",
+        "url": "https://playcabal.pages.dev/",
+        "description": "Diplomacy with receipts: the classic negotiation board game in your browser.",
+        "genre": ["Strategy", "Board game"],
+        "gamePlatform": "Web browser",
+        "playMode": ["SinglePlayer", "MultiPlayer"],
+        "license": "https://opensource.org/licenses/MIT"
+      }
+    </script>
   </head>
   <body>
+    <noscript>Cabal needs JavaScript to draw the board and adjudicate orders.</noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

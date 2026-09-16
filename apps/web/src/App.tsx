@@ -1,263 +1,418 @@
-import { type CSSProperties, useMemo, useState } from "react";
-import { POWERS } from "./engine.js";
-import { POWER_VAR, WarRoomMap } from "./map/WarRoomMap.jsx";
-import { mentions, unitOf } from "./map/orders.js";
-import { useSandbox } from "./sandbox.js";
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { HowToPlay } from "./components/HowToPlay.jsx";
+import { OrderList, PhaseHeader, PhaseStepper, PowerTable, Results } from "./components/Sidebar.jsx";
+import { Wordmark } from "./Wordmark.jsx";
+import {
+  type ComposeContext,
+  type Draft,
+  type Mode,
+  type Step,
+  click,
+  disbandSelected,
+  holdSelected,
+  setMode,
+} from "./game/compose.js";
+import { describePhase, parseOrder, parseUnit, provinceOf, titleCase } from "./game/notation.js";
+import { useSandbox } from "./game/useSandbox.js";
+import { Board, type DrawnOrder } from "./map/Board.jsx";
 
 interface Picker {
   x: number;
   y: number;
   title: string;
+  power: string;
+  key: string;
   options: string[];
 }
 
+const IDLE: Draft = { step: "idle" };
+
 export function App() {
   const sb = useSandbox();
-  const [selectedUnit, setSelectedUnit] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Draft>(IDLE);
+  const [active, setActive] = useState("FRANCE");
+  const [message, setMessage] = useState<string | null>(null);
   const [picker, setPicker] = useState<Picker | null>(null);
+  const [viewing, setViewing] = useState<number | null>(null);
+  const [help, setHelp] = useState(false);
+  const boardWrap = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
-  const phaseKind = sb?.phase.at(-1) ?? "M";
-  const myUnits = useMemo(() => (sb ? Object.keys(sb.legal) : []), [sb]);
+  const ctx = useMemo<ComposeContext | null>(
+    () => (sb ? { phase: sb.kind, pieces: sb.pieces, legal: sb.legal } : null),
+    [sb],
+  );
 
-  const selectable = useMemo(() => {
-    const s = new Set<string>();
-    if (!sb) return s;
-    if (!selectedUnit) {
-      for (const u of myUnits) {
-        const p = unitOf(u)?.region.split("/")[0];
-        if (p) s.add(p);
+  const apply = useCallback(
+    (step: Step, client?: { x: number; y: number }) => {
+      if (!sb) return;
+      setDraft(step.draft);
+      if (step.draft.step !== "idle") setActive(step.draft.power);
+      const effect = step.effect;
+      if (effect.kind === "order") {
+        sb.setOrder(effect.power, effect.key, effect.text);
+        setActive(effect.power);
+        setMessage(null);
+      } else if (effect.kind === "choose") {
+        const rect = boardWrap.current?.getBoundingClientRect();
+        setPicker({
+          x: client && rect ? client.x - rect.left : 40,
+          y: client && rect ? client.y - rect.top : 40,
+          title: effect.title,
+          power: effect.power,
+          key: effect.key,
+          options: effect.options,
+        });
+        setMessage(null);
+      } else if (effect.kind === "message") {
+        setMessage(effect.text);
+      } else if (step.draft.step !== "idle") {
+        setMessage(null);
       }
-      return s;
+    },
+    [sb],
+  );
+
+  const onProvince = useCallback(
+    (code: string, client: { x: number; y: number }) => {
+      if (!ctx || viewing !== null || sb?.status !== "active") return;
+      setPicker(null);
+      apply(click(ctx, draft, code), client);
+    },
+    [ctx, draft, apply, viewing, sb?.status],
+  );
+
+  const mode = useCallback(
+    (m: Mode) => {
+      if (!ctx) return;
+      apply(setMode(ctx, draft, m));
+    },
+    [ctx, draft, apply],
+  );
+
+  const cancel = useCallback(() => {
+    setDraft(IDLE);
+    setPicker(null);
+    setMessage(null);
+  }, []);
+
+  const adjudicate = useCallback(() => {
+    if (!sb) return;
+    const outcome = sb.adjudicate();
+    cancel();
+    if (outcome) setViewing(sb.history.length);
+  }, [sb, cancel]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (el.closest("input, select, textarea, dialog[open]") || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!ctx) return;
+      const key = e.key.toLowerCase();
+      if (key === "escape") return cancel();
+      if (viewing !== null) {
+        if (key === "enter" || key === "arrowright") {
+          e.preventDefault();
+          setViewing(viewing + 1 >= (sb?.history.length ?? 0) ? null : viewing + 1);
+        } else if (key === "arrowleft" && viewing > 0) {
+          setViewing(viewing - 1);
+        }
+        return;
+      }
+      if (key === "arrowleft" && sb && sb.history.length > 0) return setViewing(sb.history.length - 1);
+      if (key === "s") return mode("support");
+      if (key === "c") return mode("convoy");
+      if (key === "m") return mode("move");
+      if (key === "h") return apply(holdSelected(ctx, draft));
+      if (key === "d") return apply(disbandSelected(ctx, draft));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [ctx, draft, mode, apply, cancel, viewing, sb]);
+
+  // provinces the current draft can act on
+  const targets = useMemo(() => {
+    const set = new Set<string>();
+    if (!sb || draft.step === "idle") return set;
+    const legal = sb.legal[draft.power]?.[draft.unit] ?? [];
+    for (const text of legal) {
+      const o = parseOrder(text);
+      if (!o) continue;
+      if (draft.step === "unit" && (o.type === "move" || o.type === "retreat")) set.add(provinceOf(o.dest));
+      if (draft.step === "support") {
+        if (!draft.target && (o.type === "support-move" || o.type === "support-hold")) set.add(o.target.province);
+        if (draft.target && o.type === "support-move" && o.target.unit === draft.target) set.add(provinceOf(o.dest));
+        if (draft.target && o.type === "support-hold" && o.target.unit === draft.target) set.add(o.target.province);
+      }
+      if (draft.step === "convoy") {
+        if (!draft.army && o.type === "convoy") set.add(o.army.province);
+        if (draft.army && o.type === "convoy" && o.army.unit === draft.army) set.add(provinceOf(o.dest));
+      }
     }
-    for (const o of sb.legal[selectedUnit] ?? []) {
-      for (const p of mentions(o).slice(1)) s.add(p);
-    }
-    const own = unitOf(selectedUnit)?.region.split("/")[0];
-    if (own) s.add(own);
-    return s;
-  }, [sb, selectedUnit, myUnits]);
+    return set;
+  }, [sb, draft]);
 
   if (!sb) {
     return (
-      <div className="app">
-        <Masthead phase="loading" />
-        <div className="table">
-          <div className="board" />
-          <aside className="dossier">
-            <section>
-              <p className="hint">Loading the engine.</p>
-            </section>
-          </aside>
-        </div>
+      <div className="app loading">
+        <TopBar onHelp={() => setHelp(true)} />
+        <main className="loading-body">
+          <p>Setting up the board.</p>
+        </main>
       </div>
     );
   }
 
-  const ordersForMap: { power: string; text: string; failed?: boolean }[] = Object.entries(sb.orders).flatMap(
-    ([power, list]) => Object.values(list).map((text) => ({ power, text })),
-  );
-  if (sb.last && Object.keys(sb.orders).every((p) => Object.keys(sb.orders[p] ?? {}).length === 0)) {
-    // between phases, show the last results on the map
-    for (const r of sb.last.results) {
-      if (r.order && !r.order.endsWith(" H")) ordersForMap.push({ power: r.power, text: r.order, failed: !r.ok });
-    }
-  }
+  const record = viewing !== null ? sb.history[viewing] : undefined;
+  const mapState = record ? record.state : sb.state;
+  const given = record ? new Set(Object.values(record.orders).flatMap((o) => Object.values(o))) : null;
+  const drawn: DrawnOrder[] = record
+    ? record.outcome.results
+        .filter((r) => given!.has(r.order) || (!r.ok && parseOrder(r.order)?.type !== "hold"))
+        .map((r) => ({ power: r.power, text: r.order, ok: r.ok }))
+    : Object.entries(sb.orders).flatMap(([power, entries]) => Object.values(entries).map((text) => ({ power, text })));
 
-  const onTap = (province: string, at: { x: number; y: number }) => {
-    setPicker(null);
-    if (phaseKind === "A") {
-      const options = (sb.legal[""] ?? []).filter((o) => mentions(o).includes(province) || o === "WAIVE");
-      if (options.length) setPicker({ x: at.x, y: at.y, title: province, options });
-      return;
+  const selectedProvince = draft.step === "idle" ? null : parseUnit(draft.unit)?.province ?? null;
+  const { season, year } = describePhase(sb.phase);
+  const activeSummary = sb.powers.find((p) => p.power === active);
+  const orderableUnits = Object.keys(sb.legal[active] ?? {}).filter((u) => u !== "");
+
+  const hint = (() => {
+    if (record) return "Showing how the phase resolved. Use the arrows or Enter to step forward.";
+    if (sb.status !== "active") return "The game is over. Undo a phase or start a new game.";
+    if (message) return message;
+    switch (draft.step) {
+      case "idle":
+        return sb.kind === "A"
+          ? "Click an empty home supply centre to build, or a unit to disband."
+          : sb.kind === "R"
+            ? "Click a dislodged unit, then where it retreats."
+            : "Click a unit, then where it should go.";
+      case "unit":
+        return sb.kind === "R"
+          ? `${draft.unit}: click an empty neighbour, or press D to disband.`
+          : `${draft.unit}: click a destination, click it again to hold, or press S or C.`;
+      case "support":
+        return draft.target
+          ? `${draft.unit} supports ${draft.target}: click where it is going, or ${draft.target} again to support it holding.`
+          : `${draft.unit} supports: click the unit to support.`;
+      case "convoy":
+        return draft.army
+          ? `${draft.unit} convoys ${draft.army}: click where it lands.`
+          : `${draft.unit} convoys: click the army.`;
     }
-    const unitHere = myUnits.find((u) => unitOf(u)?.region.split("/")[0] === province);
-    if (!selectedUnit) {
-      if (unitHere) setSelectedUnit(unitHere);
-      return;
-    }
-    const options = sb.candidates(selectedUnit, province);
-    if (options.length === 0) {
-      if (unitHere) setSelectedUnit(unitHere);
-      else setSelectedUnit(null);
-      return;
-    }
-    // an empty province means "go there": apply the plain move when it is unambiguous,
-    // otherwise (coasts, occupied provinces, supports) open the picker
-    const occupied = Object.values(sb.state.units).some((list) =>
-      list.some((u) => unitOf(u)?.region.split("/")[0] === province),
-    );
-    const moves = options.filter((o) => o.startsWith(`${selectedUnit} - ${province}`));
-    if (!occupied && moves.length === 1) {
-      sb.setOrder(sb.power, selectedUnit, moves[0]!);
-      setSelectedUnit(null);
-      return;
-    }
-    if (options.length === 1) {
-      sb.setOrder(sb.power, selectedUnit, options[0]!);
-      setSelectedUnit(null);
-      return;
-    }
-    setPicker({ x: at.x, y: at.y, title: `${selectedUnit} at ${province}`, options });
+  })();
+
+  const download = () => {
+    const blob = new Blob([sb.exportSaved()], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `cabal-${sb.phase.toLowerCase()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const choose = (text: string) => {
-    const key = phaseKind === "A" ? text : selectedUnit ?? text;
-    sb.setOrder(sb.power, key, text);
-    setPicker(null);
-    setSelectedUnit(null);
+  const upload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      sb.importSaved(await file.text());
+      setViewing(null);
+      cancel();
+    } catch (err) {
+      setMessage(`That file could not be loaded: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
-
-  const mine = sb.orders[sb.power] ?? {};
-  const centers = (p: string) => sb.state.centers[p]?.length ?? 0;
 
   return (
     <div className="app">
-      <Masthead phase={sb.phase} />
-      <div className="table">
-        <div className="board">
-          <WarRoomMap
-            map={sb.map}
-            state={sb.state}
-            orders={ordersForMap}
-            selectable={selectable}
-            selected={selectedUnit ? (unitOf(selectedUnit)?.region.split("/")[0] ?? null) : null}
-            onTap={onTap}
+      <TopBar onHelp={() => setHelp(true)} />
+
+      <main className="table">
+        <div className="board-wrap" ref={boardWrap}>
+          <Board
+            board={sb.board}
+            state={mapState}
+            orders={drawn}
+            selected={record ? null : selectedProvince}
+            targets={record ? undefined : targets}
+            standoffs={record?.outcome.standoffs}
+            onProvince={onProvince}
           />
           {picker ? (
-            <div className="picker" style={{ left: picker.x, top: picker.y - 8 }} role="menu">
-              <div className="title">{picker.title}</div>
+            <div className="picker" style={{ left: picker.x, top: picker.y }} role="menu" aria-label={picker.title}>
+              <div className="picker-title">{picker.title}</div>
               {picker.options.map((o) => (
-                <button key={o} type="button" onClick={() => choose(o)}>
-                  {o}
-                </button>
-              ))}
-              <button type="button" onClick={() => setPicker(null)} style={{ color: "var(--fg-faint)" }}>
-                cancel
-              </button>
-            </div>
-          ) : null}
-        </div>
-        <aside className="dossier">
-          <section>
-            <h2>
-              Powers <small>tap to command</small>
-            </h2>
-            <div className="powers">
-              {POWERS.map((p) => (
                 <button
-                  key={p}
+                  key={o}
                   type="button"
-                  className="power-chip"
-                  aria-pressed={sb.power === p}
-                  style={{ "--power": POWER_VAR[p] } as CSSProperties}
+                  role="menuitem"
                   onClick={() => {
-                    sb.setPower(p);
-                    setSelectedUnit(null);
+                    sb.setOrder(picker.power, picker.key, o);
+                    setActive(picker.power);
                     setPicker(null);
                   }}
                 >
-                  <span className="dot" />
-                  {p.charAt(0) + p.slice(1).toLowerCase()}
-                  <span className="n">{centers(p)}</span>
+                  {o}
                 </button>
               ))}
             </div>
-          </section>
-          <section>
-            <h2>
-              Orders <small>{sb.phase}</small>
-            </h2>
-            {phaseKind === "A" ? (
-              <p className="hint">
-                Tap a home centre to build, or a unit to disband. Allowance:{" "}
-                <b>{(sb.legal[""] ?? []).length ? "see options" : "none"}</b>
-              </p>
-            ) : (
-              <p className="hint">
-                {selectedUnit ? (
-                  <>
-                    <b>{selectedUnit}</b> selected. Tap a destination, a unit to support, or its own province to hold.
-                  </>
-                ) : (
-                  <>Tap one of your units, then tap where it should go. Every option offered is legal.</>
-                )}
-              </p>
-            )}
-            <div className="ledger" aria-label="your orders">
-              {Object.entries(mine).map(([key, text]) => (
-                <div className="row pending" key={key}>
-                  <span className="mark">•</span>
-                  <span>{text}</span>
-                  <button type="button" aria-label={`remove ${text}`} onClick={() => sb.clearOrder(sb.power, key)}>
-                    ×
+          ) : null}
+
+          <div className="toolbar" role="toolbar" aria-label="Order tools">
+            {sb.kind === "M" && !record ? (
+              <>
+                <button type="button" className="tool" aria-pressed={draft.step === "unit"} onClick={() => mode("move")}>
+                  Move <kbd>M</kbd>
+                </button>
+                <button
+                  type="button"
+                  className="tool"
+                  aria-pressed={draft.step === "support"}
+                  onClick={() => mode("support")}
+                >
+                  Support <kbd>S</kbd>
+                </button>
+                <button
+                  type="button"
+                  className="tool"
+                  aria-pressed={draft.step === "convoy"}
+                  onClick={() => mode("convoy")}
+                >
+                  Convoy <kbd>C</kbd>
+                </button>
+                <button type="button" className="tool" onClick={() => ctx && apply(holdSelected(ctx, draft))}>
+                  Hold <kbd>H</kbd>
+                </button>
+              </>
+            ) : null}
+            {sb.kind === "R" && !record ? (
+              <button type="button" className="tool" onClick={() => ctx && apply(disbandSelected(ctx, draft))}>
+                Disband <kbd>D</kbd>
+              </button>
+            ) : null}
+            {draft.step !== "idle" || picker ? (
+              <button type="button" className="tool" onClick={cancel}>
+                Cancel <kbd>Esc</kbd>
+              </button>
+            ) : null}
+            <p className={`hint${message ? " alert" : ""}`} role="status" aria-live="polite">
+              {hint}
+            </p>
+          </div>
+        </div>
+
+        <aside className="sidebar">
+          <PhaseHeader phase={record ? record.phase : sb.phase} status={sb.status} viewing={Boolean(record)} />
+          <PhaseStepper history={sb.history} viewing={viewing} livePhase={sb.phase} onView={setViewing} />
+
+          {record ? (
+            <>
+              <Results record={record} />
+              <div className="actions">
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={() => setViewing(viewing! + 1 >= sb.history.length ? null : viewing! + 1)}
+                >
+                  {viewing! + 1 >= sb.history.length ? `Continue to ${describePhase(sb.phase).season} ${describePhase(sb.phase).year}` : "Next phase"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <section>
+                <PowerTable powers={sb.powers} active={active} kind={sb.kind} onSelect={setActive} />
+              </section>
+              <section>
+                <h2>{titleCase(active)}</h2>
+                <OrderList
+                  power={active}
+                  kind={sb.kind}
+                  units={orderableUnits}
+                  orders={sb.orders[active] ?? {}}
+                  allowance={activeSummary?.allowance ?? 0}
+                  onRemove={(key) => sb.removeOrder(active, key)}
+                />
+                <div className="row-actions">
+                  {sb.kind === "M" ? (
+                    <button type="button" className="btn small" onClick={() => sb.holdAll(active)}>
+                      Hold the rest
+                    </button>
+                  ) : null}
+                  {sb.kind === "A" && (activeSummary?.allowance ?? 0) > 0 ? (
+                    <button type="button" className="btn small" onClick={() => sb.waive(active)}>
+                      Waive a build
+                    </button>
+                  ) : null}
+                  <button type="button" className="btn small" onClick={() => sb.clearOrders(active)}>
+                    Clear
                   </button>
                 </div>
-              ))}
-              {Object.keys(mine).length === 0 ? <div className="hint">No orders yet. Unordered units hold.</div> : null}
-            </div>
-          </section>
-          <section>
-            <div className="toolbar">
-              <button type="button" className="btn primary" onClick={sb.resolve} disabled={sb.game.status() !== "active"}>
-                Resolve {sb.phase}
-              </button>
-              <button type="button" className="btn" onClick={sb.reset}>
-                New board
-              </button>
-              <span className="hint">{sb.game.status() === "active" ? "" : sb.game.status()}</span>
-            </div>
-          </section>
-          {sb.last ? (
-            <section>
-              <h2>
-                Receipts <small>{sb.last.phase}</small>
-              </h2>
-              <div className="ledger" aria-label="adjudication results">
-                {sb.last.results
-                  .filter((r) => !(r.code === "ok" && r.order.endsWith(" H")))
-                  .map((r, i) => (
-                    <div className={`row ${r.ok ? "ok" : "no"}`} key={i}>
-                      <span className="mark">{r.ok ? "✓" : "✗"}</span>
-                      <span>
-                        {r.order}
-                        <div className="reason">{r.reason}</div>
-                      </span>
-                      <span className="reason">{r.power.slice(0, 3)}</span>
-                    </div>
-                  ))}
-                {sb.last.dislodged.map((d) => (
-                  <div className="row no" key={d.unit}>
-                    <span className="mark">↯</span>
-                    <span>
-                      {d.unit} dislodged from {d.attacker_from}
-                      <div className="reason">retreats: {d.retreat_options.join(", ") || "none, must disband"}</div>
-                    </span>
-                    <span />
-                  </div>
-                ))}
+              </section>
+              <div className="actions">
+                <button type="button" className="btn primary" onClick={adjudicate} disabled={sb.status !== "active"}>
+                  Adjudicate {season} {year}
+                </button>
               </div>
-            </section>
-          ) : null}
+            </>
+          )}
+
+          <section className="game-tools">
+            <button type="button" className="btn small" onClick={sb.undo} disabled={sb.history.length === 0}>
+              Undo last phase
+            </button>
+            <button
+              type="button"
+              className="btn small"
+              onClick={() => {
+                if (sb.history.length === 0 || window.confirm("Start a new game? This board will be lost.")) {
+                  sb.reset();
+                  setViewing(null);
+                  cancel();
+                }
+              }}
+            >
+              New game
+            </button>
+            <button type="button" className="btn small" onClick={download}>
+              Export
+            </button>
+            <button type="button" className="btn small" onClick={() => fileInput.current?.click()}>
+              Import
+            </button>
+            <input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={upload} />
+          </section>
         </aside>
-      </div>
+      </main>
+
       <footer className="footer">
-        <span>Cabal: Diplomacy with receipts.</span>
-        <span>Rules engine in Rust, adjudicating in your browser.</span>
-        <span>DATC v3.0: 171 of 171.</span>
+        <span>Sandbox: every power is yours to order.</span>
+        <span>Adjudicated in your browser by a Rust engine that passes all 171 DATC cases.</span>
+        <span>Board drawn from Natural Earth.</span>
+        <a href="https://github.com/KarthikSubramanian07/Cabal">Source</a>
       </footer>
+
+      <HowToPlay open={help} onClose={() => setHelp(false)} />
     </div>
   );
 }
 
-function Masthead({ phase }: { phase: string }) {
+function TopBar({ onHelp }: { onHelp: () => void }) {
   return (
-    <header className="masthead">
-      <div className="wordmark">
-        Cab<em>al</em>
-      </div>
-      <div className="tagline">Diplomacy with receipts.</div>
-      <div className="spacer" />
-      <div className="phase-chip">{phase}</div>
+    <header className="topbar">
+      <a className="brand" href="/" aria-label="Cabal home">
+        <Wordmark height={22} color="var(--bone)" />
+      </a>
+      <nav>
+        <span className="nav-current">Sandbox</span>
+        <button type="button" onClick={onHelp}>
+          How to play
+        </button>
+        <a href="https://github.com/KarthikSubramanian07/Cabal">GitHub</a>
+      </nav>
     </header>
   );
 }
