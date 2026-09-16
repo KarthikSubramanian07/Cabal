@@ -15,9 +15,13 @@
 
 `diplomacy` `negotiation` `strategy-game` `rust` `webassembly` `cloudflare-workers` `durable-objects` `react` `llm-agents` `datc` `game-theory`
 
-[Play (soon)](https://cabal.pages.dev) · [The plan](docs/PLAN.md) · [Architecture](docs/ARCHITECTURE.md) · [Rules decisions](docs/RULES.md) · [Protocol](docs/PROTOCOL.md) · [ADRs](docs/adr/)
+[Play the sandbox](https://cabal.pages.dev) · [The plan](docs/PLAN.md) · [Architecture](docs/ARCHITECTURE.md) · [Rules decisions](docs/RULES.md) · [Protocol](docs/PROTOCOL.md) · [ADRs](docs/adr/)
 
 </div>
+
+<p align="center">
+  <img src="docs/images/sandbox-desktop.png" width="900" alt="The Cabal war room: a dark metro-style map of Europe with units, supply rings and a receipts panel" />
+</p>
 
 ---
 
@@ -99,6 +103,17 @@ cargo run -p cabal-cli -- adjudicate game.json
 cargo run -p cabal-cli -- explain "ENG: F NTH - HOL" "ENG: A BEL S F NTH - HOL" "GER: A HOL H"
 ```
 
+## What is built today
+
+| Piece | State |
+|---|---|
+| `cabal-engine` | 171 of 171 DATC v3.0 cases, property tests, benches, MILA saved games, seals and receipts |
+| `cabal-wasm`, `@cabal/engine` | one 201 KB gzipped module for browser and Workers, generated TypeScript types |
+| `@cabal/protocol` | zod schemas for every frame, settings, pledges and scoring |
+| `apps/server` | GameRoom Durable Object: seats, deadlines, orders, press, sealed pledges with receipts, replay export |
+| `apps/web` | the war-room sandbox: tap-to-order from the legal list, receipts with reasons, phone and desktop |
+| `@cabal/agents` | Claude players with narrative prompts, structured decisions and legal order validation |
+
 ## Repository
 
 ```
@@ -127,8 +142,8 @@ cargo test --workspace && pnpm check
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 | Foundation: engine, wasm, protocol, server skeleton, web shell, agents skeleton, docs, CI | done |
-| 1 | A complete ranked game end to end on cabal.pages.dev (seven issues, one per engineer) | issues open |
+| 0 | Foundation: DATC complete engine, wasm, protocol, GameRoom server, war-room sandbox, Claude players, docs, CI | done |
+| 1 | A complete ranked game end to end on cabal.pages.dev: seven issues, one per engineer ([#6](https://github.com/KarthikSubramanian07/Cabal/issues/6) to [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12)) | issues open |
 | 2 | Cabal layer: cabals, vendettas, ghost votes, press modes, variants, spectators | planned |
 | 3 | Prediction markets, tournaments, streaming overlay, seasonal ladders | planned |
 

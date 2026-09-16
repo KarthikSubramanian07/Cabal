@@ -79,7 +79,7 @@ One Rust crate, `cabal-engine`, is compiled once with `wasm-bindgen` and loaded 
 
 ## 5. Roadmap
 
-### Phase 0: Foundation (this repository, done)
+### Phase 0: Foundation (done, September 2026)
 
 - Monorepo, CI, docs, ADRs.
 - `cabal-engine`: map, orders, parser, legality, Kruijswijk resolver, retreats, builds, civil disorder, DATC harness, legal order enumeration, MILA-compatible JSON, pledge commitments.
@@ -103,7 +103,7 @@ Goal: seven humans (or bots) can play a full ranked game of classic Diplomacy on
 | 6 | Agents: Claude players (persona, diary, pledges), arena runner, nightly eval in CI | TS / LLM | Bot completes a 1901 to 1910 game with zero illegal orders |
 | 7 | Platform: identity (passkeys + magic link), D1 schema, Glicko-2 ratings, deploy pipeline, observability, SEO, moderation hooks | TS / CF | Zero-touch deploy on merge; rating updates after each game |
 
-Each issue is written up in full on GitHub with scope, non-goals, interfaces it must honour, and a test plan.
+Each issue is written up in full on GitHub with scope, non-goals, interfaces it must honour, and a test plan: [#6](https://github.com/KarthikSubramanian07/Cabal/issues/6), [#7](https://github.com/KarthikSubramanian07/Cabal/issues/7), [#8](https://github.com/KarthikSubramanian07/Cabal/issues/8), [#9](https://github.com/KarthikSubramanian07/Cabal/issues/9), [#10](https://github.com/KarthikSubramanian07/Cabal/issues/10), [#11](https://github.com/KarthikSubramanian07/Cabal/issues/11), [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12).
 
 ### Phase 2: The Cabal layer
 
