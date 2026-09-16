@@ -1,6 +1,6 @@
 [package]
 name = "cabal-wasm"
-description = "wasm-bindgen bindings for the Cabal engine"
+description = "wasm-bindgen bindings for the Cabal engine with generated TypeScript types"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,7 +15,10 @@ crate-type = ["cdylib", "rlib"]
 cabal-engine = { path = "../cabal-engine" }
 wasm-bindgen = "0.2.128"
 serde.workspace = true
+serde_json.workspace = true
 serde-wasm-bindgen = "0.6"
+tsify = { version = "0.5.8", default-features = false, features = ["js"] }
+hex.workspace = true
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]

@@ -19,6 +19,7 @@ blake3.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
+indexmap = { version = "2", features = ["serde"] }
 proptest = "1.11"
 insta = { version = "1.48", features = ["yaml"] }
 criterion = { version = "0.8", features = ["html_reports"] }
