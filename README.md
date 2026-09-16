@@ -157,7 +157,7 @@ cargo test --workspace && pnpm check
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Foundation: DATC complete engine, wasm, protocol, GameRoom server, classic board sandbox, Claude players, docs, CI | done |
-| 1 | A complete ranked game end to end on playcabal.pages.dev: seven issues, one per engineer ([#6](https://github.com/KarthikSubramanian07/Cabal/issues/6) to [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12)) | issues open |
+| 1 | A complete ranked game end to end on playcabal.pages.dev: seven issues across three subteams, Adjudicators, Couriers and Cartographers ([plan](docs/PLAN.md), [onboarding](docs/ONBOARDING.md)) | week 1: onboarding |
 | 2 | Cabal layer: cabals, vendettas, ghost votes, press modes, variants, spectators | planned |
 | 3 | Prediction markets, tournaments, streaming overlay, seasonal ladders | planned |
 
