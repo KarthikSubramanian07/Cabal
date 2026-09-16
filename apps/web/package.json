@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src",
     "test": "vitest run --passWithNoTests",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "assets": "node scripts/assets.mjs"
   },
   "dependencies": {
     "@cabal/engine": "workspace:*",
