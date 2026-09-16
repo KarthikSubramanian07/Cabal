@@ -57,7 +57,10 @@ pub fn resolve_movement(
     for i in 0..r.entries.len() {
         r.resolve(i, true);
     }
-    r.finish()
+    let mut result = r.finish();
+    // ownership only changes after Fall retreats; carry it through untouched
+    result.position.owners = position.owners.clone();
+    result
 }
 
 #[derive(Clone, Debug)]
