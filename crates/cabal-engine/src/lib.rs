@@ -8,12 +8,14 @@
 //! - [`adjudicate`]: movement (Kruijswijk partial information resolver),
 //!   retreat and adjustment phases, each returning explanatory [`outcome`]s.
 //! - [`legal`]: legal order enumeration per unit.
+//! - [`game`]: phase progression, supply centre bookkeeping, victory.
 //! - [`pledge`]: seals (commitments) and receipts.
 //!
 //! No I/O, no randomness, no host dependencies: the same crate runs natively
 //! and in WebAssembly.
 
 pub mod adjudicate;
+pub mod game;
 pub mod geo;
 pub mod legal;
 pub mod order;
@@ -29,6 +31,7 @@ pub use adjudicate::{
     movement::{MovementResult, resolve_movement},
     retreat::{RetreatResult, resolve_retreat},
 };
+pub use game::{Game, PhaseRecord, PhaseResult, Status};
 pub use geo::{Coast, Map, Power, ProvinceId, Region, UnitKind};
 pub use order::{AdjustCommand, AdjustOrder, Command, Order, RetreatCommand, RetreatOrder, Unit};
 pub use outcome::OrderOutcome;
