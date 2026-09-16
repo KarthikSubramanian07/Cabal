@@ -18,7 +18,10 @@
     "@cabal/engine": "workspace:*",
     "@cabal/protocol": "workspace:*",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "@fontsource/instrument-serif": "^5.2.0",
+    "@fontsource-variable/geist": "^5.2.0",
+    "@fontsource-variable/geist-mono": "^5.2.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
