@@ -12,7 +12,12 @@
     "lint": "oxlint --deny-warnings src test",
     "test": "vitest run --passWithNoTests",
     "deploy": "wrangler deploy",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "engine:sync": "node scripts/sync-wasm.mjs",
+    "predev": "node scripts/sync-wasm.mjs",
+    "prebuild": "node scripts/sync-wasm.mjs",
+    "pretest": "node scripts/sync-wasm.mjs",
+    "predeploy": "node scripts/sync-wasm.mjs"
   },
   "dependencies": {
     "@cabal/engine": "workspace:*",

@@ -12,8 +12,9 @@ coverage
 test-results
 playwright-report
 
-# wasm-pack output
+# wasm-pack output and its synced copies
 /packages/engine/pkg
+/apps/server/src/engine/
 
 # OS / editor
 .DS_Store

@@ -64,7 +64,7 @@ flowchart LR
     UI <-->|WebSocket| DO
   end
   subgraph Cloudflare
-    Pages[Pages: cabal.pages.dev] --> UI
+    Pages[Pages: playcabal.pages.dev] --> UI
     API[Worker: cabal-api] --> DO[(Durable Object: GameRoom)]
     DO --> SQL[(DO SQLite)]
     DO --> WASM2[cabal-engine.wasm]
@@ -91,7 +91,7 @@ One Rust crate, `cabal-engine`, is compiled once with `wasm-bindgen` and loaded 
 
 ### Phase 1: A complete game, end to end (7 issues, one per engineer)
 
-Goal: seven humans (or bots) can play a full ranked game of classic Diplomacy on cabal.pages.dev with press and pledges, from lobby to draw or solo, on phone or desktop.
+Goal: seven humans (or bots) can play a full ranked game of classic Diplomacy on playcabal.pages.dev with press and pledges, from lobby to draw or solo, on phone or desktop.
 
 | # | Issue | Owner area | Exit criteria |
 |---|---|---|---|

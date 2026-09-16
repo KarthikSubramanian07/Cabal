@@ -134,7 +134,7 @@ jobs:
       - if: env.CLOUDFLARE_API_TOKEN != ''
         run: pnpm install --frozen-lockfile && pnpm --filter @cabal/web build
       - if: env.CLOUDFLARE_API_TOKEN != ''
-        run: pnpm --filter @cabal/web exec wrangler pages deploy dist --project-name cabal --branch main
+        run: pnpm --filter @cabal/web exec wrangler pages deploy dist --project-name playcabal --branch main
 
   deploy-server:
     name: Deploy server worker
@@ -162,4 +162,4 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - if: env.CLOUDFLARE_API_TOKEN != ''
-        run: pnpm install --frozen-lockfile && pnpm --filter @cabal/server exec wrangler deploy
+        run: pnpm install --frozen-lockfile && pnpm --filter @cabal/server deploy
