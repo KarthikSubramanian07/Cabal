@@ -1,0 +1,29 @@
+# Rust
+/target
+**/target
+Cargo.lock.bak
+
+# Node
+node_modules
+dist
+.wrangler
+*.tsbuildinfo
+coverage
+test-results
+playwright-report
+
+# wasm-pack output
+/packages/engine/pkg
+
+# OS / editor
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.log
+
+# env
+.env
+.env.*
+!.env.example
+.dev.vars

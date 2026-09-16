@@ -1,0 +1,26 @@
+{
+  "name": "cabal",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Diplomacy with receipts. A Rust adjudicated, WebAssembly powered, Cloudflare hosted negotiation game.",
+  "license": "MIT",
+  "author": "Karthik Subramanian <winnerkarthik07@gmail.com>",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "engine:build": "wasm-pack build crates/cabal-wasm --target web --release --out-dir ../../packages/engine/pkg --out-name cabal_engine",
+    "dev": "pnpm -r --parallel --filter ./apps/* dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter @cabal/web test:e2e",
+    "check": "pnpm typecheck && pnpm lint && pnpm test"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,23 @@
+name: Bug
+description: Something adjudicated, rendered or synced wrongly
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: For rules bugs, paste the orders in MILA notation and the expected DATC section.
+      placeholder: |
+        ENG: F NTH - HOL
+        ENG: A BEL S F NTH - HOL
+        expected: succeeds (DATC 6.D.1)
+  - type: input
+    id: game
+    attributes:
+      label: Game id or replay link

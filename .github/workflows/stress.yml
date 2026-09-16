@@ -1,0 +1,32 @@
+name: Stress
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proptest-long:
+    name: Property tests, large budget
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@v2
+      - run: PROPTEST_CASES=20000 cargo test -p cabal-engine --release -- prop_
+
+  fuzz:
+    name: Fuzz the order parser and resolver
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-fuzz
+      - run: cd crates/cabal-engine && cargo fuzz run parse_order -- -max_total_time=600
+      - run: cd crates/cabal-engine && cargo fuzz run adjudicate -- -max_total_time=900
