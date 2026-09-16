@@ -7,6 +7,7 @@ pub mod geo;
 pub mod order;
 pub mod outcome;
 pub mod parse;
+pub mod pledge;
 pub mod rulebook;
 pub mod state;
 pub mod text;
