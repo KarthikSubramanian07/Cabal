@@ -877,7 +877,7 @@ fn fleet_adjacent(map: &Map, a: ProvinceId, b: ProvinceId) -> bool {
 }
 
 /// Is there any chain of fleet-occupied sea provinces from `origin` to `dest`?
-fn convoy_possible(
+pub(crate) fn convoy_possible(
     map: &Map,
     fleet_seas: &BTreeSet<ProvinceId>,
     origin: ProvinceId,
@@ -899,7 +899,7 @@ fn convoy_possible(
 /// adjacent to a later, non-consecutive element (origin and destination included). A fleet
 /// that only appears on detours is "not necessary for any convoy route" and its convoy order
 /// is illegal (DATC 6.G.19).
-fn on_convoy_route(
+pub(crate) fn on_convoy_route(
     map: &Map,
     fleet_seas: &BTreeSet<ProvinceId>,
     origin: ProvinceId,

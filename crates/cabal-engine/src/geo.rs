@@ -179,6 +179,14 @@ impl Map {
         })
     }
 
+    /// Look up a bundled map by name. Only `standard` ships today; variant maps are data files.
+    pub fn by_name(name: &str) -> Option<&'static Map> {
+        match name.to_ascii_lowercase().as_str() {
+            "standard" | "classic" => Some(Map::standard()),
+            _ => None,
+        }
+    }
+
     /// Build a map from the three CSV tables.
     pub fn from_csv(
         name: &str,

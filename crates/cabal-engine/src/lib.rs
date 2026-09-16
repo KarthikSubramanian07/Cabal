@@ -1,10 +1,21 @@
 //! Cabal engine: a pure, deterministic Diplomacy adjudicator.
 //!
+//! Layers, bottom up:
+//!
+//! - [`geo`]: the map graph (provinces, coasts, regions, borders).
+//! - [`order`], [`parse`], [`text`]: typed orders and their MILA text form.
+//! - [`rulebook`]: rulebook editions as data.
+//! - [`adjudicate`]: movement (Kruijswijk partial information resolver),
+//!   retreat and adjustment phases, each returning explanatory [`outcome`]s.
+//! - [`legal`]: legal order enumeration per unit.
+//! - [`pledge`]: seals (commitments) and receipts.
+//!
 //! No I/O, no randomness, no host dependencies: the same crate runs natively
 //! and in WebAssembly.
 
 pub mod adjudicate;
 pub mod geo;
+pub mod legal;
 pub mod order;
 pub mod outcome;
 pub mod parse;
