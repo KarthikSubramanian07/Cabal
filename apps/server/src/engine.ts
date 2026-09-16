@@ -1,14 +1,15 @@
 /**
- * Loads the Rust engine once per isolate. Wrangler compiles the `.wasm` import
- * into a `WebAssembly.Module` (see the `CompiledWasm` rule in wrangler.jsonc).
+ * Loads the Rust engine once per isolate. The `.wasm` is synced into this tree by
+ * `scripts/sync-wasm.mjs` (run before build, test and deploy) so Wrangler compiles
+ * it into a `WebAssembly.Module` through the `CompiledWasm` rule.
  */
-import wasm from "@cabal/engine/wasm";
 import { ready } from "@cabal/engine";
+import wasm from "./engine/cabal_engine_bg.wasm";
 
 let done: Promise<void> | undefined;
 
 export function engineReady(): Promise<void> {
-  done ??= ready(wasm as unknown as WebAssembly.Module);
+  done ??= ready(wasm);
   return done;
 }
 
