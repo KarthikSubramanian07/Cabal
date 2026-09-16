@@ -16,10 +16,24 @@ use crate::order::{AdjustCommand, AdjustOrder, Command, Order, RetreatCommand, R
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ParsedCommand {
     Hold,
-    Move { dest: Region, via_convoy: bool },
-    SupportHold { target: Region },
-    SupportMove { target: Region, dest: Region },
-    Convoy { army: Region, dest: Region },
+    Move {
+        dest: Region,
+        via_convoy: bool,
+    },
+    SupportHold {
+        target: Region,
+        /// Unit kind of the supported unit as written, if any.
+        target_kind: Option<UnitKind>,
+    },
+    SupportMove {
+        target: Region,
+        target_kind: Option<UnitKind>,
+        dest: Region,
+    },
+    Convoy {
+        army: Region,
+        dest: Region,
+    },
     Disband,
     Build,
     Waive,
@@ -194,19 +208,26 @@ pub fn parse(map: &Map, text: &str) -> Result<Parsed, ParseError> {
             ParsedCommand::Move { dest, via_convoy }
         }
         Some(Tok::Support) => {
-            let (_, target) = kind_region(&toks, i + 1)?;
+            let (target_kind, target) = kind_region(&toks, i + 1)?;
             let j = i + 1 + usize::from(matches!(toks.get(i + 1), Some(Tok::Kind(_)))) + 1;
             match toks.get(j) {
                 None | Some(Tok::Hold) => {
                     expect_end(&toks, j + usize::from(toks.get(j).is_some()))?;
-                    ParsedCommand::SupportHold { target }
+                    ParsedCommand::SupportHold {
+                        target,
+                        target_kind,
+                    }
                 }
                 Some(Tok::Dash) => {
                     let dest = region_at(&toks, j + 1)?;
                     // tolerate a trailing VIA on the supported move
                     let end = j + 2 + usize::from(matches!(toks.get(j + 2), Some(Tok::Via)));
                     expect_end(&toks, end)?;
-                    ParsedCommand::SupportMove { target, dest }
+                    ParsedCommand::SupportMove {
+                        target,
+                        target_kind,
+                        dest,
+                    }
                 }
                 Some(t) => return Err(ParseError::Unexpected(format!("{t:?}"))),
             }
@@ -283,10 +304,10 @@ impl Parsed {
                 coast: dest.coast,
                 via_convoy,
             },
-            ParsedCommand::SupportHold { target } => Command::SupportHold {
+            ParsedCommand::SupportHold { target, .. } => Command::SupportHold {
                 target: target.province,
             },
-            ParsedCommand::SupportMove { target, dest } => Command::SupportMove {
+            ParsedCommand::SupportMove { target, dest, .. } => Command::SupportMove {
                 target: target.province,
                 dest: dest.province,
                 coast: dest.coast,
@@ -392,12 +413,19 @@ mod tests {
             }
         );
         let p = parse(m(), "A WAL S F LON").unwrap();
-        assert_eq!(p.command, ParsedCommand::SupportHold { target: reg("lon") });
+        assert_eq!(
+            p.command,
+            ParsedCommand::SupportHold {
+                target: reg("lon"),
+                target_kind: Some(UnitKind::Fleet)
+            }
+        );
         let p = parse(m(), "A PAR S A BUR - PIC").unwrap();
         assert_eq!(
             p.command,
             ParsedCommand::SupportMove {
                 target: reg("bur"),
+                target_kind: Some(UnitKind::Army),
                 dest: reg("pic")
             }
         );
@@ -442,6 +470,7 @@ mod tests {
             p.command,
             ParsedCommand::SupportMove {
                 target: reg("yor"),
+                target_kind: Some(UnitKind::Army),
                 dest: reg("yor")
             }
         );
@@ -454,7 +483,13 @@ mod tests {
             }
         );
         let p = parse(m(), "AUS: F tri supports F tri").unwrap();
-        assert_eq!(p.command, ParsedCommand::SupportHold { target: reg("tri") });
+        assert_eq!(
+            p.command,
+            ParsedCommand::SupportHold {
+                target: reg("tri"),
+                target_kind: Some(UnitKind::Fleet)
+            }
+        );
         let p = parse(m(), "ENG: A lon -> bel via Convoy").unwrap();
         assert_eq!(
             p.command,
