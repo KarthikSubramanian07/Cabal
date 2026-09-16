@@ -15,7 +15,7 @@
 
 `diplomacy` `negotiation` `strategy-game` `rust` `webassembly` `cloudflare-workers` `durable-objects` `react` `llm-agents` `datc` `game-theory`
 
-[Play the sandbox](https://cabal.pages.dev) · [The plan](docs/PLAN.md) · [Architecture](docs/ARCHITECTURE.md) · [Rules decisions](docs/RULES.md) · [Protocol](docs/PROTOCOL.md) · [ADRs](docs/adr/)
+[Play the sandbox](https://playcabal.pages.dev) · [The plan](docs/PLAN.md) · [Architecture](docs/ARCHITECTURE.md) · [Rules decisions](docs/RULES.md) · [Protocol](docs/PROTOCOL.md) · [ADRs](docs/adr/)
 
 </div>
 
@@ -143,7 +143,7 @@ cargo test --workspace && pnpm check
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Foundation: DATC complete engine, wasm, protocol, GameRoom server, war-room sandbox, Claude players, docs, CI | done |
-| 1 | A complete ranked game end to end on cabal.pages.dev: seven issues, one per engineer ([#6](https://github.com/KarthikSubramanian07/Cabal/issues/6) to [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12)) | issues open |
+| 1 | A complete ranked game end to end on playcabal.pages.dev: seven issues, one per engineer ([#6](https://github.com/KarthikSubramanian07/Cabal/issues/6) to [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12)) | issues open |
 | 2 | Cabal layer: cabals, vendettas, ghost votes, press modes, variants, spectators | planned |
 | 3 | Prediction markets, tournaments, streaming overlay, seasonal ladders | planned |
 

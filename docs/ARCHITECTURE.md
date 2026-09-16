@@ -14,7 +14,7 @@ flowchart TB
   end
 
   subgraph Edge["Cloudflare"]
-    Pages[(Pages\ncabal.pages.dev)]
+    Pages[(Pages\nplaycabal.pages.dev)]
     API[Worker: cabal-api\nrouting, auth, lobby]
     subgraph DO["Durable Object: GameRoom (one per game)"]
       WS[Hibernating WebSockets]
@@ -176,7 +176,7 @@ An agent is just another client. It receives the same state and message stream, 
 
 ## 9. Deployment
 
-- `apps/web` deploys to Cloudflare Pages as `cabal.pages.dev` on every merge to `main`.
+- `apps/web` deploys to Cloudflare Pages as `playcabal.pages.dev` on every merge to `main`.
 - `apps/server` deploys with `wrangler deploy` from CI using `CLOUDFLARE_API_TOKEN`. Durable Object migrations are declared in `wrangler.jsonc`.
 - CI (`.github/workflows/ci.yml`): Rust fmt, clippy, tests, DATC, wasm build with a size gate; Node typecheck, unit, workerd tests, Playwright; deploy jobs on `main`.
 - Nightly (`stress.yml`): fuzzing, property tests with a larger case budget, and an AI arena game.
