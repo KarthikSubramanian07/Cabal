@@ -5,12 +5,14 @@
 
 pub mod geo;
 pub mod order;
+pub mod outcome;
 pub mod parse;
 pub mod rulebook;
 pub mod state;
 
 pub use geo::{Coast, Map, Power, ProvinceId, Region, UnitKind};
 pub use order::{AdjustCommand, AdjustOrder, Command, Order, RetreatCommand, RetreatOrder, Unit};
+pub use outcome::OrderOutcome;
 pub use rulebook::Rulebook;
 pub use state::{GameState, Phase, PhaseKind, Position, Season};
 
