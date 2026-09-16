@@ -14,6 +14,7 @@ pub mod state;
 pub mod text;
 
 pub use adjudicate::{
+    adjustment::{AdjustmentResult, resolve_adjustment},
     movement::{MovementResult, resolve_movement},
     retreat::{RetreatResult, resolve_retreat},
 };
