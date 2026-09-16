@@ -13,7 +13,10 @@ pub mod rulebook;
 pub mod state;
 pub mod text;
 
-pub use adjudicate::movement::{MovementResult, resolve_movement};
+pub use adjudicate::{
+    movement::{MovementResult, resolve_movement},
+    retreat::{RetreatResult, resolve_retreat},
+};
 pub use geo::{Coast, Map, Power, ProvinceId, Region, UnitKind};
 pub use order::{AdjustCommand, AdjustOrder, Command, Order, RetreatCommand, RetreatOrder, Unit};
 pub use outcome::OrderOutcome;
