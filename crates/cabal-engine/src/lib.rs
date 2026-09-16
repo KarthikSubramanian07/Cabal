@@ -9,6 +9,7 @@
 //!   retreat and adjustment phases, each returning explanatory [`outcome`]s.
 //! - [`legal`]: legal order enumeration per unit.
 //! - [`game`]: phase progression, supply centre bookkeeping, victory.
+//! - [`json`]: MILA / Cicero compatible saved game format.
 //! - [`pledge`]: seals (commitments) and receipts.
 //!
 //! No I/O, no randomness, no host dependencies: the same crate runs natively
@@ -17,6 +18,7 @@
 pub mod adjudicate;
 pub mod game;
 pub mod geo;
+pub mod json;
 pub mod legal;
 pub mod order;
 pub mod outcome;
