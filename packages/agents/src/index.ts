@@ -1,2 +1,12 @@
-// Scaffold: the agent harness lands in the agents PR.
-export const AGENTS_PACKAGE = "@cabal/agents" as const;
+export { AgentClient, type AgentClientOptions } from "./client.js";
+export {
+  type Brain,
+  ClaudeBrain,
+  type ClaudeBrainOptions,
+  Decision,
+  PERSONAS,
+  Player,
+  type Validated,
+  validateOrders,
+} from "./player.js";
+export { type PromptInput, type Relationship, SYSTEM_PROMPT, boardReport, legalMenu, userPrompt } from "./prompt.js";
