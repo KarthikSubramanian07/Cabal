@@ -62,7 +62,10 @@ pub struct Order {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RetreatCommand {
-    Retreat { dest: ProvinceId, coast: Option<Coast> },
+    Retreat {
+        dest: ProvinceId,
+        coast: Option<Coast>,
+    },
     Disband,
 }
 
@@ -75,10 +78,15 @@ pub struct RetreatOrder {
 
 /// Adjustment (Winter) phase order.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "op", rename_all = "snake_case")]
 pub enum AdjustCommand {
-    Build { kind: Option<UnitKind>, region: Region },
-    Disband { unit: ProvinceId },
+    Build {
+        kind: Option<UnitKind>,
+        region: Region,
+    },
+    Disband {
+        unit: ProvinceId,
+    },
     Waive,
 }
 
