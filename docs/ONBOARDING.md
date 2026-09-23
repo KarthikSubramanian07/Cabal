@@ -27,7 +27,7 @@ Everyone reads the [README](../README.md) and [PLAN.md](PLAN.md). Then:
 | Subteam | Issues | Read |
 |---|---|---|
 | **Adjudicators** (rules and AI players) | #6, #7, #11 | [RULES.md](RULES.md), [ARCHITECTURE.md](ARCHITECTURE.md) sections 3, 4 and 7, `crates/cabal-engine`, the DATC report, `packages/agents` |
-| **Couriers** (server, platform, integrations) | #8, #12, stretch #15 | [PROTOCOL.md](PROTOCOL.md), [ARCHITECTURE.md](ARCHITECTURE.md) sections 5, 6, 9 and 10, `apps/server`, `packages/protocol`, `.github/workflows` |
+| **Couriers** (server, platform, integrations) | #8, #12 | [PROTOCOL.md](PROTOCOL.md), [ARCHITECTURE.md](ARCHITECTURE.md) sections 5, 6, 9 and 10, `apps/server`, `packages/protocol`, `.github/workflows` |
 | **Cartographers** (board, press, player experience) | #9, #10 | [ARCHITECTURE.md](ARCHITECTURE.md) section 8, [BRAND.md](BRAND.md), `apps/web`, `tools/mapgen`, the e2e tests |
 
 ## 4. Plan your issue
@@ -35,10 +35,10 @@ Everyone reads the [README](../README.md) and [PLAN.md](PLAN.md). Then:
 Post the plan as a comment on your issue by the end of the week:
 
 - [ ] **Approach**: how you will build it, in a few paragraphs. Link any open source you studied first.
-- [ ] **Pull requests**: the scope split into small PRs, in order, each one mergeable on its own.
+- [ ] **Pull requests**: the scope split into small PRs, in order, each one mergeable on its own. Your issue is a track that lands over the whole phase, not something to resolve in one PR or one week, so a list of eight to fifteen small PRs is normal.
 - [ ] **Interfaces**: what you need from other issues and what they need from you. Tag those owners.
 - [ ] **Risks and questions**: anything unclear in the scope, and anything you think should be cut or added.
-- [ ] **First PR**: open it as a draft, even if it only adds a failing test or a stub.
+- [ ] **First PR**: open it as a draft, even if it only adds a failing test or a stub. Every PR says `Part of #N` in its description; only the last one, the one that meets the exit criteria, says `Closes #N`.
 
 ## Subteam rituals
 
