@@ -95,12 +95,14 @@ Goal: seven humans (or bots) can play a full ranked game of classic Diplomacy on
 
 Week 1 is onboarding for everyone: play a game on Backstabbr, get the repo running, read the docs for your area, then post a plan on your issue. The checklist is in [ONBOARDING.md](ONBOARDING.md).
 
+Each issue is a track, not a ticket. It is landed as a series of small pull requests over the phase, roughly one per scope bullet, each mergeable on its own with CI green. Nobody is expected to resolve an issue in one PR or in one week. PRs reference their issue with `Part of #N`; only the PR that meets the exit criteria closes it.
+
 The seven issues are grouped into three subteams, each named after a job at a real Diplomacy table. Each issue has one owner. Teammates review each other's pull requests and share interfaces.
 
 | Subteam | What it owns | Issues |
 |---|---|---|
 | **Adjudicators** | The rules and the players who follow them: Rust engine, replay, variants, Claude players | [#6](https://github.com/KarthikSubramanian07/Cabal/issues/6), [#7](https://github.com/KarthikSubramanian07/Cabal/issues/7), [#11](https://github.com/KarthikSubramanian07/Cabal/issues/11) |
-| **Couriers** | Everything that carries a game between players: GameRoom server, deadlines, identity, ratings, deploys, integrations | [#8](https://github.com/KarthikSubramanian07/Cabal/issues/8), [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12), stretch [#15](https://github.com/KarthikSubramanian07/Cabal/issues/15) |
+| **Couriers** | Everything that carries a game between players: GameRoom server, deadlines, identity, ratings, deploys, integrations | [#8](https://github.com/KarthikSubramanian07/Cabal/issues/8), [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12) |
 | **Cartographers** | Everything a player sees and touches: the board, order entry, multiplayer, press, seals and receipts | [#9](https://github.com/KarthikSubramanian07/Cabal/issues/9), [#10](https://github.com/KarthikSubramanian07/Cabal/issues/10) |
 
 | Issue | Subteam | Scope | Stack | Exit criteria |
@@ -109,11 +111,11 @@ The seven issues are grouped into three subteams, each named after a job at a re
 | [#7](https://github.com/KarthikSubramanian07/Cabal/issues/7) | Adjudicators | Engine: deterministic replay fixtures, variant map format, performance gates | Rust | Every fixture replays with zero divergence; variants load from JSON |
 | [#11](https://github.com/KarthikSubramanian07/Cabal/issues/11) | Adjudicators | Agents: arena runner, prompt tuning, cost controls, nightly evaluation | TS / LLM | Seven agents finish 1901 to 1910 with zero illegal orders under budget |
 | [#8](https://github.com/KarthikSubramanian07/Cabal/issues/8) | Couriers | Server: GameRoom lifecycle, deadlines, NMR policy, press channels, D1 hand-off | TS / Durable Objects | A full game with two humans and five AI seats, no operator |
-| [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12) | Couriers | Platform: identity, D1 schema, Glicko-2 ratings, deploy pipeline, observability; stretch: Discord and email ([#15](https://github.com/KarthikSubramanian07/Cabal/issues/15)) | TS / Cloudflare | Zero-touch deploy on merge; ratings update after each game |
+| [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12) | Couriers | Platform: identity, D1 schema, Glicko-2 ratings, deploy pipeline, observability, SEO, integrations (Discord bot, email digests, Slack bridge) | TS / Cloudflare | Zero-touch deploy on merge; ratings update after each game |
 | [#9](https://github.com/KarthikSubramanian07/Cabal/issues/9) | Cartographers | Web: every order type polished, animated results, replay scrubber, multiplayer mode, accessibility | React | A full game against AI seats on a phone without typing |
 | [#10](https://github.com/KarthikSubramanian07/Cabal/issues/10) | Cartographers | Web: lobby, press, seals and receipts, trust ledger, notifications, PWA | React | Create, invite, negotiate with sealed pledges and see receipts from a phone |
 
-Each issue is written up in full on GitHub with scope, non-goals, interfaces it must honour, a test plan and a week 1 checklist.
+Each issue is written up in full on GitHub with scope, non-goals, interfaces it must honour, a test plan, the exit criteria that close it, and a getting started checklist.
 
 ### Phase 2: The Cabal layer
 
