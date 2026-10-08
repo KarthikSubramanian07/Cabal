@@ -188,7 +188,7 @@ function enrichIndexHtml() {
     address: {
       "@type": "PostalAddress",
       addressCountry: "US",
-      addressLocality: "Remote",
+      addressLocality: "Berkeley",
       addressRegion: "CA",
     },
   };
