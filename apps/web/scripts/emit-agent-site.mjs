@@ -78,8 +78,11 @@ function mdToHtmlBody(markdown) {
   return out.join("\n");
 }
 
-function pageShell({ title, description, canonical, bodyHtml, jsonLd }) {
+function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHref }) {
   const ld = jsonLd ? `<script type="application/ld+json">\n${JSON.stringify(jsonLd, null, 2)}\n    </script>` : "";
+  const mdHref =
+    markdownHref ??
+    (canonical.endsWith("/") ? "/index.md" : `${canonical.replace(SITE, "")}/index.md`);
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -89,7 +92,7 @@ function pageShell({ title, description, canonical, bodyHtml, jsonLd }) {
     <meta name="description" content="${description}" />
     <link rel="canonical" href="${canonical}" />
     <link rel="describedby" href="/llms.txt" />
-    <link rel="alternate" type="text/markdown" href="${canonical.endsWith("/") ? "/index.md" : canonical.replace(SITE, "") + "/index.md"}" />
+    <link rel="alternate" type="text/markdown" href="${mdHref}" />
     <meta name="theme-color" content="#121110" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <style>
@@ -285,6 +288,7 @@ function write404() {
     canonical: `${SITE}/404`,
     bodyHtml: mdToHtmlBody(markdown),
     jsonLd: null,
+    markdownHref: "/404.md",
   });
   writeFileSync(join(dist, "404.html"), html);
 }
