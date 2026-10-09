@@ -111,7 +111,7 @@ Pre-processing decides statically whether an adjacent move uses a convoy (editio
 - Property tests (`proptest`): random legal order sets never panic, resolution is independent of order submission sequence, relabelling powers relabels outcomes.
 - Snapshot tests (`insta`) on explanations for the DipMath figures.
 - `criterion` benches: full board adjudication, legal order enumeration.
-- `cargo fuzz` target on the text parser.
+- Planned: `cargo fuzz` targets on the text parser and resolver (not wired in CI yet).
 
 ## 4. WebAssembly boundary (`crates/cabal-wasm`, `packages/engine`)
 
