@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Diplomacy with receipts. A Rust adjudicated, WebAssembly powered, Cloudflare hosted negotiation game.",
   "license": "MIT",
-  "author": "Karthik Subramanian <winnerkarthik07@gmail.com>",
+  "author": "Karthik Subramanian",
   "type": "module",
   "engines": {
     "node": ">=24"
