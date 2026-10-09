@@ -7,13 +7,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/emit-agent-site.mjs",
     "preview": "vite preview --port 4173 --strictPort",
+    "pages": "pnpm build && wrangler pages dev dist --port 8788",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src",
     "test": "vitest run --passWithNoTests",
     "test:e2e": "playwright test",
-    "assets": "node scripts/assets.mjs"
+    "assets": "node scripts/assets.mjs",
+    "emit:agent-site": "node scripts/emit-agent-site.mjs"
   },
   "dependencies": {
     "@cabal/engine": "workspace:*",
@@ -34,6 +36,7 @@
     "vite": "^8.3.0",
     "vitest": "^4.1.0",
     "wrangler": "^4.132.0",
+    "esbuild": "^0.28.1",
     "@types/node": "^24.6.0"
   }
 }

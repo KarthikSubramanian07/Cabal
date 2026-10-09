@@ -392,6 +392,10 @@ export function App() {
         <span>Sandbox: every power is yours to order.</span>
         <span>Adjudicated in your browser by a Rust engine that passes all 171 DATC cases.</span>
         <span>Board drawn from Natural Earth.</span>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/llms.txt">llms.txt</a>
         <a href="https://github.com/KarthikSubramanian07/Cabal">Source</a>
       </footer>
 
@@ -411,6 +415,8 @@ function TopBar({ onHelp }: { onHelp: () => void }) {
         <button type="button" onClick={onHelp}>
           How to play
         </button>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
         <a href="https://github.com/KarthikSubramanian07/Cabal">GitHub</a>
       </nav>
     </header>

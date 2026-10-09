@@ -1034,7 +1034,8 @@ table.keys tr + tr {
     white-space: nowrap;
   }
 
-  .topbar nav a:last-child {
+  /* Keep the phone chrome to Sandbox + How to play; trust links live in the footer. */
+  .topbar nav a {
     display: none;
   }
 
