@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
-authors = ["Karthik Subramanian <winnerkarthik07@gmail.com>"]
+authors = ["Karthik Subramanian"]
 repository = "https://github.com/KarthikSubramanian07/Cabal"
 
 [workspace.dependencies]
