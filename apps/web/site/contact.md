@@ -2,9 +2,9 @@
 
 Use these channels when you need help with the sandbox, want to report an adjudication bug, or are wiring an agent into the Cabal protocol.
 
-## Email
+## Private questions
 
-- Product and security contact: [winnerkarthik07@gmail.com](mailto:winnerkarthik07@gmail.com)
+- Product and security contact: open a [GitHub issue](https://github.com/KarthikSubramanian07/Cabal/issues) titled "Contact" and say it is private; the maintainer will follow up through a private channel.
 - Prefer public bugs and feature requests on GitHub so other players and agent authors can follow along.
 
 ## GitHub

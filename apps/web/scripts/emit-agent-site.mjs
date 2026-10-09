@@ -15,7 +15,6 @@ const site = join(root, "site");
 const require = createRequire(import.meta.url);
 
 const SITE = "https://playcabal.pages.dev";
-const EMAIL = "winnerkarthik07@gmail.com";
 
 function md(name) {
   return readFileSync(join(site, name), "utf8");
@@ -133,7 +132,7 @@ ${bodyHtml}
         <span>Diplomacy with receipts.</span>
         <a href="/llms.txt">llms.txt</a>
         <a href="https://github.com/KarthikSubramanian07/Cabal">GitHub</a>
-        <a href="mailto:${EMAIL}">${EMAIL}</a>
+        <a href="https://github.com/KarthikSubramanian07/Cabal/issues">Contact</a>
       </footer>
     </div>
   </body>
@@ -173,7 +172,6 @@ function enrichIndexHtml() {
     "@id": `${SITE}/#organization`,
     name: "Cabal",
     url: `${SITE}/`,
-    email: EMAIL,
     description:
       "Cabal publishes a browser Diplomacy game with a DATC-complete adjudicator and explainable order receipts.",
     sameAs: ["https://github.com/KarthikSubramanian07/Cabal"],
@@ -181,7 +179,6 @@ function enrichIndexHtml() {
       {
         "@type": "ContactPoint",
         contactType: "customer support",
-        email: EMAIL,
         url: "https://github.com/KarthikSubramanian07/Cabal/issues",
       },
     ],

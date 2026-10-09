@@ -19,4 +19,4 @@ Future ranked multiplayer games will need server-side storage for rooms, press, 
 
 ## Contact
 
-Privacy questions: [winnerkarthik07@gmail.com](mailto:winnerkarthik07@gmail.com). You can also open an issue on [GitHub](https://github.com/KarthikSubramanian07/Cabal/issues).
+Privacy questions: open an issue on [GitHub](https://github.com/KarthikSubramanian07/Cabal/issues). Say it is private and the maintainer will follow up through a private channel.
