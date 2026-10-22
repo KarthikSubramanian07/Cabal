@@ -3,12 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Cabal: Diplomacy with receipts</title>
+    <title>Cabal — Diplomacy browser game with receipts</title>
     <meta
       name="description"
       content="Play Diplomacy on the classic 1901 board, in your browser. Seven powers, simultaneous orders, and every order resolved with a reason by a DATC-complete adjudicator."
     />
     <link rel="canonical" href="https://playcabal.pages.dev/" />
+    <link rel="describedby" href="/llms.txt" />
+    <link rel="alternate" type="text/markdown" href="/index.md" />
     <meta name="theme-color" content="#121110" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -17,7 +19,7 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Cabal" />
     <meta property="og:url" content="https://playcabal.pages.dev/" />
-    <meta property="og:title" content="Cabal: Diplomacy with receipts" />
+    <meta property="og:title" content="Cabal — Diplomacy browser game with receipts" />
     <meta
       property="og:description"
       content="The classic 1901 board in your browser. Order by clicking, see every result explained, replay any phase."
@@ -27,27 +29,89 @@
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="The Cabal wordmark beside the classic Diplomacy board" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Cabal: Diplomacy with receipts" />
+    <meta name="twitter:title" content="Cabal — Diplomacy browser game with receipts" />
     <meta name="twitter:description" content="The classic 1901 board in your browser, adjudicated by a DATC-complete Rust engine." />
     <meta name="twitter:image" content="https://playcabal.pages.dev/og.png" />
 
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
-        "@type": "VideoGame",
-        "name": "Cabal",
-        "url": "https://playcabal.pages.dev/",
-        "description": "Diplomacy with receipts: the classic negotiation board game in your browser.",
-        "genre": ["Strategy", "Board game"],
-        "gamePlatform": "Web browser",
-        "playMode": ["SinglePlayer", "MultiPlayer"],
-        "license": "https://opensource.org/licenses/MIT"
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://playcabal.pages.dev/#organization",
+            "name": "Cabal",
+            "url": "https://playcabal.pages.dev/",
+            "description": "Cabal publishes a browser Diplomacy game with a DATC-complete adjudicator and explainable order receipts.",
+            "sameAs": ["https://github.com/KarthikSubramanian07/Cabal"],
+            "contactPoint": [
+              {
+                "@type": "ContactPoint",
+                "contactType": "customer support",
+                "url": "https://github.com/KarthikSubramanian07/Cabal/issues"
+              }
+            ],
+            "address": {
+              "@type": "PostalAddress",
+              "addressCountry": "US",
+              "addressLocality": "Berkeley",
+              "addressRegion": "CA"
+            }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://playcabal.pages.dev/#app",
+            "name": "Cabal",
+            "applicationCategory": "GameApplication",
+            "operatingSystem": "Web browser",
+            "url": "https://playcabal.pages.dev/",
+            "description": "Cabal is a Diplomacy browser game with receipts: classic 1901 board, simultaneous orders, and a DATC-complete Rust/WebAssembly adjudicator.",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            },
+            "author": { "@id": "https://playcabal.pages.dev/#organization" }
+          }
+        ]
       }
     </script>
   </head>
   <body>
-    <noscript>Cabal needs JavaScript to draw the board and adjudicate orders.</noscript>
-    <div id="root"></div>
+    <noscript>
+      <article>
+        <h1>Cabal: Diplomacy with receipts</h1>
+        <p>
+          Play classic Diplomacy in the browser. Seven great powers, simultaneous orders, and a
+          DATC-complete Rust adjudicator that explains every result. Enable JavaScript to open the
+          interactive sandbox board, or read
+          <a href="/about">About</a>, <a href="/contact">Contact</a>,
+          <a href="/privacy">Privacy</a>, and <a href="/llms.txt">llms.txt</a>.
+        </p>
+      </article>
+    </noscript>
+    <div id="root">
+      <article class="agent-static" data-agent-content="true">
+        <h1>Cabal: Diplomacy with receipts</h1>
+        <p>
+          Play classic Diplomacy in the browser. Seven great powers, simultaneous orders, and a
+          DATC-complete Rust adjudicator that explains every bounce, dislodge, and convoy. Cabal is
+          built for humans and AI agents: the sandbox lets you drive every power yourself, while the
+          open-source engine and protocol support bots that need legal orders and explainable
+          outcomes.
+        </p>
+        <h2>When to use this</h2>
+        <ul>
+          <li>You want a DATC-faithful Diplomacy adjudicator in WebAssembly.</li>
+          <li>You are building an agent that plays or studies Diplomacy.</li>
+          <li>You want to try classic Diplomacy in a browser without a desktop client.</li>
+        </ul>
+        <p>
+          <a href="/about">About</a> · <a href="/contact">Contact</a> ·
+          <a href="/privacy">Privacy</a> · <a href="/llms.txt">llms.txt</a>
+        </p>
+      </article>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
