@@ -5,11 +5,18 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Majors arrive as their own PRs so one breaking upgrade cannot block the safe ones.
     groups:
       npm-production:
         dependency-type: production
+        update-types: [minor, patch]
       npm-development:
         dependency-type: development
+        update-types: [minor, patch]
+    ignore:
+      # Types must match the Node 24 runtime in .nvmrc and engines.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: cargo
     directory: /
