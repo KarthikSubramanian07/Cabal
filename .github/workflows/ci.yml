@@ -54,7 +54,7 @@ jobs:
           size=$(gzip -c packages/engine/pkg/cabal_engine_bg.wasm | wc -c | tr -d ' ')
           echo "gzip size: $size bytes (budget $WASM_SIZE_BUDGET_BYTES)"
           test "$size" -le "$WASM_SIZE_BUDGET_BYTES"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: engine-pkg
           path: packages/engine/pkg
@@ -99,7 +99,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @cabal/web exec playwright install --with-deps chromium
       - run: pnpm test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
