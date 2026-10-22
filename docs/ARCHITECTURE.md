@@ -180,7 +180,7 @@ An agent is just another client. It receives the same state and message stream, 
 - Deploys are run by a maintainer from a machine logged in with `npx wrangler login`; CI holds no Cloudflare credentials.
 - `pnpm deploy:web` builds the engine and site and publishes `apps/web/dist` to Cloudflare Pages as `playcabal.pages.dev`.
 - `pnpm deploy:server` builds the engine and runs `wrangler deploy` for `apps/server`. Durable Object migrations are declared in `wrangler.jsonc`.
-- `pnpm deploy` does both. Run it from an up to date `main` after CI is green.
+- `pnpm deploy:all` does both (a bare `pnpm deploy` is a built-in pnpm command, not this script). Run it from an up to date `main` after CI is green.
 - CI (`.github/workflows/ci.yml`): Rust fmt, clippy, tests, DATC, wasm build with a size gate; Node typecheck, unit, workerd tests, Playwright.
 - Nightly (`stress.yml`): fuzzing, property tests with a larger case budget, and an AI arena game.
 

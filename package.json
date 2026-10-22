@@ -21,7 +21,7 @@
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "deploy:web": "pnpm engine:build && pnpm --filter @cabal/web build && pnpm --filter @cabal/web exec wrangler pages deploy dist --project-name playcabal --branch main",
     "deploy:server": "pnpm engine:build && pnpm --filter @cabal/server run deploy",
-    "deploy": "pnpm deploy:web && pnpm deploy:server"
+    "deploy:all": "pnpm deploy:web && pnpm deploy:server"
   },
   "devDependencies": {
     "typescript": "^7.0.2"
