@@ -16,9 +16,17 @@ fn every_saved_game_replays_without_divergence() {
         }
         let text = fs::read_to_string(&path).unwrap();
         let saved: SavedGame = serde_json::from_str(&text).unwrap();
-        if let Err(e) = Game::from_saved(&saved, Rulebook::default()) {
-            panic!("{} failed to replay: {e}", path.display());
-        }
+        let game = match Game::from_saved(&saved, Rulebook::default()) {
+            Ok(game) => game,
+            Err(e) => panic!("{} failed to replay: {e}", path.display()),
+        };
+        // Bit for bit: exporting the replayed game must give back the recorded file.
+        assert_eq!(
+            game.to_saved(&saved.id),
+            saved,
+            "{} did not round-trip",
+            path.display()
+        );
         count += 1;
     }
     assert!(count > 0, "no fixtures found in {}", dir.display());
