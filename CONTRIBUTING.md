@@ -10,6 +10,16 @@ pnpm engine:build           # builds the wasm package into packages/engine/pkg
 pnpm dev                    # web on :5173, server on :8787
 ```
 
+### Git identity (so your commits count)
+
+GitHub only credits a commit to you if its author email belongs to your account. Without this step git invents an address from your machine or the campus wifi hostname, and your work will not show under your name or in the contributors list. Run this once, using the noreply address from [github.com/settings/emails](https://github.com/settings/emails):
+
+```sh
+git config --global user.name "Your Name"
+git config --global user.email "12345678+your-username@users.noreply.github.com"
+git config user.email       # check it before your first commit
+```
+
 ## Layout
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Rust in `crates/`, TypeScript packages in `packages/`, deployables in `apps/`.
