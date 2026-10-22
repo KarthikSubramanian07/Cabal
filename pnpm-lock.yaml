@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  sharp: ^0.35.4
+  sharp: ^0.35.5
   undici: ^7.29.1
 
 importers:
@@ -38,7 +38,7 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
       vitest:
-        specifier: ^4.1.0
+        specifier: ^4.1.12
         version: 4.1.12(@types/node@24.13.5)(vite@8.3.3(@types/node@24.13.5)(esbuild@0.28.2))
       wrangler:
         specifier: ^4.148.0
@@ -93,7 +93,7 @@ importers:
         specifier: ^8.3.3
         version: 8.3.3(@types/node@24.13.5)(esbuild@0.28.2)
       vitest:
-        specifier: ^4.1.0
+        specifier: ^4.1.12
         version: 4.1.12(@types/node@24.13.5)(vite@8.3.3(@types/node@24.13.5)(esbuild@0.28.2))
       wrangler:
         specifier: ^4.148.0
@@ -124,7 +124,7 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
       vitest:
-        specifier: ^4.1.0
+        specifier: ^4.1.12
         version: 4.1.12(@types/node@24.13.5)(vite@8.3.3(@types/node@24.13.5)(esbuild@0.28.2))
 
   packages/engine:
@@ -139,7 +139,7 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
       vitest:
-        specifier: ^4.1.0
+        specifier: ^4.1.12
         version: 4.1.12(@types/node@24.13.5)(vite@8.3.3(@types/node@24.13.5)(esbuild@0.28.2))
 
   packages/protocol:
@@ -155,7 +155,7 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
       vitest:
-        specifier: ^4.1.0
+        specifier: ^4.1.12
         version: 4.1.12(@types/node@24.13.5)(vite@8.3.3(@types/node@24.13.5)(esbuild@0.28.2))
 
 packages:
