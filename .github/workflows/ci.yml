@@ -70,7 +70,7 @@ jobs:
         with:
           name: engine-pkg
           path: packages/engine/pkg
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
@@ -91,7 +91,7 @@ jobs:
         with:
           name: engine-pkg
           path: packages/engine/pkg
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
@@ -124,7 +124,7 @@ jobs:
         with:
           name: engine-pkg
           path: packages/engine/pkg
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: env.CLOUDFLARE_API_TOKEN != ''
       - uses: actions/setup-node@v5
         if: env.CLOUDFLARE_API_TOKEN != ''
@@ -154,7 +154,7 @@ jobs:
         with:
           name: engine-pkg
           path: packages/engine/pkg
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: env.CLOUDFLARE_API_TOKEN != ''
       - uses: actions/setup-node@v5
         if: env.CLOUDFLARE_API_TOKEN != ''
