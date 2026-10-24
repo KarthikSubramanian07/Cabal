@@ -14,7 +14,7 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::geo::{Map, Power, ProvinceId, Region, UnitKind};
-use crate::order::{Command, Order, Unit};
+use crate::order::{Command, Order, Unit, normalise};
 use crate::outcome::{
     ConvoyOutcome, HoldOutcome, Illegal, MoveOutcome, OrderOutcome, SupportOutcome,
 };
@@ -61,6 +61,62 @@ pub fn resolve_movement(
     // ownership only changes after Fall retreats; carry it through untouched
     result.position.owners = position.owners.clone();
     result
+}
+
+/// Dependencies actually queried while resolving orders, including cached and cyclic queries.
+/// An edge `(a, b)` means order `a` asked for the result of order `b`.
+/// Nodes follow the same stable region order as `MovementResult::orders`.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct MovementDependencies {
+    pub orders: Vec<Order>,
+    pub outcomes: Vec<OrderOutcome>,
+    pub edges: BTreeSet<(usize, usize)>,
+}
+
+impl MovementDependencies {
+    /// Render a standalone Graphviz graph. Labels are escaped as DOT quoted strings.
+    pub fn to_dot(&self, map: &Map, position: &Position) -> String {
+        let mut dot = String::from("digraph movement {\n");
+        for (i, (order, outcome)) in self.orders.iter().zip(&self.outcomes).enumerate() {
+            let label = format!(
+                "{}: {}",
+                crate::text::order_text(map, position, order),
+                crate::text::describe_outcome(map, outcome)
+            );
+            let label = serde_json::to_string(&label).expect("string serialization");
+            dot.push_str(&format!("  n{i} [label={label}];\n"));
+        }
+        for (from, to) in &self.edges {
+            dot.push_str(&format!("  n{from} -> n{to};\n"));
+        }
+        dot.push_str("}\n");
+        dot
+    }
+}
+
+/// Resolve with an execution dependency trace, without changing the adjudication rules.
+/// Final explanation queries are excluded from the trace.
+pub fn resolve_movement_with_dependencies(
+    map: &Map,
+    position: &Position,
+    rulebook: Rulebook,
+    orders: &[Order],
+) -> (MovementResult, MovementDependencies) {
+    let mut resolver = Resolver::new(map, position, rulebook, orders);
+    resolver.tracking = true;
+    for i in 0..resolver.entries.len() {
+        resolver.resolve(i, true);
+    }
+    resolver.tracking = false;
+    let edges = std::mem::take(&mut resolver.dependencies);
+    let mut result = resolver.finish();
+    result.position.owners = position.owners.clone();
+    let graph = MovementDependencies {
+        orders: result.orders.clone(),
+        outcomes: result.outcomes.clone(),
+        edges,
+    };
+    (result, graph)
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +173,9 @@ struct Resolver<'a> {
     recursion_hits: usize,
     uncertain: bool,
     paradox: Vec<bool>,
+    tracking: bool,
+    stack: Vec<usize>,
+    dependencies: BTreeSet<(usize, usize)>,
 }
 
 impl<'a> Resolver<'a> {
@@ -178,6 +237,24 @@ impl<'a> Resolver<'a> {
                 continue;
             }
             let unit = e.unit;
+
+            let order = Order {
+                power: unit.power,
+                unit: unit.province(),
+                command: e.command,
+            };
+
+            match normalise(map, position, order) {
+                Ok(order) => entries[i].command = order.command,
+                Err(reason) => {
+                    let e = &mut entries[i];
+                    e.illegal = Some(reason);
+                    e.command = Command::Hold;
+                    continue;
+                }
+            }
+            let e = &entries[i];
+
             let verdict: Result<(Option<Region>, bool), Illegal> = match e.command {
                 Command::Hold => Ok((None, false)),
                 Command::Move {
@@ -335,9 +412,14 @@ impl<'a> Resolver<'a> {
                 } => {
                     let m = at.get(&target).copied().filter(|&m| {
                         entries[m].dest() == Some(dest)
-                            && coast.is_none_or(|c| {
-                                entries[m].dest_region.and_then(|r| r.coast) == Some(c)
-                            })
+                            && coast
+                                .filter(|c| {
+                                    entries[m].unit.kind == UnitKind::Fleet
+                                        && map.province(dest).coasts.contains(c)
+                                })
+                                .is_none_or(|c| {
+                                    entries[m].dest_region.and_then(|r| r.coast) == Some(c)
+                                })
                     });
                     match m {
                         Some(m) => move_supports[m].push(s),
@@ -381,12 +463,28 @@ impl<'a> Resolver<'a> {
             recursion_hits: 0,
             uncertain: false,
             paradox: vec![false; n],
+            tracking: false,
+            stack: Vec::new(),
+            dependencies: BTreeSet::new(),
         }
     }
 
     // ---- resolve (DATC 5.E, final form) ----
 
     fn resolve(&mut self, i: usize, optimistic: bool) -> bool {
+        if !self.tracking {
+            return self.resolve_inner(i, optimistic);
+        }
+        if let Some(&parent) = self.stack.last() {
+            self.dependencies.insert((parent, i));
+        }
+        self.stack.push(i);
+        let result = self.resolve_inner(i, optimistic);
+        self.stack.pop();
+        result
+    }
+
+    fn resolve_inner(&mut self, i: usize, optimistic: bool) -> bool {
         if let Some(r) = self.resolved[i] {
             return r;
         }
@@ -428,7 +526,9 @@ impl<'a> Resolver<'a> {
             self.backup_rule(&members);
             self.cycle.truncate(old_cycle_len);
             self.uncertain = old_uncertain;
-            return self.resolve(i, optimistic);
+            // This restarts the same equation after the backup rule; it is not
+            // a dependency query from the equation to itself.
+            return self.resolve_inner(i, optimistic);
         }
         if !self.cycle.contains(&i) {
             self.cycle.push(i);

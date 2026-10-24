@@ -451,6 +451,12 @@ impl Map {
             .reachable(from, UnitKind::Fleet)
             .filter(|r| r.province == to)
             .collect();
+        if candidates.is_empty() {
+            return Err(CoastError::Unreachable);
+        }
+        // DATC 4.B.6: annotations naming a coast that this province does not have
+        // are irrelevant. A real but unreachable coast remains an error (4.B.3).
+        let coast = coast.filter(|c| self.province(to).coasts.contains(c));
         match coast {
             Some(c) => {
                 let want = Region::new(to, Some(c));
