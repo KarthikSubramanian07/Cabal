@@ -104,3 +104,84 @@ pub enum AnyOrder {
     Retreat(RetreatOrder),
     Adjustment(AdjustOrder),
 }
+
+/// Checks whether a movement order refers to a unit owned by its power.
+pub fn normalise(
+    _map: &crate::geo::Map,
+    position: &crate::state::Position,
+    order: Order,
+) -> Result<Order, crate::outcome::Illegal> {
+    use crate::outcome::Illegal;
+
+    let Some(unit) = position.unit_at(order.unit) else {
+        return Err(Illegal::NoUnit);
+    };
+
+    if unit.power != order.power {
+        return Err(Illegal::ForeignUnit);
+    }
+
+    if let Command::Move { dest, .. } = order.command {
+        if dest == order.unit {
+            return Err(Illegal::MoveToSelf);
+        }
+    }
+
+    Ok(order)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geo::Map;
+    use crate::outcome::Illegal;
+    use crate::state::Position;
+
+    #[test]
+    fn normalise_rejects_foreign_unit() {
+        let map = Map::standard();
+        let position = Position::initial(&map);
+
+        let unit = position.units[0];
+
+        let order = Order {
+            power: Power(255),
+            unit: unit.province(),
+            command: Command::Hold,
+        };
+
+        assert_eq!(normalise(&map, &position, order), Err(Illegal::ForeignUnit));
+    }
+
+    #[test]
+    fn normalise_rejects_missing_unit() {
+        let map = Map::standard();
+        let position = Position::initial(&map);
+
+        let order = Order {
+            power: Power(0),
+            unit: ProvinceId(255),
+            command: Command::Hold,
+        };
+
+        assert_eq!(normalise(&map, &position, order), Err(Illegal::NoUnit));
+    }
+    #[test]
+    fn normalise_rejects_move_to_self() {
+        let map = Map::standard();
+        let position = Position::initial(&map);
+        let unit = position.units[0];
+
+        let order = Order {
+            power: unit.power,
+            unit: unit.province(),
+            command: Command::Move {
+                dest: unit.province(),
+                coast: None,
+                via_convoy: false,
+            },
+        };
+
+        assert_eq!(normalise(&map, &position, order), Err(Illegal::MoveToSelf));
+    }
+}
