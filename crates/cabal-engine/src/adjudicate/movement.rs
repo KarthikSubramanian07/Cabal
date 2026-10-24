@@ -14,7 +14,7 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::geo::{Map, Power, ProvinceId, Region, UnitKind};
-use crate::order::{Command, Order, Unit};
+use crate::order::{Command, Order, Unit, normalise};
 use crate::outcome::{
     ConvoyOutcome, HoldOutcome, Illegal, MoveOutcome, OrderOutcome, SupportOutcome,
 };
@@ -178,6 +178,20 @@ impl<'a> Resolver<'a> {
                 continue;
             }
             let unit = e.unit;
+
+            let order = Order {
+                power: unit.power,
+                unit: unit.province(),
+                command: e.command,
+            };
+
+            if let Err(reason) = normalise(map, position, order) {
+                let e = &mut entries[i];
+                e.illegal = Some(reason);
+                e.command = Command::Hold;
+                continue;
+            }
+
             let verdict: Result<(Option<Region>, bool), Illegal> = match e.command {
                 Command::Hold => Ok((None, false)),
                 Command::Move {
