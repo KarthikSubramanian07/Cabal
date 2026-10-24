@@ -1,4 +1,3 @@
-
 //! Orders as the resolver sees them: fully typed, with provinces resolved.
 //!
 //! Text parsing and coast inference live in [`crate::parse`]; nothing here
@@ -250,7 +249,7 @@ mod tests {
     #[test]
     fn normalise_rejects_foreign_unit() {
         let map = Map::standard();
-        let position = Position::initial(&map);
+        let position = Position::initial(map);
         let unit = position.units[0];
 
         let order = Order {
@@ -259,13 +258,13 @@ mod tests {
             command: Command::Hold,
         };
 
-        assert_eq!(normalise(&map, &position, order), Err(Illegal::ForeignUnit));
+        assert_eq!(normalise(map, &position, order), Err(Illegal::ForeignUnit));
     }
 
     #[test]
     fn normalise_rejects_missing_unit() {
         let map = Map::standard();
-        let position = Position::initial(&map);
+        let position = Position::initial(map);
 
         let order = Order {
             power: Power(0),
@@ -273,13 +272,13 @@ mod tests {
             command: Command::Hold,
         };
 
-        assert_eq!(normalise(&map, &position, order), Err(Illegal::NoUnit));
+        assert_eq!(normalise(map, &position, order), Err(Illegal::NoUnit));
     }
 
     #[test]
     fn normalise_rejects_move_to_self() {
         let map = Map::standard();
-        let position = Position::initial(&map);
+        let position = Position::initial(map);
         let unit = position.units[0];
 
         let order = Order {
@@ -292,13 +291,13 @@ mod tests {
             },
         };
 
-        assert_eq!(normalise(&map, &position, order), Err(Illegal::MoveToSelf));
+        assert_eq!(normalise(map, &position, order), Err(Illegal::MoveToSelf));
     }
 
     #[test]
     fn normalise_rejects_support_self() {
         let map = Map::standard();
-        let position = Position::initial(&map);
+        let position = Position::initial(map);
         let unit = position.units[0];
 
         let order = Order {
@@ -309,13 +308,13 @@ mod tests {
             },
         };
 
-        assert_eq!(normalise(&map, &position, order), Err(Illegal::SupportSelf));
+        assert_eq!(normalise(map, &position, order), Err(Illegal::SupportSelf));
     }
 
     #[test]
     fn normalise_accepts_hold() {
         let map = Map::standard();
-        let position = Position::initial(&map);
+        let position = Position::initial(map);
         let unit = position.units[0];
 
         let order = Order {
@@ -324,13 +323,13 @@ mod tests {
             command: Command::Hold,
         };
 
-        assert_eq!(normalise(&map, &position, order), Ok(order));
+        assert_eq!(normalise(map, &position, order), Ok(order));
     }
 
     #[test]
     fn normalise_rejects_support_move_self() {
         let map = Map::standard();
-        let position = Position::initial(&map);
+        let position = Position::initial(map);
         let unit = position.units[0];
 
         let order = Order {
@@ -343,13 +342,13 @@ mod tests {
             },
         };
 
-        assert_eq!(normalise(&map, &position, order), Err(Illegal::SupportSelf));
+        assert_eq!(normalise(map, &position, order), Err(Illegal::SupportSelf));
     }
 
     #[test]
     fn normalise_rejects_missing_support_target() {
         let map = Map::standard();
-        let position = Position::initial(&map);
+        let position = Position::initial(map);
         let unit = position.units[0];
 
         let order = Order {
@@ -361,7 +360,7 @@ mod tests {
         };
 
         assert_eq!(
-            normalise(&map, &position, order),
+            normalise(map, &position, order),
             Err(Illegal::SupportNoUnit)
         );
     }
