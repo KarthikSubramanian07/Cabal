@@ -111,7 +111,8 @@ pub enum AnyOrder {
 
 /// Validates a movement order against the current board position.
 ///
-/// Returns the order unchanged when it is legal.
+/// Returns a canonical order when legal: army destination coasts are removed,
+/// fleet destination coasts are inferred, and irrelevant support coasts are ignored.
 /// Returns an Illegal reason when the command cannot be performed.
 ///
 /// Duplicate orders are checked separately because they require
@@ -239,7 +240,35 @@ pub fn normalise(map: &Map, position: &Position, order: Order) -> Result<Order, 
         }
     }
 
-    Ok(order)
+    let command = match order.command {
+        Command::Move {
+            dest,
+            coast,
+            via_convoy,
+        } => Command::Move {
+            dest,
+            coast: match unit.kind {
+                UnitKind::Army => None,
+                UnitKind::Fleet => {
+                    map.fleet_destination(unit.region, dest, coast)
+                        .expect("destination validated above")
+                        .coast
+                }
+            },
+            via_convoy,
+        },
+        Command::SupportMove {
+            target,
+            dest,
+            coast,
+        } => Command::SupportMove {
+            target,
+            dest,
+            coast: coast.filter(|c| map.province(dest).coasts.contains(c)),
+        },
+        other => other,
+    };
+    Ok(Order { command, ..order })
 }
 
 #[cfg(test)]

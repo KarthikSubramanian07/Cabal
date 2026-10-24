@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! cabal datc [--report]                 run the DATC v3.0 corpus and print a section report
-//! cabal explain <order>...              adjudicate a movement phase from order text and explain it
+//! cabal explain [--graph] <order>...              adjudicate a movement phase from order text and explain it
 //! cabal legal <power> [<order>...]      list legal orders for a power (after optional setup orders)
 //! cabal replay <saved-game.json>        replay a MILA saved game through the engine
 //! cabal version
@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-use cabal_engine::adjudicate::movement::resolve_movement;
+use cabal_engine::adjudicate::movement::{resolve_movement, resolve_movement_with_dependencies};
 use cabal_engine::geo::Map;
 use cabal_engine::json::SavedGame;
 use cabal_engine::order::{Order, Unit};
@@ -70,14 +70,26 @@ fn position_from_orders(map: &Map, lines: &[String]) -> Result<(Position, Vec<Or
 }
 
 fn explain(lines: &[String]) -> ExitCode {
+    let graph = lines.iter().any(|line| line == "--graph");
+    let lines: Vec<String> = lines
+        .iter()
+        .filter(|line| line.as_str() != "--graph")
+        .cloned()
+        .collect();
     let map = Map::standard();
-    let (pos, orders) = match position_from_orders(map, lines) {
+    let (pos, orders) = match position_from_orders(map, &lines) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("{e}");
             return ExitCode::from(2);
         }
     };
+    if graph {
+        let (_, dependencies) =
+            resolve_movement_with_dependencies(map, &pos, Rulebook::default(), &orders);
+        print!("{}", dependencies.to_dot(map, &pos));
+        return ExitCode::SUCCESS;
+    }
     let result = resolve_movement(map, &pos, Rulebook::default(), &orders);
     for (o, out) in result.orders.iter().zip(&result.outcomes) {
         let mark = if out.succeeds() { "ok " } else { "no " };

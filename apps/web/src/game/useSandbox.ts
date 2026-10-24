@@ -191,7 +191,7 @@ export function useSandbox(): Sandbox | null {
 
   const adjudicate = useCallback((): PhaseOutcome | null => {
     if (!game || !snapshot || snapshot.status !== "active") return null;
-    const outcome = game.process({ orders: flatten(orders) });
+    const outcome = game.process(game.normaliseOrders({ orders: flatten(orders) }));
     setHistory((h) => [...h, { phase: snapshot.phase, state: snapshot.state, orders, outcome }]);
     setOrders({});
     bump();
@@ -203,7 +203,7 @@ export function useSandbox(): Sandbox | null {
     const rebuilt: PhaseRecord[] = [];
     for (const r of records) {
       const state = g.state();
-      const outcome = g.process({ orders: flatten(r.orders) });
+      const outcome = g.process(g.normaliseOrders({ orders: flatten(r.orders) }));
       rebuilt.push({ phase: r.phase, state, orders: r.orders, outcome });
     }
     return { g, rebuilt };

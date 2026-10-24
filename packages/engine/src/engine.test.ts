@@ -84,6 +84,45 @@ describe("Game", () => {
     expect(game.phase()).toBe("S1901M");
   });
 
+  it("normalises against actual units before processing and is idempotent", () => {
+    const game = new Game();
+    const input = { orders: { FRANCE: ["F PAR/NC - BUR/SC", "MAR - SPA"] } };
+    const canonical = game.normaliseOrders(input);
+    expect(canonical.orders.FRANCE).toEqual(["A PAR - BUR", "A MAR - SPA"]);
+    expect(game.normaliseOrders(canonical)).toEqual(canonical);
+    const prefixed = game.normaliseOrders({ orders: { GERMANY: ["FRANCE: A PAR - BUR"] } });
+    expect(prefixed.orders.GERMANY).toEqual(["FRA: A PAR - BUR"]);
+    expect(game.normaliseOrders(prefixed)).toEqual(prefixed);
+    const outcome = game.process(canonical);
+    expect(outcome.next.units.FRANCE).toContain("A BUR");
+    expect(outcome.next.units.FRANCE).toContain("A SPA");
+  });
+
+  it("retains illegal and duplicate orders for adjudication diagnostics", () => {
+    const game = new Game();
+    const input = { orders: { FRANCE: ["A PAR - PAR", "A MAR H", "A MAR - SPA"] } };
+    const normalised = game.normaliseOrders(input);
+    expect(normalised.orders.FRANCE).toHaveLength(3);
+    const outcome = game.process(normalised);
+    expect(outcome.results.find((r) => r.unit === "A PAR")?.code).toBe("illegal");
+    expect(outcome.results.find((r) => r.unit === "A MAR")?.code).toBe("illegal");
+  });
+
+  it("exposes deterministic explanation edges and standalone DOT to both hosts", () => {
+    const game = new Game();
+    const input = { orders: { FRANCE: ["A PAR - BUR", "A MAR S A PAR - BUR"], GERMANY: ["A MUN - BUR"] } };
+    const first = preview(game.state(), input);
+    const second = preview(game.state(), { orders: { GERMANY: input.orders.GERMANY, FRANCE: [...input.orders.FRANCE].reverse() } });
+    expect(first.dependencies.length).toBeGreaterThan(0);
+    expect(second.dependencies).toEqual(first.dependencies);
+    expect(second.dependency_dot).toBe(first.dependency_dot);
+    expect(first.dependency_dot).toMatch(/^digraph movement \{/);
+    const par = first.results.findIndex((r) => r.unit === "A PAR");
+    const mar = first.results.findIndex((r) => r.unit === "A MAR");
+    expect(first.dependencies).toContainEqual([par, mar]);
+    expect(JSON.parse(JSON.stringify(first)).dependencies).toEqual(first.dependencies);
+  });
+
   it("rejects orders that do not parse", () => {
     const game = new Game();
     expect(() =>
