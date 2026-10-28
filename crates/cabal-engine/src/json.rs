@@ -258,6 +258,26 @@ fn result_codes(outcome: &OrderOutcome) -> Vec<String> {
     code.into_iter().map(String::from).collect()
 }
 
+fn retreat_result_codes(outcome: &RetreatOutcome) -> Vec<String> {
+    match outcome {
+        RetreatOutcome::Succeeds => vec![],
+        RetreatOutcome::Illegal { .. } => vec!["void".to_string()],
+        RetreatOutcome::Bounced { .. } => {
+            vec!["bounce".to_string(), "disband".to_string()]
+        }
+        RetreatOutcome::Disbanded => vec!["disband".to_string()],
+    }
+}
+
+fn adjustment_result_codes(outcome: &crate::outcome::AdjustOutcome) -> Vec<String> {
+    match outcome {
+        // The MILA vocabulary uses the empty string to mark a successful
+        // adjustment (including a build or voluntary disband).
+        crate::outcome::AdjustOutcome::Succeeds => vec![String::new()],
+        crate::outcome::AdjustOutcome::Illegal { .. } => vec!["void".to_string()],
+    }
+}
+
 fn phase_to_mila(map: &Map, record: &PhaseRecord) -> MilaPhase {
     let state = state_to_mila(map, &record.state);
     let pos = &record.state.position;
@@ -288,13 +308,7 @@ fn phase_to_mila(map: &Map, record: &PhaseRecord) -> MilaPhase {
                     .find(|d| d.unit.province() == o.unit)
                     .map(|d| d.unit);
                 if let Some(u) = unit {
-                    let codes = match out {
-                        RetreatOutcome::Succeeds => vec![],
-                        RetreatOutcome::Bounced { .. } => {
-                            vec!["bounce".to_string(), "disband".to_string()]
-                        }
-                        _ => vec!["disband".to_string()],
-                    };
+                    let codes = retreat_result_codes(out);
                     results.insert(unit_text(map, &u), codes);
                 }
             }
@@ -306,10 +320,7 @@ fn phase_to_mila(map: &Map, record: &PhaseRecord) -> MilaPhase {
                     .entry(power_name(map, o.power))
                     .or_default()
                     .push(text.clone());
-                let codes = match out {
-                    crate::outcome::AdjustOutcome::Succeeds => vec![],
-                    _ => vec!["void".to_string()],
-                };
+                let codes = adjustment_result_codes(out);
                 results.insert(text, codes);
             }
             for u in &r.civil_disorder {
@@ -423,6 +434,7 @@ mod tests {
     use super::*;
     use crate::parse::parse;
     use crate::rulebook::Rulebook;
+    use crate::state::Position;
 
     #[test]
     fn round_trip_through_mila_format() {
@@ -455,5 +467,84 @@ mod tests {
         let replayed = Game::from_saved(&back, Rulebook::default()).unwrap();
         assert_eq!(replayed.state, g.state);
         assert_eq!(replayed.history.len(), 2);
+    }
+
+    #[test]
+    fn retreat_and_adjustment_results_use_mila_codes() {
+        let map = Map::standard();
+        let france = map.find_power("FRANCE").unwrap();
+        let mut retreat_state = GameState::from_position(
+            Phase::new(1901, crate::state::Season::Spring, PhaseKind::Retreat),
+            Position::initial(map),
+        );
+        let paris = map.find_province("par").unwrap();
+        let attacker = map.find_province("bur").unwrap();
+        let unit = retreat_state.position.remove_unit_at(paris).unwrap();
+        retreat_state.dislodged.push(crate::state::Dislodged {
+            unit,
+            attacker_from: attacker,
+            by_convoy: false,
+        });
+        let mut retreat_game = Game::from_state(map, Rulebook::default(), retreat_state);
+        let retreat = parse(map, "FRA: A PAR R BUR")
+            .unwrap()
+            .to_retreat(None)
+            .unwrap();
+        retreat_game.process_retreat(&[retreat]);
+        let saved = retreat_game.to_saved("results");
+        assert_eq!(saved.phases[0].results["A PAR"], vec!["void".to_string()]);
+
+        // A successful build is encoded with MILA's empty-string OK result.
+        let mut position = Position::initial(map);
+        position
+            .owners
+            .insert(map.find_province("bel").unwrap(), france);
+        position.remove_unit_at(map.find_province("mar").unwrap());
+        let mut adjustment = Game::from_state(
+            map,
+            Rulebook::default(),
+            GameState::from_position(
+                Phase::new(1901, crate::state::Season::Winter, PhaseKind::Adjustment),
+                position,
+            ),
+        );
+        let build = parse(map, "FRANCE: A MAR B")
+            .unwrap()
+            .to_adjustment(None)
+            .unwrap();
+        adjustment.process_adjustment(&[build]);
+        let saved = adjustment.to_saved("build");
+        assert_eq!(saved.phases[0].results["A MAR B"], vec!["".to_string()]);
+    }
+
+    #[test]
+    fn retreat_and_adjustment_result_vocabulary_is_complete() {
+        use crate::outcome::{AdjustIllegal, AdjustOutcome, RetreatIllegal};
+
+        assert_eq!(
+            retreat_result_codes(&RetreatOutcome::Succeeds),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            retreat_result_codes(&RetreatOutcome::Illegal {
+                reason: RetreatIllegal::Occupied
+            }),
+            vec!["void"]
+        );
+        assert_eq!(
+            retreat_result_codes(&RetreatOutcome::Bounced { with: vec![] }),
+            vec!["bounce", "disband"]
+        );
+        assert_eq!(
+            retreat_result_codes(&RetreatOutcome::Disbanded),
+            vec!["disband"]
+        );
+        assert_eq!(adjustment_result_codes(&AdjustOutcome::Succeeds), vec![""]);
+        assert_eq!(
+            adjustment_result_codes(&AdjustOutcome::Illegal {
+                reason: AdjustIllegal::NothingToDo
+            }),
+            vec!["void"]
+        );
     }
 }
