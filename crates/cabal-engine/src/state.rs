@@ -194,6 +194,47 @@ impl GameState {
             standoffs: BTreeSet::new(),
         }
     }
+
+    /// Return a player-specific state view. Visibility includes every province
+    /// occupied by one of the power's units and every province reachable by a
+    /// single legal move from those units. The source state is never changed.
+    pub fn visible_to(&self, map: &Map, power: Power, fog_of_war: bool) -> GameState {
+        if !fog_of_war {
+            return self.clone();
+        }
+
+        let mut visible = BTreeSet::new();
+        for unit in self
+            .position
+            .units
+            .iter()
+            .chain(self.dislodged.iter().map(|d| &d.unit))
+            .filter(|unit| unit.power == power)
+        {
+            visible.insert(unit.province());
+            visible.extend(
+                map.reachable(unit.region, unit.kind)
+                    .map(|region| region.province),
+            );
+        }
+
+        let mut state = self.clone();
+        state
+            .position
+            .units
+            .retain(|unit| visible.contains(&unit.province()));
+        state
+            .position
+            .owners
+            .retain(|province, _| visible.contains(province));
+        state
+            .dislodged
+            .retain(|dislodged| visible.contains(&dislodged.unit.province()));
+        state
+            .standoffs
+            .retain(|province| visible.contains(province));
+        state
+    }
 }
 
 #[cfg(test)]
@@ -213,5 +254,41 @@ mod tests {
         let pos = Position::initial(Map::standard());
         assert_eq!(pos.units.len(), 22);
         assert_eq!(pos.owners.len(), 22);
+    }
+
+    #[test]
+    fn fog_view_shows_owned_and_adjacent_provinces_without_mutating_state() {
+        let map = Map::standard();
+        let mut state = GameState::initial(map);
+        let france = map.find_power("FRA").unwrap();
+        let germany = map.find_power("GER").unwrap();
+        let burgundy = map.find_province("bur").unwrap();
+        state
+            .position
+            .set_unit(germany, UnitKind::Army, Region::land(burgundy));
+        let original_unit_count = state.position.units.len();
+        let view = state.visible_to(map, france, true);
+
+        let visible_units: BTreeSet<_> = view
+            .position
+            .units
+            .iter()
+            .map(|unit| unit.province())
+            .collect();
+        for name in ["par", "bre", "mar", "bur"] {
+            assert!(visible_units.contains(&map.find_province(name).unwrap()));
+        }
+        assert!(!visible_units.contains(&map.find_province("mun").unwrap()));
+        assert_eq!(state.position.units.len(), original_unit_count);
+        assert!(view.position.units.len() < original_unit_count);
+    }
+
+    #[test]
+    fn visibility_is_disabled_without_the_rulebook_flag() {
+        let map = Map::standard();
+        let state = GameState::initial(map);
+        let france = map.find_power("FRA").unwrap();
+
+        assert_eq!(state.visible_to(map, france, false), state);
     }
 }
