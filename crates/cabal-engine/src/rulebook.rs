@@ -42,6 +42,8 @@ pub struct Rulebook {
     pub convoy_fallback: bool,
     /// Variant flag: build in any owned supply centre.
     pub build_anywhere: bool,
+    /// Hide units, ownership, retreats, and standoffs outside a power's visibility.
+    pub fog_of_war: bool,
     /// Supply centres needed for a solo victory.
     pub victory_centers: u8,
 }
@@ -54,6 +56,7 @@ impl Rulebook {
             convoy_intent: ConvoyIntent::SamePowerFleet,
             disband_distance: DisbandDistance::OwnedCenters,
             build_anywhere: false,
+            fog_of_war: false,
             victory_centers: 18,
         }
     }
@@ -65,6 +68,7 @@ impl Rulebook {
             convoy_intent: ConvoyIntent::SamePowerFleet,
             disband_distance: DisbandDistance::HomeCenters,
             build_anywhere: false,
+            fog_of_war: false,
             victory_centers: 18,
         }
     }
@@ -76,6 +80,7 @@ impl Rulebook {
             convoy_intent: ConvoyIntent::AnyFleet,
             disband_distance: DisbandDistance::HomeCenters,
             build_anywhere: false,
+            fog_of_war: false,
             victory_centers: 18,
         }
     }
@@ -87,6 +92,7 @@ impl Rulebook {
             convoy_intent: ConvoyIntent::Explicit,
             disband_distance: DisbandDistance::OwnedCenters,
             build_anywhere: false,
+            fog_of_war: false,
             victory_centers: 18,
         }
     }
