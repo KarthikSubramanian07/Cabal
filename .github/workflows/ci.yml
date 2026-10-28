@@ -33,6 +33,10 @@ jobs:
       - run: cargo test --workspace
       - name: DATC report
         run: cargo run -p cabal-cli -- datc --report
+      - name: Opening adjudication performance gate
+        run: |
+          cargo bench -p cabal-engine --bench adjudicate -- --sample-size 20 --measurement-time 2 --warm-up-time 1 --noplot
+          python3 scripts/check-bench-regression.py
 
   wasm:
     name: WASM build and size gate
