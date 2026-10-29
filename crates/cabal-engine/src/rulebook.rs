@@ -46,9 +46,10 @@ pub struct Rulebook {
     pub victory_centers: u8,
 }
 
-/// Optional rule settings supplied by a map document.
+/// Optional rule settings supplied by a map document. Unknown keys are
+/// rejected so a misspelt override cannot silently fall back to the default.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct RulebookOverrides {
     pub edition: Option<Edition>,
     pub convoy_intent: Option<ConvoyIntent>,
