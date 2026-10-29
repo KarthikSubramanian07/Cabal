@@ -1,0 +1,2070 @@
+{
+  "name": "standard",
+  "provinces": [
+    {
+      "name": "adr",
+      "full_name": "Adriatic Sea",
+      "supply_center": null
+    },
+    {
+      "name": "aeg",
+      "full_name": "Aegean Sea",
+      "supply_center": null
+    },
+    {
+      "name": "alb",
+      "full_name": "Albania",
+      "supply_center": null
+    },
+    {
+      "name": "ank",
+      "full_name": "Ankara",
+      "supply_center": "TUR"
+    },
+    {
+      "name": "apu",
+      "full_name": "Apulia",
+      "supply_center": null
+    },
+    {
+      "name": "arm",
+      "full_name": "Armenia",
+      "supply_center": null
+    },
+    {
+      "name": "bal",
+      "full_name": "Baltic Sea",
+      "supply_center": null
+    },
+    {
+      "name": "bar",
+      "full_name": "Barents Sea",
+      "supply_center": null
+    },
+    {
+      "name": "bel",
+      "full_name": "Belgium",
+      "supply_center": "neutral"
+    },
+    {
+      "name": "ber",
+      "full_name": "Berlin",
+      "supply_center": "GER"
+    },
+    {
+      "name": "bla",
+      "full_name": "Black Sea",
+      "supply_center": null
+    },
+    {
+      "name": "bre",
+      "full_name": "Brest",
+      "supply_center": "FRA"
+    },
+    {
+      "name": "boh",
+      "full_name": "Bohemia",
+      "supply_center": null
+    },
+    {
+      "name": "bot",
+      "full_name": "Gulf of Bothnia",
+      "supply_center": null
+    },
+    {
+      "name": "bud",
+      "full_name": "Budapest",
+      "supply_center": "AUS"
+    },
+    {
+      "name": "bul",
+      "full_name": "Bulgaria",
+      "supply_center": "neutral"
+    },
+    {
+      "name": "bur",
+      "full_name": "Burgundy",
+      "supply_center": null
+    },
+    {
+      "name": "cly",
+      "full_name": "Clyde",
+      "supply_center": null
+    },
+    {
+      "name": "con",
+      "full_name": "Constantinople",
+      "supply_center": "TUR"
+    },
+    {
+      "name": "den",
+      "full_name": "Denmark",
+      "supply_center": "neutral"
+    },
+    {
+      "name": "eas",
+      "full_name": "Eastern Mediterranean",
+      "supply_center": null
+    },
+    {
+      "name": "edi",
+      "full_name": "Edinburgh",
+      "supply_center": "ENG"
+    },
+    {
+      "name": "eng",
+      "full_name": "English Channel",
+      "supply_center": null
+    },
+    {
+      "name": "fin",
+      "full_name": "Finland",
+      "supply_center": null
+    },
+    {
+      "name": "gal",
+      "full_name": "Galicia",
+      "supply_center": null
+    },
+    {
+      "name": "gas",
+      "full_name": "Gascony",
+      "supply_center": null
+    },
+    {
+      "name": "gre",
+      "full_name": "Greece",
+      "supply_center": "neutral"
+    },
+    {
+      "name": "hel",
+      "full_name": "Helgoland Bight",
+      "supply_center": null
+    },
+    {
+      "name": "hol",
+      "full_name": "Holland",
+      "supply_center": "neutral"
+    },
+    {
+      "name": "ion",
+      "full_name": "Ionian Sea",
+      "supply_center": null
+    },
+    {
+      "name": "iri",
+      "full_name": "Irish Sea",
+      "supply_center": null
+    },
+    {
+      "name": "kie",
+      "full_name": "Kiel",
+      "supply_center": "GER"
+    },
+    {
+      "name": "lon",
+      "full_name": "London",
+      "supply_center": "ENG"
+    },
+    {
+      "name": "lvn",
+      "full_name": "Livonia",
+      "supply_center": null
+    },
+    {
+      "name": "lvp",
+      "full_name": "Liverpool",
+      "supply_center": "ENG"
+    },
+    {
+      "name": "lyo",
+      "full_name": "Gulf of Lyon",
+      "supply_center": null
+    },
+    {
+      "name": "mar",
+      "full_name": "Marseilles",
+      "supply_center": "FRA"
+    },
+    {
+      "name": "mao",
+      "full_name": "Mid-Atlantic Ocean",
+      "supply_center": null
+    },
+    {
+      "name": "mos",
+      "full_name": "Moscow",
+      "supply_center": "RUS"
+    },
+    {
+      "name": "mun",
+      "full_name": "Munich",
+      "supply_center": "GER"
+    },
+    {
+      "name": "naf",
+      "full_name": "North Africa",
+      "supply_center": null
+    },
+    {
+      "name": "nao",
+      "full_name": "North Atlantic Ocean",
+      "supply_center": null
+    },
+    {
+      "name": "nap",
+      "full_name": "Naples",
+      "supply_center": "ITA"
+    },
+    {
+      "name": "nth",
+      "full_name": "North Sea",
+      "supply_center": null
+    },
+    {
+      "name": "nwg",
+      "full_name": "Norwegian Sea",
+      "supply_center": null
+    },
+    {
+      "name": "nwy",
+      "full_name": "Norway",
+      "supply_center": "neutral"
+    },
+    {
+      "name": "par",
+      "full_name": "Paris",
+      "supply_center": "FRA"
+    },
+    {
+      "name": "pic",
+      "full_name": "Picardy",
+      "supply_center": null
+    },
+    {
+      "name": "pie",
+      "full_name": "Piedmont",
+      "supply_center": null
+    },
+    {
+      "name": "por",
+      "full_name": "Portugal",
+      "supply_center": "neutral"
+    },
+    {
+      "name": "pru",
+      "full_name": "Prussia",
+      "supply_center": null
+    },
+    {
+      "name": "rom",
+      "full_name": "Rome",
+      "supply_center": "ITA"
+    },
+    {
+      "name": "ruh",
+      "full_name": "Ruhr",
+      "supply_center": null
+    },
+    {
+      "name": "rum",
+      "full_name": "Rumania",
+      "supply_center": "neutral"
+    },
+    {
+      "name": "ser",
+      "full_name": "Serbia",
+      "supply_center": "neutral"
+    },
+    {
+      "name": "sev",
+      "full_name": "Sevastopol",
+      "supply_center": "RUS"
+    },
+    {
+      "name": "sil",
+      "full_name": "Silesia",
+      "supply_center": null
+    },
+    {
+      "name": "ska",
+      "full_name": "Skagerrak",
+      "supply_center": null
+    },
+    {
+      "name": "smy",
+      "full_name": "Smyrna",
+      "supply_center": "TUR"
+    },
+    {
+      "name": "spa",
+      "full_name": "Spain",
+      "supply_center": "neutral"
+    },
+    {
+      "name": "stp",
+      "full_name": "St Petersburg",
+      "supply_center": "RUS"
+    },
+    {
+      "name": "swe",
+      "full_name": "Sweden",
+      "supply_center": "neutral"
+    },
+    {
+      "name": "swi",
+      "full_name": "Switzerland",
+      "supply_center": null
+    },
+    {
+      "name": "syr",
+      "full_name": "Syria",
+      "supply_center": null
+    },
+    {
+      "name": "tri",
+      "full_name": "Trieste",
+      "supply_center": "AUS"
+    },
+    {
+      "name": "tun",
+      "full_name": "Tunis",
+      "supply_center": "neutral"
+    },
+    {
+      "name": "tus",
+      "full_name": "Tuscany",
+      "supply_center": null
+    },
+    {
+      "name": "tyr",
+      "full_name": "Tyrolia",
+      "supply_center": null
+    },
+    {
+      "name": "tys",
+      "full_name": "Tyrrhenian Sea",
+      "supply_center": null
+    },
+    {
+      "name": "ukr",
+      "full_name": "Ukraine",
+      "supply_center": null
+    },
+    {
+      "name": "ven",
+      "full_name": "Venice",
+      "supply_center": "ITA"
+    },
+    {
+      "name": "vie",
+      "full_name": "Vienna",
+      "supply_center": "AUS"
+    },
+    {
+      "name": "wal",
+      "full_name": "Wales",
+      "supply_center": null
+    },
+    {
+      "name": "war",
+      "full_name": "Warsaw",
+      "supply_center": "RUS"
+    },
+    {
+      "name": "wes",
+      "full_name": "Western Mediterranean",
+      "supply_center": null
+    },
+    {
+      "name": "yor",
+      "full_name": "Yorkshire",
+      "supply_center": null
+    }
+  ],
+  "regions": [
+    {
+      "province": "adr",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "aeg",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "alb",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "ank",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "apu",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "arm",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "bal",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "bar",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "bel",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "ber",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "bla",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "bre",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "boh",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "bot",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "bud",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "bul",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "bul",
+      "coast": "e",
+      "terrain": "sea"
+    },
+    {
+      "province": "bul",
+      "coast": "s",
+      "terrain": "sea"
+    },
+    {
+      "province": "bur",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "cly",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "con",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "den",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "eas",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "edi",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "eng",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "fin",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "gal",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "gas",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "gre",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "hel",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "hol",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "ion",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "iri",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "kie",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "lon",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "lvn",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "lvp",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "lyo",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "mar",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "mao",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "mos",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "mun",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "naf",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "nao",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "nap",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "nth",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "nwg",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "nwy",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "par",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "pic",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "pie",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "por",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "pru",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "rom",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "ruh",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "rum",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "ser",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "sev",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "sil",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "ska",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "smy",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "spa",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "spa",
+      "coast": "n",
+      "terrain": "sea"
+    },
+    {
+      "province": "spa",
+      "coast": "s",
+      "terrain": "sea"
+    },
+    {
+      "province": "stp",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "stp",
+      "coast": "n",
+      "terrain": "sea"
+    },
+    {
+      "province": "stp",
+      "coast": "s",
+      "terrain": "sea"
+    },
+    {
+      "province": "swe",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "swi",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "syr",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "tri",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "tun",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "tus",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "tyr",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "tys",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "ukr",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "ven",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "vie",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "wal",
+      "coast": null,
+      "terrain": "coast"
+    },
+    {
+      "province": "war",
+      "coast": null,
+      "terrain": "land"
+    },
+    {
+      "province": "wes",
+      "coast": null,
+      "terrain": "sea"
+    },
+    {
+      "province": "yor",
+      "coast": null,
+      "terrain": "coast"
+    }
+  ],
+  "borders": [
+    {
+      "from": "adr",
+      "to": "alb",
+      "terrain": "sea"
+    },
+    {
+      "from": "adr",
+      "to": "apu",
+      "terrain": "sea"
+    },
+    {
+      "from": "adr",
+      "to": "ion",
+      "terrain": "sea"
+    },
+    {
+      "from": "adr",
+      "to": "tri",
+      "terrain": "sea"
+    },
+    {
+      "from": "adr",
+      "to": "ven",
+      "terrain": "sea"
+    },
+    {
+      "from": "aeg",
+      "to": "bul(sc)",
+      "terrain": "sea"
+    },
+    {
+      "from": "aeg",
+      "to": "con",
+      "terrain": "sea"
+    },
+    {
+      "from": "aeg",
+      "to": "eas",
+      "terrain": "sea"
+    },
+    {
+      "from": "aeg",
+      "to": "gre",
+      "terrain": "sea"
+    },
+    {
+      "from": "aeg",
+      "to": "ion",
+      "terrain": "sea"
+    },
+    {
+      "from": "aeg",
+      "to": "smy",
+      "terrain": "sea"
+    },
+    {
+      "from": "alb",
+      "to": "gre",
+      "terrain": "coast"
+    },
+    {
+      "from": "alb",
+      "to": "ion",
+      "terrain": "sea"
+    },
+    {
+      "from": "alb",
+      "to": "ser",
+      "terrain": "land"
+    },
+    {
+      "from": "alb",
+      "to": "tri",
+      "terrain": "coast"
+    },
+    {
+      "from": "ank",
+      "to": "arm",
+      "terrain": "coast"
+    },
+    {
+      "from": "ank",
+      "to": "bla",
+      "terrain": "sea"
+    },
+    {
+      "from": "ank",
+      "to": "con",
+      "terrain": "coast"
+    },
+    {
+      "from": "ank",
+      "to": "smy",
+      "terrain": "land"
+    },
+    {
+      "from": "apu",
+      "to": "ion",
+      "terrain": "sea"
+    },
+    {
+      "from": "apu",
+      "to": "nap",
+      "terrain": "coast"
+    },
+    {
+      "from": "apu",
+      "to": "rom",
+      "terrain": "land"
+    },
+    {
+      "from": "apu",
+      "to": "ven",
+      "terrain": "coast"
+    },
+    {
+      "from": "arm",
+      "to": "bla",
+      "terrain": "sea"
+    },
+    {
+      "from": "arm",
+      "to": "sev",
+      "terrain": "coast"
+    },
+    {
+      "from": "arm",
+      "to": "smy",
+      "terrain": "land"
+    },
+    {
+      "from": "arm",
+      "to": "syr",
+      "terrain": "land"
+    },
+    {
+      "from": "bal",
+      "to": "ber",
+      "terrain": "sea"
+    },
+    {
+      "from": "bal",
+      "to": "bot",
+      "terrain": "sea"
+    },
+    {
+      "from": "bal",
+      "to": "den",
+      "terrain": "sea"
+    },
+    {
+      "from": "bal",
+      "to": "kie",
+      "terrain": "sea"
+    },
+    {
+      "from": "bal",
+      "to": "lvn",
+      "terrain": "sea"
+    },
+    {
+      "from": "bal",
+      "to": "pru",
+      "terrain": "sea"
+    },
+    {
+      "from": "bal",
+      "to": "swe",
+      "terrain": "sea"
+    },
+    {
+      "from": "bar",
+      "to": "nwg",
+      "terrain": "sea"
+    },
+    {
+      "from": "bar",
+      "to": "nwy",
+      "terrain": "sea"
+    },
+    {
+      "from": "bar",
+      "to": "stp(nc)",
+      "terrain": "sea"
+    },
+    {
+      "from": "bel",
+      "to": "bur",
+      "terrain": "land"
+    },
+    {
+      "from": "bel",
+      "to": "eng",
+      "terrain": "sea"
+    },
+    {
+      "from": "bel",
+      "to": "hol",
+      "terrain": "coast"
+    },
+    {
+      "from": "bel",
+      "to": "nth",
+      "terrain": "sea"
+    },
+    {
+      "from": "bel",
+      "to": "pic",
+      "terrain": "coast"
+    },
+    {
+      "from": "bel",
+      "to": "ruh",
+      "terrain": "land"
+    },
+    {
+      "from": "ber",
+      "to": "kie",
+      "terrain": "coast"
+    },
+    {
+      "from": "ber",
+      "to": "mun",
+      "terrain": "land"
+    },
+    {
+      "from": "ber",
+      "to": "pru",
+      "terrain": "coast"
+    },
+    {
+      "from": "ber",
+      "to": "sil",
+      "terrain": "land"
+    },
+    {
+      "from": "bla",
+      "to": "bul(ec)",
+      "terrain": "sea"
+    },
+    {
+      "from": "bla",
+      "to": "con",
+      "terrain": "sea"
+    },
+    {
+      "from": "bla",
+      "to": "rum",
+      "terrain": "sea"
+    },
+    {
+      "from": "bla",
+      "to": "sev",
+      "terrain": "sea"
+    },
+    {
+      "from": "boh",
+      "to": "gal",
+      "terrain": "land"
+    },
+    {
+      "from": "boh",
+      "to": "mun",
+      "terrain": "land"
+    },
+    {
+      "from": "boh",
+      "to": "sil",
+      "terrain": "land"
+    },
+    {
+      "from": "boh",
+      "to": "tyr",
+      "terrain": "land"
+    },
+    {
+      "from": "boh",
+      "to": "vie",
+      "terrain": "land"
+    },
+    {
+      "from": "bot",
+      "to": "fin",
+      "terrain": "sea"
+    },
+    {
+      "from": "bot",
+      "to": "lvn",
+      "terrain": "sea"
+    },
+    {
+      "from": "bot",
+      "to": "stp(sc)",
+      "terrain": "sea"
+    },
+    {
+      "from": "bot",
+      "to": "swe",
+      "terrain": "sea"
+    },
+    {
+      "from": "bre",
+      "to": "eng",
+      "terrain": "sea"
+    },
+    {
+      "from": "bre",
+      "to": "gas",
+      "terrain": "coast"
+    },
+    {
+      "from": "bre",
+      "to": "mao",
+      "terrain": "sea"
+    },
+    {
+      "from": "bre",
+      "to": "par",
+      "terrain": "land"
+    },
+    {
+      "from": "bre",
+      "to": "pic",
+      "terrain": "coast"
+    },
+    {
+      "from": "bud",
+      "to": "gal",
+      "terrain": "land"
+    },
+    {
+      "from": "bud",
+      "to": "rum",
+      "terrain": "land"
+    },
+    {
+      "from": "bud",
+      "to": "ser",
+      "terrain": "land"
+    },
+    {
+      "from": "bud",
+      "to": "tri",
+      "terrain": "land"
+    },
+    {
+      "from": "bud",
+      "to": "vie",
+      "terrain": "land"
+    },
+    {
+      "from": "bul",
+      "to": "con",
+      "terrain": "land"
+    },
+    {
+      "from": "bul",
+      "to": "gre",
+      "terrain": "land"
+    },
+    {
+      "from": "bul",
+      "to": "rum",
+      "terrain": "land"
+    },
+    {
+      "from": "bul",
+      "to": "ser",
+      "terrain": "land"
+    },
+    {
+      "from": "bul(ec)",
+      "to": "con",
+      "terrain": "sea"
+    },
+    {
+      "from": "bul(ec)",
+      "to": "rum",
+      "terrain": "sea"
+    },
+    {
+      "from": "bul(sc)",
+      "to": "con",
+      "terrain": "sea"
+    },
+    {
+      "from": "bul(sc)",
+      "to": "gre",
+      "terrain": "sea"
+    },
+    {
+      "from": "bur",
+      "to": "gas",
+      "terrain": "land"
+    },
+    {
+      "from": "bur",
+      "to": "mar",
+      "terrain": "land"
+    },
+    {
+      "from": "bur",
+      "to": "mun",
+      "terrain": "land"
+    },
+    {
+      "from": "bur",
+      "to": "par",
+      "terrain": "land"
+    },
+    {
+      "from": "bur",
+      "to": "pic",
+      "terrain": "land"
+    },
+    {
+      "from": "bur",
+      "to": "ruh",
+      "terrain": "land"
+    },
+    {
+      "from": "cly",
+      "to": "edi",
+      "terrain": "coast"
+    },
+    {
+      "from": "cly",
+      "to": "lvp",
+      "terrain": "coast"
+    },
+    {
+      "from": "cly",
+      "to": "nao",
+      "terrain": "sea"
+    },
+    {
+      "from": "cly",
+      "to": "nwg",
+      "terrain": "sea"
+    },
+    {
+      "from": "con",
+      "to": "smy",
+      "terrain": "coast"
+    },
+    {
+      "from": "den",
+      "to": "hel",
+      "terrain": "sea"
+    },
+    {
+      "from": "den",
+      "to": "kie",
+      "terrain": "coast"
+    },
+    {
+      "from": "den",
+      "to": "nth",
+      "terrain": "sea"
+    },
+    {
+      "from": "den",
+      "to": "ska",
+      "terrain": "sea"
+    },
+    {
+      "from": "den",
+      "to": "swe",
+      "terrain": "coast"
+    },
+    {
+      "from": "eas",
+      "to": "ion",
+      "terrain": "sea"
+    },
+    {
+      "from": "eas",
+      "to": "smy",
+      "terrain": "sea"
+    },
+    {
+      "from": "eas",
+      "to": "syr",
+      "terrain": "sea"
+    },
+    {
+      "from": "edi",
+      "to": "lvp",
+      "terrain": "land"
+    },
+    {
+      "from": "edi",
+      "to": "nth",
+      "terrain": "sea"
+    },
+    {
+      "from": "edi",
+      "to": "nwg",
+      "terrain": "sea"
+    },
+    {
+      "from": "edi",
+      "to": "yor",
+      "terrain": "coast"
+    },
+    {
+      "from": "eng",
+      "to": "iri",
+      "terrain": "sea"
+    },
+    {
+      "from": "eng",
+      "to": "lon",
+      "terrain": "sea"
+    },
+    {
+      "from": "eng",
+      "to": "mao",
+      "terrain": "sea"
+    },
+    {
+      "from": "eng",
+      "to": "nth",
+      "terrain": "sea"
+    },
+    {
+      "from": "eng",
+      "to": "pic",
+      "terrain": "sea"
+    },
+    {
+      "from": "eng",
+      "to": "wal",
+      "terrain": "sea"
+    },
+    {
+      "from": "fin",
+      "to": "nwy",
+      "terrain": "land"
+    },
+    {
+      "from": "fin",
+      "to": "stp",
+      "terrain": "land"
+    },
+    {
+      "from": "fin",
+      "to": "stp(sc)",
+      "terrain": "sea"
+    },
+    {
+      "from": "fin",
+      "to": "swe",
+      "terrain": "coast"
+    },
+    {
+      "from": "gal",
+      "to": "rum",
+      "terrain": "land"
+    },
+    {
+      "from": "gal",
+      "to": "sil",
+      "terrain": "land"
+    },
+    {
+      "from": "gal",
+      "to": "ukr",
+      "terrain": "land"
+    },
+    {
+      "from": "gal",
+      "to": "vie",
+      "terrain": "land"
+    },
+    {
+      "from": "gal",
+      "to": "war",
+      "terrain": "land"
+    },
+    {
+      "from": "gas",
+      "to": "mao",
+      "terrain": "sea"
+    },
+    {
+      "from": "gas",
+      "to": "mar",
+      "terrain": "land"
+    },
+    {
+      "from": "gas",
+      "to": "par",
+      "terrain": "land"
+    },
+    {
+      "from": "gas",
+      "to": "spa",
+      "terrain": "land"
+    },
+    {
+      "from": "gas",
+      "to": "spa(nc)",
+      "terrain": "sea"
+    },
+    {
+      "from": "gre",
+      "to": "ion",
+      "terrain": "sea"
+    },
+    {
+      "from": "gre",
+      "to": "ser",
+      "terrain": "land"
+    },
+    {
+      "from": "hel",
+      "to": "hol",
+      "terrain": "sea"
+    },
+    {
+      "from": "hel",
+      "to": "kie",
+      "terrain": "sea"
+    },
+    {
+      "from": "hel",
+      "to": "nth",
+      "terrain": "sea"
+    },
+    {
+      "from": "hol",
+      "to": "kie",
+      "terrain": "coast"
+    },
+    {
+      "from": "hol",
+      "to": "nth",
+      "terrain": "sea"
+    },
+    {
+      "from": "hol",
+      "to": "ruh",
+      "terrain": "land"
+    },
+    {
+      "from": "ion",
+      "to": "nap",
+      "terrain": "sea"
+    },
+    {
+      "from": "ion",
+      "to": "tun",
+      "terrain": "sea"
+    },
+    {
+      "from": "ion",
+      "to": "tys",
+      "terrain": "sea"
+    },
+    {
+      "from": "iri",
+      "to": "lvp",
+      "terrain": "sea"
+    },
+    {
+      "from": "iri",
+      "to": "mao",
+      "terrain": "sea"
+    },
+    {
+      "from": "iri",
+      "to": "nao",
+      "terrain": "sea"
+    },
+    {
+      "from": "iri",
+      "to": "wal",
+      "terrain": "sea"
+    },
+    {
+      "from": "kie",
+      "to": "mun",
+      "terrain": "land"
+    },
+    {
+      "from": "kie",
+      "to": "ruh",
+      "terrain": "land"
+    },
+    {
+      "from": "lon",
+      "to": "nth",
+      "terrain": "sea"
+    },
+    {
+      "from": "lon",
+      "to": "wal",
+      "terrain": "coast"
+    },
+    {
+      "from": "lon",
+      "to": "yor",
+      "terrain": "coast"
+    },
+    {
+      "from": "lvn",
+      "to": "mos",
+      "terrain": "land"
+    },
+    {
+      "from": "lvn",
+      "to": "pru",
+      "terrain": "coast"
+    },
+    {
+      "from": "lvn",
+      "to": "stp",
+      "terrain": "land"
+    },
+    {
+      "from": "lvn",
+      "to": "stp(sc)",
+      "terrain": "sea"
+    },
+    {
+      "from": "lvn",
+      "to": "war",
+      "terrain": "land"
+    },
+    {
+      "from": "lvp",
+      "to": "nao",
+      "terrain": "sea"
+    },
+    {
+      "from": "lvp",
+      "to": "wal",
+      "terrain": "coast"
+    },
+    {
+      "from": "lvp",
+      "to": "yor",
+      "terrain": "land"
+    },
+    {
+      "from": "lyo",
+      "to": "mar",
+      "terrain": "sea"
+    },
+    {
+      "from": "lyo",
+      "to": "pie",
+      "terrain": "sea"
+    },
+    {
+      "from": "lyo",
+      "to": "spa(sc)",
+      "terrain": "sea"
+    },
+    {
+      "from": "lyo",
+      "to": "tus",
+      "terrain": "sea"
+    },
+    {
+      "from": "lyo",
+      "to": "tys",
+      "terrain": "sea"
+    },
+    {
+      "from": "lyo",
+      "to": "wes",
+      "terrain": "sea"
+    },
+    {
+      "from": "mao",
+      "to": "naf",
+      "terrain": "sea"
+    },
+    {
+      "from": "mao",
+      "to": "nao",
+      "terrain": "sea"
+    },
+    {
+      "from": "mao",
+      "to": "por",
+      "terrain": "sea"
+    },
+    {
+      "from": "mao",
+      "to": "spa(nc)",
+      "terrain": "sea"
+    },
+    {
+      "from": "mao",
+      "to": "spa(sc)",
+      "terrain": "sea"
+    },
+    {
+      "from": "mao",
+      "to": "wes",
+      "terrain": "sea"
+    },
+    {
+      "from": "mar",
+      "to": "pie",
+      "terrain": "coast"
+    },
+    {
+      "from": "mar",
+      "to": "spa",
+      "terrain": "land"
+    },
+    {
+      "from": "mar",
+      "to": "spa(sc)",
+      "terrain": "sea"
+    },
+    {
+      "from": "mos",
+      "to": "sev",
+      "terrain": "land"
+    },
+    {
+      "from": "mos",
+      "to": "stp",
+      "terrain": "land"
+    },
+    {
+      "from": "mos",
+      "to": "ukr",
+      "terrain": "land"
+    },
+    {
+      "from": "mos",
+      "to": "war",
+      "terrain": "land"
+    },
+    {
+      "from": "mun",
+      "to": "ruh",
+      "terrain": "land"
+    },
+    {
+      "from": "mun",
+      "to": "sil",
+      "terrain": "land"
+    },
+    {
+      "from": "mun",
+      "to": "tyr",
+      "terrain": "land"
+    },
+    {
+      "from": "naf",
+      "to": "tun",
+      "terrain": "coast"
+    },
+    {
+      "from": "naf",
+      "to": "wes",
+      "terrain": "sea"
+    },
+    {
+      "from": "nao",
+      "to": "nwg",
+      "terrain": "sea"
+    },
+    {
+      "from": "nap",
+      "to": "rom",
+      "terrain": "coast"
+    },
+    {
+      "from": "nap",
+      "to": "tys",
+      "terrain": "sea"
+    },
+    {
+      "from": "nth",
+      "to": "nwg",
+      "terrain": "sea"
+    },
+    {
+      "from": "nth",
+      "to": "nwy",
+      "terrain": "sea"
+    },
+    {
+      "from": "nth",
+      "to": "ska",
+      "terrain": "sea"
+    },
+    {
+      "from": "nth",
+      "to": "yor",
+      "terrain": "sea"
+    },
+    {
+      "from": "nwg",
+      "to": "nwy",
+      "terrain": "sea"
+    },
+    {
+      "from": "nwy",
+      "to": "ska",
+      "terrain": "sea"
+    },
+    {
+      "from": "nwy",
+      "to": "stp",
+      "terrain": "land"
+    },
+    {
+      "from": "nwy",
+      "to": "stp(nc)",
+      "terrain": "sea"
+    },
+    {
+      "from": "nwy",
+      "to": "swe",
+      "terrain": "coast"
+    },
+    {
+      "from": "par",
+      "to": "pic",
+      "terrain": "land"
+    },
+    {
+      "from": "pie",
+      "to": "tus",
+      "terrain": "coast"
+    },
+    {
+      "from": "pie",
+      "to": "tyr",
+      "terrain": "land"
+    },
+    {
+      "from": "pie",
+      "to": "ven",
+      "terrain": "land"
+    },
+    {
+      "from": "por",
+      "to": "spa",
+      "terrain": "land"
+    },
+    {
+      "from": "por",
+      "to": "spa(nc)",
+      "terrain": "sea"
+    },
+    {
+      "from": "por",
+      "to": "spa(sc)",
+      "terrain": "sea"
+    },
+    {
+      "from": "pru",
+      "to": "sil",
+      "terrain": "land"
+    },
+    {
+      "from": "pru",
+      "to": "war",
+      "terrain": "land"
+    },
+    {
+      "from": "rom",
+      "to": "tus",
+      "terrain": "coast"
+    },
+    {
+      "from": "rom",
+      "to": "tys",
+      "terrain": "sea"
+    },
+    {
+      "from": "rom",
+      "to": "ven",
+      "terrain": "land"
+    },
+    {
+      "from": "rum",
+      "to": "ser",
+      "terrain": "land"
+    },
+    {
+      "from": "rum",
+      "to": "sev",
+      "terrain": "coast"
+    },
+    {
+      "from": "rum",
+      "to": "ukr",
+      "terrain": "land"
+    },
+    {
+      "from": "ser",
+      "to": "tri",
+      "terrain": "land"
+    },
+    {
+      "from": "sev",
+      "to": "ukr",
+      "terrain": "land"
+    },
+    {
+      "from": "sil",
+      "to": "war",
+      "terrain": "land"
+    },
+    {
+      "from": "ska",
+      "to": "swe",
+      "terrain": "sea"
+    },
+    {
+      "from": "smy",
+      "to": "syr",
+      "terrain": "coast"
+    },
+    {
+      "from": "spa(sc)",
+      "to": "wes",
+      "terrain": "sea"
+    },
+    {
+      "from": "tri",
+      "to": "tyr",
+      "terrain": "land"
+    },
+    {
+      "from": "tri",
+      "to": "ven",
+      "terrain": "coast"
+    },
+    {
+      "from": "tri",
+      "to": "vie",
+      "terrain": "land"
+    },
+    {
+      "from": "tun",
+      "to": "tys",
+      "terrain": "sea"
+    },
+    {
+      "from": "tun",
+      "to": "wes",
+      "terrain": "sea"
+    },
+    {
+      "from": "tus",
+      "to": "tys",
+      "terrain": "sea"
+    },
+    {
+      "from": "tus",
+      "to": "ven",
+      "terrain": "land"
+    },
+    {
+      "from": "tyr",
+      "to": "ven",
+      "terrain": "land"
+    },
+    {
+      "from": "tyr",
+      "to": "vie",
+      "terrain": "land"
+    },
+    {
+      "from": "tys",
+      "to": "wes",
+      "terrain": "sea"
+    },
+    {
+      "from": "ukr",
+      "to": "war",
+      "terrain": "land"
+    },
+    {
+      "from": "wal",
+      "to": "yor",
+      "terrain": "land"
+    }
+  ],
+  "powers": [
+    {
+      "code": "AUS",
+      "name": "Austria"
+    },
+    {
+      "code": "ENG",
+      "name": "England"
+    },
+    {
+      "code": "FRA",
+      "name": "France"
+    },
+    {
+      "code": "GER",
+      "name": "Germany"
+    },
+    {
+      "code": "ITA",
+      "name": "Italy"
+    },
+    {
+      "code": "RUS",
+      "name": "Russia"
+    },
+    {
+      "code": "TUR",
+      "name": "Turkey"
+    }
+  ],
+  "homes": {
+    "AUS": [
+      "bud",
+      "tri",
+      "vie"
+    ],
+    "ENG": [
+      "edi",
+      "lon",
+      "lvp"
+    ],
+    "FRA": [
+      "bre",
+      "mar",
+      "par"
+    ],
+    "GER": [
+      "ber",
+      "kie",
+      "mun"
+    ],
+    "ITA": [
+      "nap",
+      "rom",
+      "ven"
+    ],
+    "RUS": [
+      "mos",
+      "sev",
+      "stp",
+      "war"
+    ],
+    "TUR": [
+      "ank",
+      "con",
+      "smy"
+    ]
+  },
+  "starting_units": [
+    {
+      "power": "AUS",
+      "kind": "army",
+      "region": "vie"
+    },
+    {
+      "power": "AUS",
+      "kind": "army",
+      "region": "bud"
+    },
+    {
+      "power": "AUS",
+      "kind": "fleet",
+      "region": "tri"
+    },
+    {
+      "power": "ENG",
+      "kind": "fleet",
+      "region": "lon"
+    },
+    {
+      "power": "ENG",
+      "kind": "fleet",
+      "region": "edi"
+    },
+    {
+      "power": "ENG",
+      "kind": "army",
+      "region": "lvp"
+    },
+    {
+      "power": "FRA",
+      "kind": "army",
+      "region": "par"
+    },
+    {
+      "power": "FRA",
+      "kind": "army",
+      "region": "mar"
+    },
+    {
+      "power": "FRA",
+      "kind": "fleet",
+      "region": "bre"
+    },
+    {
+      "power": "GER",
+      "kind": "army",
+      "region": "ber"
+    },
+    {
+      "power": "GER",
+      "kind": "army",
+      "region": "mun"
+    },
+    {
+      "power": "GER",
+      "kind": "fleet",
+      "region": "kie"
+    },
+    {
+      "power": "ITA",
+      "kind": "army",
+      "region": "rom"
+    },
+    {
+      "power": "ITA",
+      "kind": "army",
+      "region": "ven"
+    },
+    {
+      "power": "ITA",
+      "kind": "fleet",
+      "region": "nap"
+    },
+    {
+      "power": "RUS",
+      "kind": "army",
+      "region": "mos"
+    },
+    {
+      "power": "RUS",
+      "kind": "army",
+      "region": "war"
+    },
+    {
+      "power": "RUS",
+      "kind": "fleet",
+      "region": "sev"
+    },
+    {
+      "power": "RUS",
+      "kind": "fleet",
+      "region": "stp(sc)"
+    },
+    {
+      "power": "TUR",
+      "kind": "army",
+      "region": "con"
+    },
+    {
+      "power": "TUR",
+      "kind": "army",
+      "region": "smy"
+    },
+    {
+      "power": "TUR",
+      "kind": "fleet",
+      "region": "ank"
+    }
+  ],
+  "rulebook_overrides": {}
+}

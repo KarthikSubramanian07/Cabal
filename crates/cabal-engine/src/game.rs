@@ -59,6 +59,7 @@ pub struct Game {
 
 impl Game {
     pub fn new(map: &'static Map, rulebook: Rulebook) -> Game {
+        let rulebook = map.rulebook_overrides.apply(rulebook);
         Game {
             map,
             rulebook,
@@ -70,6 +71,7 @@ impl Game {
 
     /// Start from an arbitrary state (for replays, sandboxes and tests).
     pub fn from_state(map: &'static Map, rulebook: Rulebook, state: GameState) -> Game {
+        let rulebook = map.rulebook_overrides.apply(rulebook);
         Game {
             map,
             rulebook,

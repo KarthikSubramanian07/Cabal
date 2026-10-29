@@ -1,9 +1,9 @@
 # Data attribution
 
-`provinces.csv` and `regions.csv` describe the classic 1901 Diplomacy map (75 playable provinces plus
-impassable Switzerland, 81 regions). They are derived from
+`maps/standard.json` describes the classic 1901 Diplomacy map (75 playable provinces plus
+impassable Switzerland, 81 regions, 218 borders). Its province and region tables are derived from
 [TedDriggs/diplomacy](https://github.com/TedDriggs/diplomacy) (MIT License, Copyright (c) 2025 Ted Driggs)
-and used here under the same license. `borders.csv` (218 borders) was regenerated from the adjacency
+and used here under the same license. Its border table was regenerated from the adjacency
 facts of the standard map as encoded by zond/godip and cross-checked against the MILA `standard.map`;
 the upstream table was missing nine edges (for example Gulf of Bothnia to St Petersburg south coast).
 
