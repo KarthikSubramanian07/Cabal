@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::adjudicate::movement::{convoy_possible, on_convoy_route};
+use crate::adjudicate::movement::{convoy_destinations, convoy_route_fleets};
 use crate::geo::{Map, Power, ProvinceId, Region, SupplyCenter, UnitKind};
 use crate::order::{
     AdjustCommand, AdjustOrder, Command, Order, RetreatCommand, RetreatOrder, Unit,
@@ -27,18 +27,68 @@ fn fleet_seas(map: &Map, position: &Position) -> BTreeSet<ProvinceId> {
         .collect()
 }
 
+/// Convoy reachability for one position, searched once per army and shared by every
+/// order that asks about it.
+struct Convoys {
+    /// Province count, the row length of `routes`.
+    n: usize,
+    /// For each coastal army (by province id): provinces it can reach by some convoy.
+    dests: Vec<Option<Vec<bool>>>,
+    /// For each coastal army (by province id), when the power has a fleet at sea:
+    /// `[dest * n + fleet]` is set when `fleet` is on a convoy route to `dest`.
+    routes: Vec<Option<Vec<bool>>>,
+}
+
+impl Convoys {
+    fn new(map: &Map, position: &Position, seas: &BTreeSet<ProvinceId>, power: Power) -> Self {
+        let n = map.provinces().len();
+        let convoys = position
+            .units_of(power)
+            .any(|u| u.kind == UnitKind::Fleet && map.is_sea(u.province()));
+        let mut dests = vec![None; n];
+        let mut routes = vec![None; n];
+        if seas.is_empty() {
+            // no fleet at sea: nothing can be convoyed (the 1901 position)
+            return Convoys { n, dests, routes };
+        }
+        for army in position
+            .units
+            .iter()
+            .filter(|a| a.kind == UnitKind::Army && map.is_coastal(a.province()))
+        {
+            let i = army.province().0 as usize;
+            dests[i] = Some(convoy_destinations(map, seas, army.province()));
+            if convoys {
+                routes[i] = Some(convoy_route_fleets(map, seas, army.province()));
+            }
+        }
+        Convoys { n, dests, routes }
+    }
+
+    /// Can the army in `origin` reach `dest` by some convoy?
+    fn possible(&self, origin: ProvinceId, dest: ProvinceId) -> bool {
+        self.dests[origin.0 as usize]
+            .as_ref()
+            .is_some_and(|d| d[dest.0 as usize])
+    }
+
+    /// Is `fleet` on some convoy route for the army in `origin` to `dest`?
+    fn on_route(&self, origin: ProvinceId, dest: ProvinceId, fleet: ProvinceId) -> bool {
+        self.routes[origin.0 as usize]
+            .as_ref()
+            .is_some_and(|r| r[dest.0 as usize * self.n + fleet.0 as usize])
+    }
+}
+
 /// Regions a unit can move to directly, plus (for armies) provinces reachable by convoy.
-fn destinations(map: &Map, seas: &BTreeSet<ProvinceId>, unit: &Unit) -> Vec<(Region, bool)> {
+fn destinations(map: &Map, convoys: &Convoys, unit: &Unit) -> Vec<(Region, bool)> {
     let mut out: Vec<(Region, bool)> = Vec::new();
     for r in map.reachable(unit.region, unit.kind) {
         out.push((r, false));
     }
     if unit.kind == UnitKind::Army && map.is_coastal(unit.province()) {
         for p in map.province_ids() {
-            if p != unit.province()
-                && map.is_coastal(p)
-                && convoy_possible(map, seas, unit.province(), p)
-            {
+            if convoys.possible(unit.province(), p) {
                 out.push((Region::land(p), true));
             }
         }
@@ -49,12 +99,9 @@ fn destinations(map: &Map, seas: &BTreeSet<ProvinceId>, unit: &Unit) -> Vec<(Reg
 }
 
 /// Can `unit` reach province `p` (directly, or for armies by some convoy)?
-fn can_reach(map: &Map, seas: &BTreeSet<ProvinceId>, unit: &Unit, p: ProvinceId) -> bool {
+fn can_reach(map: &Map, convoys: &Convoys, unit: &Unit, p: ProvinceId) -> bool {
     map.adjacent_province(unit.region, unit.kind, p)
-        || (unit.kind == UnitKind::Army
-            && map.is_coastal(unit.province())
-            && map.is_coastal(p)
-            && convoy_possible(map, seas, unit.province(), p))
+        || (unit.kind == UnitKind::Army && convoys.possible(unit.province(), p))
 }
 
 /// All legal movement orders for every unit of `power`, keyed by the unit's province.
@@ -64,6 +111,7 @@ pub fn legal_movement(
     power: Power,
 ) -> BTreeMap<ProvinceId, Vec<Order>> {
     let seas = fleet_seas(map, position);
+    let convoys = Convoys::new(map, position, &seas, power);
     let mut out = BTreeMap::new();
     for unit in position.units_of(power) {
         let mut orders = vec![Order {
@@ -72,7 +120,7 @@ pub fn legal_movement(
             command: Command::Hold,
         }];
         // moves
-        for (r, via) in destinations(map, &seas, unit) {
+        for (r, via) in destinations(map, &convoys, unit) {
             let coast = if map.province(r.province).coasts.is_empty() {
                 None
             } else {
@@ -109,7 +157,7 @@ pub fn legal_movement(
                 if other.province() == unit.province() || other.province() == p {
                     continue;
                 }
-                if can_reach(map, &seas, other, p) {
+                if can_reach(map, &convoys, other, p) {
                     orders.push(Order {
                         power,
                         unit: unit.province(),
@@ -132,7 +180,7 @@ pub fn legal_movement(
                 for dest in map.province_ids() {
                     if dest != army.province()
                         && map.is_coastal(dest)
-                        && on_convoy_route(map, &seas, army.province(), dest, unit.province())
+                        && convoys.on_route(army.province(), dest, unit.province())
                     {
                         orders.push(Order {
                             power,

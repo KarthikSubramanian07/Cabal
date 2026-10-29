@@ -1078,3 +1078,78 @@ fn sea_path_exists(map: &Map, seas: &[ProvinceId], origin: ProvinceId, dest: Pro
         .iter()
         .any(|&s| map.fleet_adjacent(s, dest))
 }
+
+/// [`convoy_possible`] from `origin` to every province at once, indexed by province id.
+/// The sea search runs once and is shared by every destination.
+pub(crate) fn convoy_destinations(
+    map: &Map,
+    fleet_seas: &BTreeSet<ProvinceId>,
+    origin: ProvinceId,
+) -> Vec<bool> {
+    let mut out = vec![false; map.provinces().len()];
+    if !map.is_coastal(origin) || fleet_seas.is_empty() {
+        return out;
+    }
+    let seas: Vec<ProvinceId> = fleet_seas.iter().copied().collect();
+    let reach = reachable_seas(map, &seas, origin);
+    for p in map.province_ids() {
+        out[p.0 as usize] =
+            p != origin && map.is_coastal(p) && reach.iter().any(|&s| map.fleet_adjacent(s, p));
+    }
+    out
+}
+
+/// [`on_convoy_route`] from `origin` for every destination and fleet at once, row-major
+/// `[dest * len + fleet]`. The chordless chains leaving `origin` do not depend on the
+/// destination or the fleet asked about, so one walk over them answers every query.
+pub(crate) fn convoy_route_fleets(
+    map: &Map,
+    fleet_seas: &BTreeSet<ProvinceId>,
+    origin: ProvinceId,
+) -> Vec<bool> {
+    let n = map.provinces().len();
+    let mut out = vec![false; n * n];
+    let seas: Vec<ProvinceId> = fleet_seas.iter().copied().collect();
+    let mut chain = Vec::new();
+    route_walk(map, &seas, &mut chain, origin, &mut out);
+    out
+}
+
+/// The walk of [`chordless_dfs`] without a target: at every chain, record each destination
+/// it is a non-detour route to, against every fleet on it.
+fn route_walk(
+    map: &Map,
+    seas: &[ProvinceId],
+    chain: &mut Vec<ProvinceId>,
+    origin: ProvinceId,
+    out: &mut [bool],
+) {
+    let n = map.provinces().len();
+    let last = *chain.last().unwrap_or(&origin);
+    if let Some((_, before)) = chain.split_last() {
+        for dest in map.province_ids() {
+            if map.fleet_adjacent(last, dest)
+                && !before.iter().any(|&e| map.fleet_adjacent(e, dest))
+            {
+                let row = dest.0 as usize * n;
+                for &f in chain.iter() {
+                    out[row + f.0 as usize] = true;
+                }
+            }
+        }
+    }
+    for &s in seas {
+        if chain.contains(&s)
+            || !map.fleet_adjacent(last, s)
+            || (!chain.is_empty()
+                && std::iter::once(&origin)
+                    .chain(&chain[..chain.len() - 1])
+                    .any(|&e| map.fleet_adjacent(e, s)))
+        {
+            continue;
+        }
+        chain.push(s);
+        route_walk(map, seas, chain, origin, out);
+        chain.pop();
+    }
+}
