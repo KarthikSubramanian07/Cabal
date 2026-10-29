@@ -408,7 +408,9 @@ impl Game {
             game.process(&typed).map_err(|_| ReplayError::Finished)?;
             let expected = &saved.phases[i + 1].state;
             let got = state_to_mila(map, &game.state);
-            if got.units != expected.units || got.centers != expected.centers {
+            if !same_holdings(&got.units, &expected.units)
+                || !same_holdings(&got.centers, &expected.centers)
+            {
                 return Err(ReplayError::Diverged {
                     phase: phase.name.clone(),
                 });
@@ -416,6 +418,20 @@ impl Game {
         }
         Ok(game)
     }
+}
+
+/// Compare per-power unit or centre lists as sets. Other MILA writers (Cicero
+/// among them) list a power's holdings in their own order and may omit powers
+/// that hold nothing, neither of which is a divergence.
+fn same_holdings(a: &BTreeMap<String, Vec<String>>, b: &BTreeMap<String, Vec<String>>) -> bool {
+    let sorted = |m: &BTreeMap<String, Vec<String>>, k: &String| {
+        let mut v = m.get(k).cloned().unwrap_or_default();
+        v.sort();
+        v
+    };
+    a.keys()
+        .chain(b.keys())
+        .all(|k| sorted(a, k) == sorted(b, k))
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
