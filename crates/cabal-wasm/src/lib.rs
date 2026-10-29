@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use cabal_engine::geo::{Map, SupplyCenter, Terrain, UnitKind};
+use cabal_engine::geo::{Map, Power, SupplyCenter, Terrain, UnitKind};
 use cabal_engine::json::{MilaState, SavedGame, state_from_mila, state_to_mila};
 use cabal_engine::order::AnyOrder;
 use cabal_engine::outcome::{AdjustOutcome, RetreatOutcome};
@@ -288,6 +288,22 @@ fn rulebook_of(name: Option<String>) -> Result<Rulebook, JsError> {
     }
 }
 
+/// Parse an order submitted on behalf of power `p`. Order text may carry a
+/// power prefix (`FRA: A PAR H`), but only one naming `p` itself: the key an
+/// order is filed under is the authority, and a prefix must never let one
+/// power order another's units.
+fn parse_for(map: &Map, text: &str, p: Power) -> Result<cabal_engine::parse::Parsed, String> {
+    let parsed = parse(map, text).map_err(|e| format!("{text}: {e}"))?;
+    match parsed.power {
+        Some(named) if named != p => Err(format!(
+            "{text}: order names {} but was submitted for {}",
+            map.power(named).name,
+            map.power(p).name
+        )),
+        _ => Ok(parsed),
+    }
+}
+
 fn typed_orders(game: &EngineGame, orders: &OrdersByPower) -> Result<Vec<AnyOrder>, JsError> {
     let map = game.map();
     let mut out = Vec::new();
@@ -296,7 +312,7 @@ fn typed_orders(game: &EngineGame, orders: &OrdersByPower) -> Result<Vec<AnyOrde
             .find_power(power)
             .ok_or_else(|| JsError::new(&format!("unknown power {power}")))?;
         for text in list {
-            let parsed = parse(map, text).map_err(|e| JsError::new(&format!("{text}: {e}")))?;
+            let parsed = parse_for(map, text, p).map_err(|e| JsError::new(&e))?;
             let order = match game.phase().kind {
                 PhaseKind::Movement => parsed.to_movement(Some(p)).map(AnyOrder::Movement),
                 PhaseKind::Retreat => parsed.to_retreat(Some(p)).map(AnyOrder::Retreat),
@@ -580,7 +596,7 @@ impl Game {
                 .find_power(power)
                 .ok_or_else(|| JsError::new(&format!("unknown power {power}")))?;
             for text in texts {
-                let parsed = parse(map, text).map_err(|e| JsError::new(&e.to_string()))?;
+                let parsed = parse_for(map, text, p).map_err(|e| JsError::new(&e))?;
                 let order = parsed
                     .to_movement(Some(p))
                     .map_err(|e| JsError::new(&e.to_string()))?;
@@ -696,7 +712,7 @@ pub fn canonical_order(text: &str, phase_kind: &str, power: &str) -> Result<Stri
     let p = map
         .find_power(power)
         .ok_or_else(|| JsError::new(&format!("unknown power {power}")))?;
-    let parsed = parse(map, text).map_err(|e| JsError::new(&e.to_string()))?;
+    let parsed = parse_for(map, text, p).map_err(|e| JsError::new(&e))?;
     let mut pos = cabal_engine::Position::default();
     let mut place = |kind: UnitKind, region: cabal_engine::Region| {
         let region = if kind == UnitKind::Army {

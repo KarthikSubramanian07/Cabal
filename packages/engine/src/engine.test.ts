@@ -90,8 +90,8 @@ describe("Game", () => {
     const canonical = game.normaliseOrders(input);
     expect(canonical.orders.FRANCE).toEqual(["A PAR - BUR", "A MAR - SPA"]);
     expect(game.normaliseOrders(canonical)).toEqual(canonical);
-    const prefixed = game.normaliseOrders({ orders: { GERMANY: ["FRANCE: A PAR - BUR"] } });
-    expect(prefixed.orders.GERMANY).toEqual(["FRA: A PAR - BUR"]);
+    const prefixed = game.normaliseOrders({ orders: { FRANCE: ["FRANCE: A PAR - BUR"] } });
+    expect(prefixed.orders.FRANCE).toEqual(["FRA: A PAR - BUR"]);
     expect(game.normaliseOrders(prefixed)).toEqual(prefixed);
     const outcome = game.process(canonical);
     expect(outcome.next.units.FRANCE).toContain("A BUR");
@@ -121,6 +121,15 @@ describe("Game", () => {
     const mar = first.results.findIndex((r) => r.unit === "A MAR");
     expect(first.dependencies).toContainEqual([par, mar]);
     expect(JSON.parse(JSON.stringify(first)).dependencies).toEqual(first.dependencies);
+  });
+
+  it("never lets a power prefix order another power's units", () => {
+    const game = new Game();
+    const spoofed = { orders: { GERMANY: ["FRA: A PAR - PIC"] } };
+    expect(() => game.normaliseOrders(spoofed)).toThrow(/submitted for Germany/);
+    expect(() => game.process(spoofed)).toThrow(/submitted for Germany/);
+    expect(() => canonicalOrder("FRA: A PAR - PIC", "M", "GERMANY")).toThrow(/submitted for Germany/);
+    expect(canonicalOrder("GER: A MUN - BUR", "M", "GERMANY")).toBe("A MUN - BUR");
   });
 
   it("rejects orders that do not parse", () => {
