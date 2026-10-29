@@ -34,6 +34,20 @@ import { hashToken, mintToken, parseToken, randomId } from "./tokens.js";
 
 type Status = "lobby" | "active" | "finished";
 
+/** Abuse limits. A room is single threaded, so every unbounded input is a way to stall a game. */
+const LIMITS = {
+  /** Token bucket per socket: burst size and refill per second. */
+  burst: 30,
+  refillPerSecond: 10,
+  /** Press messages one power may send in one phase. */
+  pressPerPhase: 60,
+  /** Events replayed by one `sync` request; clients page with `since`. */
+  syncPage: 500,
+  /** Press messages included in a welcome frame (the most recent ones). */
+  welcomePress: 500,
+  spectators: 200,
+} as const;
+
 interface Meta {
   id: string;
   settings: Settings;
@@ -133,13 +147,16 @@ export class GameRoom extends DurableObject<Env> {
   private sql = this.ctx.storage.sql;
   private meta: Meta | null = null;
   private game: Game | null = null;
+  /** Per-socket rate limit buckets. In memory only: hibernation resets them, which is harmless. */
+  private buckets = new WeakMap<WebSocket, { tokens: number; at: number }>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
       await engineReady();
-      this.sql.exec(SCHEMA);
       this.meta = (await ctx.storage.get<Meta>("meta")) ?? null;
+      // Looking up a code that names no game must not write storage; create() lays the schema down.
+      if (this.meta) this.sql.exec(SCHEMA);
       const saved = await ctx.storage.get<string>("saved");
       if (saved) this.game = Game.fromSaved(saved, this.meta?.settings.rulebook);
       else if (this.meta) this.game = new Game(this.meta.settings.rulebook);
@@ -154,7 +171,10 @@ export class GameRoom extends DurableObject<Env> {
     if (request.method === "POST" && path === "/create") return this.create(request);
     if (request.method === "POST" && path === "/join") return this.join(request);
     if (request.method === "POST" && path === "/start") return this.start(request);
-    if (request.method === "GET" && path === "/summary") return json(this.summary());
+    if (request.method === "GET" && path === "/summary") {
+      if (!this.meta) return bad("no such game", 404);
+      return json(this.summary());
+    }
     if (request.method === "GET" && path === "/replay") {
       if (!this.game || !this.meta) return bad("no such game", 404);
       return new Response(this.game.toSaved(this.meta.id), {
@@ -167,6 +187,7 @@ export class GameRoom extends DurableObject<Env> {
 
   private async create(request: Request): Promise<Response> {
     if (this.meta) return bad("game exists", 409);
+    this.sql.exec(SCHEMA);
     const body = (await request.json()) as { id: string; name: string; settings?: unknown };
     const settings = GameSettings.parse(body.settings ?? {});
     const creator = POWERS[Math.floor(Math.random() * POWERS.length)] as PowerName;
@@ -242,7 +263,7 @@ export class GameRoom extends DurableObject<Env> {
     return {
       id: this.meta?.id ?? null,
       settings: this.meta?.settings ?? null,
-      status: this.meta?.status ?? "missing",
+      status: this.meta?.status ?? "lobby",
       phase: this.game?.phase() ?? null,
       deadlineAt: this.meta?.deadlineAt ?? null,
       seats: this.seatViews(),
@@ -287,6 +308,9 @@ export class GameRoom extends DurableObject<Env> {
     const token = new URL(request.url).searchParams.get("token") ?? "";
     const power = token ? await this.authorise(token) : null;
     if (token && !power) return bad("bad token", 401);
+    if (!power && this.ctx.getWebSockets("spectator").length >= LIMITS.spectators) {
+      return bad("too many spectators", 503);
+    }
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(server, [power ?? "spectator"]);
@@ -320,8 +344,23 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
+  /** Spend one token from the socket's bucket; false when it is empty. */
+  private allow(ws: WebSocket): boolean {
+    const now = Date.now();
+    const bucket = this.buckets.get(ws) ?? { tokens: LIMITS.burst, at: now };
+    bucket.tokens = Math.min(LIMITS.burst, bucket.tokens + ((now - bucket.at) / 1000) * LIMITS.refillPerSecond);
+    bucket.at = now;
+    const ok = bucket.tokens >= 1;
+    if (ok) bucket.tokens -= 1;
+    this.buckets.set(ws, bucket);
+    return ok;
+  }
+
   override async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     if (typeof raw !== "string") return;
+    if (!this.allow(ws)) {
+      return this.send(ws, { t: "error", p: { code: "rate_limited", message: "slow down" } });
+    }
     let data: unknown;
     try {
       data = JSON.parse(raw);
@@ -388,9 +427,13 @@ export class GameRoom extends DurableObject<Env> {
 
   private eventsSince(since: number, power: PowerName | null): string[] {
     return this.sql
-      .exec<{ audience: string; payload_json: string }>("SELECT audience, payload_json FROM events WHERE seq > ? ORDER BY seq", since)
+      .exec<{ payload_json: string }>(
+        "SELECT payload_json FROM events WHERE seq > ? AND (audience = 'ALL' OR audience = ?) ORDER BY seq LIMIT ?",
+        since,
+        power ?? "ALL",
+        LIMITS.syncPage,
+      )
       .toArray()
-      .filter((e) => e.audience === "ALL" || e.audience === power)
       .map((e) => e.payload_json);
   }
 
@@ -463,6 +506,7 @@ export class GameRoom extends DurableObject<Env> {
 
   private async setReady(power: PowerName, phase: string, ready: boolean): Promise<void> {
     if (phase !== this.game!.phase()) return;
+    if (this.seat(power)?.ready === (ready ? 1 : 0)) return; // unchanged: no write, no broadcast
     this.sql.exec("UPDATE seats SET ready = ? WHERE power = ?", ready ? 1 : 0, power);
     this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
     const waiting = this.seats().filter((s) => s.kind === "human" && s.eliminated === 0 && s.ready === 0);
@@ -472,14 +516,19 @@ export class GameRoom extends DurableObject<Env> {
   // ---------- press and pledges ----------
 
   private pressFor(power: PowerName | null): PressView[] {
+    // The most recent messages this viewer may read, oldest first.
     const rows = this.sql
       .exec<{ id: string; phase: string; sender: string; recipient: string; body: string; sent_at: number; pledge_id: string | null }>(
-        "SELECT * FROM press ORDER BY sent_at",
+        `SELECT * FROM (
+           SELECT * FROM press WHERE recipient = 'ALL' OR sender = ? OR recipient = ?
+           ORDER BY sent_at DESC LIMIT ?
+         ) ORDER BY sent_at`,
+        power ?? "",
+        power ?? "",
+        LIMITS.welcomePress,
       )
       .toArray();
-    return rows
-      .filter((r) => r.recipient === "ALL" || r.sender === power || r.recipient === power)
-      .map((r) => ({
+    return rows.map((r) => ({
         id: r.id,
         phase: r.phase,
         from: r.sender as PowerName,
@@ -525,6 +574,12 @@ export class GameRoom extends DurableObject<Env> {
       return this.send(ws, { t: "error", id, p: { code: "public_only", message: "public press only" } });
     }
     const phase = this.game!.phase();
+    const sent = this.sql
+      .exec<{ n: number }>("SELECT COUNT(*) AS n FROM press WHERE sender = ? AND phase = ?", from, phase)
+      .one().n;
+    if (sent >= LIMITS.pressPerPhase) {
+      return this.send(ws, { t: "error", id, p: { code: "press_limit", message: `at most ${LIMITS.pressPerPhase} messages per phase` } });
+    }
     let pledgeId: string | null = null;
     if (pledge) {
       const kind = this.phaseKind();

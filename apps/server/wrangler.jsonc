@@ -9,5 +9,10 @@
   "durable_objects": {
     "bindings": [{ "name": "GAME_ROOM", "class_name": "GameRoom" }]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }],
+  // Per-IP abuse limits on the two unauthenticated write routes (period must be 10 or 60 seconds).
+  "ratelimits": [
+    { "name": "CREATE_LIMITER", "namespace_id": "4801", "simple": { "limit": 10, "period": 60 } },
+    { "name": "JOIN_LIMITER", "namespace_id": "4802", "simple": { "limit": 30, "period": 60 } }
+  ]
 }
