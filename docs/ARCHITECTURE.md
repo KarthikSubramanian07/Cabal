@@ -110,7 +110,7 @@ Pre-processing decides statically whether an adjacent move uses a convoy (editio
 - DATC v3.0 corpus (171 cases, Main, Retreat, Build, editions) drives `tests/datc.rs`. A second corpus asserts full post-state positions. Both are JSON under `crates/cabal-engine/tests/data`.
 - Property tests (`proptest`): random legal order sets never panic, resolution is independent of order submission sequence, relabelling powers relabels outcomes.
 - Snapshot tests (`insta`) on explanations for the DipMath figures.
-- `criterion` benches: full board adjudication, legal order enumeration.
+- `criterion` benches: full board adjudication, legal order enumeration. The CI `bench` job runs the opening adjudication bench on the base commit and on the change, back to back on one runner, and `tools/check-bench-regression.py` fails the build on a slowdown over 30 percent (`benches/baseline.json` is the fallback for local runs).
 - Planned: `cargo fuzz` targets on the text parser and resolver (not wired in CI yet).
 
 ## 4. WebAssembly boundary (`crates/cabal-wasm`, `packages/engine`)

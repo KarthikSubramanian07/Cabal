@@ -33,10 +33,37 @@ jobs:
       - run: cargo test --workspace
       - name: DATC report
         run: cargo run -p cabal-cli -- datc --report
-      - name: Opening adjudication performance gate
+
+  bench:
+    name: "Bench: opening adjudication gate"
+    runs-on: ubuntu-latest
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      CRITERION_HOME: ${{ github.workspace }}/target/criterion
+      BENCH_ARGS: --sample-size 30 --measurement-time 3 --warm-up-time 1 --noplot ^adjudicate.spring.1901
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@v2
+      # Base and head run back to back on the same runner; comparing against a
+      # number recorded on another machine would gate on hardware, not code.
+      - name: Bench the base commit
         run: |
-          cargo bench -p cabal-engine --bench adjudicate -- --sample-size 20 --measurement-time 2 --warm-up-time 1 --noplot
-          python3 scripts/check-bench-regression.py
+          if git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null && git worktree add -q ../base "$BASE_SHA" \
+            && test -f ../base/crates/cabal-engine/benches/adjudicate.rs; then
+            (cd ../base && cargo bench -p cabal-engine --bench adjudicate -- --save-baseline before $BENCH_ARGS)
+          else
+            echo "no benchable base commit; the recorded baseline will be used"
+          fi
+      - name: Bench this commit
+        run: cargo bench -p cabal-engine --bench adjudicate -- --baseline-lenient before $BENCH_ARGS
+      - name: Fail on a regression over 30 percent
+        run: python3 tools/check-bench-regression.py --against before
 
   wasm:
     name: WASM build and size gate
