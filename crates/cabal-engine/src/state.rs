@@ -194,6 +194,52 @@ impl GameState {
             standoffs: BTreeSet::new(),
         }
     }
+
+    /// The board as `power` sees it under fog of war. A power sees every
+    /// province it occupies (including with a dislodged unit) or owns, and every
+    /// province bordering one of those. Units, ownership, dislodgements and
+    /// standoffs elsewhere are removed. The source state is never changed.
+    ///
+    /// This always filters; [`crate::game::Game::view_for`] applies it only
+    /// when the rulebook enables `fog_of_war`.
+    pub fn visible_to(&self, map: &Map, power: Power) -> GameState {
+        let seeds: BTreeSet<ProvinceId> = self
+            .position
+            .units
+            .iter()
+            .chain(self.dislodged.iter().map(|d| &d.unit))
+            .filter(|unit| unit.power == power)
+            .map(|unit| unit.province())
+            .chain(
+                self.position
+                    .owners
+                    .iter()
+                    .filter(|&(_, &owner)| owner == power)
+                    .map(|(&province, _)| province),
+            )
+            .collect();
+        let mut visible = seeds.clone();
+        for &province in &seeds {
+            visible.extend(map.neighbours_any(province));
+        }
+
+        let mut state = self.clone();
+        state
+            .position
+            .units
+            .retain(|unit| visible.contains(&unit.province()));
+        state
+            .position
+            .owners
+            .retain(|province, _| visible.contains(province));
+        state
+            .dislodged
+            .retain(|dislodged| visible.contains(&dislodged.unit.province()));
+        state
+            .standoffs
+            .retain(|province| visible.contains(province));
+        state
+    }
 }
 
 #[cfg(test)]
@@ -213,5 +259,49 @@ mod tests {
         let pos = Position::initial(Map::standard());
         assert_eq!(pos.units.len(), 22);
         assert_eq!(pos.owners.len(), 22);
+    }
+
+    #[test]
+    fn fog_view_shows_owned_and_adjacent_provinces_without_mutating_state() {
+        let map = Map::standard();
+        let mut state = GameState::initial(map);
+        let france = map.find_power("FRA").unwrap();
+        let germany = map.find_power("GER").unwrap();
+        let p = |name| map.find_province(name).unwrap();
+        state
+            .position
+            .set_unit(germany, UnitKind::Army, Region::land(p("bur")));
+        let before = state.clone();
+        let view = state.visible_to(map, france);
+
+        let units: BTreeSet<_> = view.position.units.iter().map(|u| u.province()).collect();
+        for name in ["par", "bre", "mar", "bur"] {
+            assert!(units.contains(&p(name)), "{name} should be visible");
+        }
+        for name in ["mun", "ber", "lon"] {
+            assert!(!units.contains(&p(name)), "{name} should be hidden");
+        }
+        assert!(view.position.owners.contains_key(&p("par")));
+        assert!(!view.position.owners.contains_key(&p("mos")));
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn fog_view_keeps_an_owned_centre_with_no_unit_nearby() {
+        let map = Map::standard();
+        let mut state = GameState::initial(map);
+        let france = map.find_power("FRA").unwrap();
+        let turkey = map.find_power("TUR").unwrap();
+        let p = |name| map.find_province(name).unwrap();
+        state.position.owners.insert(p("tun"), france);
+        state
+            .position
+            .set_unit(turkey, UnitKind::Fleet, Region::land(p("ion")));
+
+        let view = state.visible_to(map, france);
+        assert_eq!(view.position.owners.get(&p("tun")), Some(&france));
+        // The fleet next to Tunis is seen even though no French unit is near it.
+        assert!(view.position.unit_at(p("ion")).is_some());
+        assert!(view.position.unit_at(p("smy")).is_none());
     }
 }

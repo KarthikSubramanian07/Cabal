@@ -42,6 +42,8 @@ pub struct Rulebook {
     pub convoy_fallback: bool,
     /// Variant flag: build in any owned supply centre.
     pub build_anywhere: bool,
+    /// Hide units, ownership, retreats, and standoffs outside a power's visibility.
+    pub fog_of_war: bool,
     /// Supply centres needed for a solo victory.
     pub victory_centers: u8,
 }
@@ -56,6 +58,7 @@ pub struct RulebookOverrides {
     pub disband_distance: Option<DisbandDistance>,
     pub convoy_fallback: Option<bool>,
     pub build_anywhere: Option<bool>,
+    pub fog_of_war: Option<bool>,
     pub victory_centers: Option<u8>,
 }
 
@@ -76,6 +79,9 @@ impl RulebookOverrides {
         if let Some(value) = self.build_anywhere {
             rulebook.build_anywhere = value;
         }
+        if let Some(value) = self.fog_of_war {
+            rulebook.fog_of_war = value;
+        }
         if let Some(value) = self.victory_centers {
             rulebook.victory_centers = value;
         }
@@ -91,6 +97,7 @@ impl Rulebook {
             convoy_intent: ConvoyIntent::SamePowerFleet,
             disband_distance: DisbandDistance::OwnedCenters,
             build_anywhere: false,
+            fog_of_war: false,
             victory_centers: 18,
         }
     }
@@ -102,6 +109,7 @@ impl Rulebook {
             convoy_intent: ConvoyIntent::SamePowerFleet,
             disband_distance: DisbandDistance::HomeCenters,
             build_anywhere: false,
+            fog_of_war: false,
             victory_centers: 18,
         }
     }
@@ -113,6 +121,7 @@ impl Rulebook {
             convoy_intent: ConvoyIntent::AnyFleet,
             disband_distance: DisbandDistance::HomeCenters,
             build_anywhere: false,
+            fog_of_war: false,
             victory_centers: 18,
         }
     }
@@ -124,6 +133,7 @@ impl Rulebook {
             convoy_intent: ConvoyIntent::Explicit,
             disband_distance: DisbandDistance::OwnedCenters,
             build_anywhere: false,
+            fog_of_war: false,
             victory_centers: 18,
         }
     }
