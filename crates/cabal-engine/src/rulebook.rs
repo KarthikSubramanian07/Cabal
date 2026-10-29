@@ -42,8 +42,51 @@ pub struct Rulebook {
     pub convoy_fallback: bool,
     /// Variant flag: build in any owned supply centre.
     pub build_anywhere: bool,
+    /// Hide units, ownership, retreats, and standoffs outside a power's visibility.
+    pub fog_of_war: bool,
     /// Supply centres needed for a solo victory.
     pub victory_centers: u8,
+}
+
+/// Optional rule settings supplied by a map document. Unknown keys are
+/// rejected so a misspelt override cannot silently fall back to the default.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RulebookOverrides {
+    pub edition: Option<Edition>,
+    pub convoy_intent: Option<ConvoyIntent>,
+    pub disband_distance: Option<DisbandDistance>,
+    pub convoy_fallback: Option<bool>,
+    pub build_anywhere: Option<bool>,
+    pub fog_of_war: Option<bool>,
+    pub victory_centers: Option<u8>,
+}
+
+impl RulebookOverrides {
+    pub fn apply(self, mut rulebook: Rulebook) -> Rulebook {
+        if let Some(value) = self.edition {
+            rulebook.edition = value;
+        }
+        if let Some(value) = self.convoy_intent {
+            rulebook.convoy_intent = value;
+        }
+        if let Some(value) = self.disband_distance {
+            rulebook.disband_distance = value;
+        }
+        if let Some(value) = self.convoy_fallback {
+            rulebook.convoy_fallback = value;
+        }
+        if let Some(value) = self.build_anywhere {
+            rulebook.build_anywhere = value;
+        }
+        if let Some(value) = self.fog_of_war {
+            rulebook.fog_of_war = value;
+        }
+        if let Some(value) = self.victory_centers {
+            rulebook.victory_centers = value;
+        }
+        rulebook
+    }
 }
 
 impl Rulebook {
@@ -54,6 +97,7 @@ impl Rulebook {
             convoy_intent: ConvoyIntent::SamePowerFleet,
             disband_distance: DisbandDistance::OwnedCenters,
             build_anywhere: false,
+            fog_of_war: false,
             victory_centers: 18,
         }
     }
@@ -65,6 +109,7 @@ impl Rulebook {
             convoy_intent: ConvoyIntent::SamePowerFleet,
             disband_distance: DisbandDistance::HomeCenters,
             build_anywhere: false,
+            fog_of_war: false,
             victory_centers: 18,
         }
     }
@@ -76,6 +121,7 @@ impl Rulebook {
             convoy_intent: ConvoyIntent::AnyFleet,
             disband_distance: DisbandDistance::HomeCenters,
             build_anywhere: false,
+            fog_of_war: false,
             victory_centers: 18,
         }
     }
@@ -87,6 +133,7 @@ impl Rulebook {
             convoy_intent: ConvoyIntent::Explicit,
             disband_distance: DisbandDistance::OwnedCenters,
             build_anywhere: false,
+            fog_of_war: false,
             victory_centers: 18,
         }
     }

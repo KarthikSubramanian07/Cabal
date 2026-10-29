@@ -458,6 +458,36 @@ fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOut
     }
 }
 
+#[cfg(all(test, target_arch = "wasm32"))]
+mod wasm_tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn map_info_exposes_the_standard_map() {
+        let info = map_info().expect("standard map info");
+        let info: MapInfo = serde_wasm_bindgen::from_value(info.js_value()).unwrap();
+
+        assert_eq!(info.name, "standard");
+        assert_eq!(info.powers.len(), 7);
+        assert!(info.provinces.iter().any(|province| province.id == "PAR"));
+    }
+
+    #[wasm_bindgen_test]
+    fn process_adjudicates_one_opening_phase() {
+        let mut game = Game::new(None).unwrap();
+        let orders = OrdersByPower::default();
+        let orders = Ts::new_unchecked(serde_wasm_bindgen::to_value(&orders).unwrap());
+
+        let outcome = game.process(orders).unwrap();
+        let outcome: PhaseOutcome = serde_wasm_bindgen::from_value(outcome.js_value()).unwrap();
+
+        assert_eq!(outcome.phase, "S1901M");
+        assert_eq!(outcome.next.name, "F1901M");
+        assert_eq!(outcome.status, "active");
+    }
+}
+
 /// The game state right after `record` (the current state when `record` is the last one).
 fn game_state_after(
     game: &EngineGame,
