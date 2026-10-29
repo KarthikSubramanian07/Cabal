@@ -1,5 +1,5 @@
 import type { State } from "@cabal/engine";
-import { type CSSProperties, type PointerEvent, type WheelEvent, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { type ParsedOrder, parseOrder, parseUnit } from "../game/notation.js";
 import { type Board as BoardData, type Point, regionPoint } from "./boardData.js";
 
@@ -235,12 +235,22 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
     return { x: v.x + ((clientX - rect.left) / rect.width) * v.w, y: v.y + ((clientY - rect.top) / rect.height) * v.h };
   };
 
-  const onWheel = (e: WheelEvent<SVGSVGElement>) => {
+  // React registers wheel listeners as passive, so preventDefault there is ignored and a
+  // ctrl+wheel (or trackpad pinch) would zoom the whole page too. Listen natively instead.
+  const wheel = useRef<(e: globalThis.WheelEvent) => void>(() => {});
+  wheel.current = (e) => {
     if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
     const p = toBoard(e.clientX, e.clientY, view);
     zoomAt(Math.exp(-e.deltaY * 0.01), p.x, p.y);
   };
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const listener = (e: globalThis.WheelEvent) => wheel.current(e);
+    svg.addEventListener("wheel", listener, { passive: false });
+    return () => svg.removeEventListener("wheel", listener);
+  }, []);
 
   const onPointerDown = (e: PointerEvent<SVGSVGElement>) => {
     const g = gesture.current;
@@ -313,7 +323,6 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
         role="img"
         aria-label="Diplomacy board"
         style={{ aspectRatio: `${full.w} / ${full.h}`, touchAction: zoomed ? "none" : "pan-y" }}
-        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

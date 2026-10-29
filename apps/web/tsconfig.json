@@ -9,6 +9,7 @@
   },
   "include": [
     "src",
+    "worker",
     "e2e",
     "vite.config.ts",
     "playwright.config.ts"
