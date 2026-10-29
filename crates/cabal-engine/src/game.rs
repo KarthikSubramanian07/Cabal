@@ -89,6 +89,17 @@ impl Game {
         self.state.phase
     }
 
+    /// The current state as `power` may see it: filtered by
+    /// [`GameState::visible_to`] when the rulebook enables fog of war,
+    /// otherwise the full board.
+    pub fn view_for(&self, power: Power) -> GameState {
+        if self.rulebook.fog_of_war {
+            self.state.visible_to(self.map, power)
+        } else {
+            self.state.clone()
+        }
+    }
+
     pub fn is_finished(&self) -> bool {
         self.status != Status::Active
     }
@@ -286,6 +297,25 @@ impl Game {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn view_for_hides_the_board_only_under_fog_of_war() {
+        let map = Map::standard();
+        let france = map.find_power("FRA").unwrap();
+        let open = Game::new(map, Rulebook::default());
+        assert_eq!(open.view_for(france), open.state);
+
+        let fog = Game::new(
+            map,
+            Rulebook {
+                fog_of_war: true,
+                ..Rulebook::default()
+            },
+        );
+        let view = fog.view_for(france);
+        assert!(view.position.units.len() < fog.state.position.units.len());
+        assert!(view.position.units.iter().any(|u| u.power == france));
+    }
+
     use super::*;
     use crate::parse::parse;
 

@@ -58,6 +58,7 @@ pub struct RulebookOverrides {
     pub disband_distance: Option<DisbandDistance>,
     pub convoy_fallback: Option<bool>,
     pub build_anywhere: Option<bool>,
+    pub fog_of_war: Option<bool>,
     pub victory_centers: Option<u8>,
 }
 
@@ -77,6 +78,9 @@ impl RulebookOverrides {
         }
         if let Some(value) = self.build_anywhere {
             rulebook.build_anywhere = value;
+        }
+        if let Some(value) = self.fog_of_war {
+            rulebook.fog_of_war = value;
         }
         if let Some(value) = self.victory_centers {
             rulebook.victory_centers = value;
