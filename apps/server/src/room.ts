@@ -592,7 +592,9 @@ export class GameRoom extends DurableObject<Env> {
     const yes = new Set(
       this.sql.exec<{ power: string }>("SELECT power FROM votes WHERE kind = 'draw' AND value = 1").toArray().map((r) => r.power),
     );
-    if (voters.every((s) => yes.has(s.power) || s.kind === "ai")) await this.finish("draw");
+    // Seats nobody is playing (AI or civil disorder) cannot vote, so they never block a draw.
+    const absent = (s: SeatRow) => s.kind === "ai" || s.kind === "civil_disorder";
+    if (voters.every((s) => yes.has(s.power) || absent(s))) await this.finish("draw");
   }
 
   // ---------- deadlines and adjudication ----------

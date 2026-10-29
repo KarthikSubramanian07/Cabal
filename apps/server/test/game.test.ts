@@ -187,6 +187,30 @@ describe("GameRoom", () => {
     expect(state.p.state.units[bob.power]).toContain(moves[bob.power]![1]);
   });
 
+  it("lets a draw pass when the other human seat has fallen into civil disorder", async () => {
+    const ann = await create("Ann", { aiFill: true, readyAdvance: true });
+    const bob = await join(ann.gameId, "Bob");
+    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ann.token}` },
+    });
+    const a = await Client.connect(ann.gameId, ann.token);
+    const b = await Client.connect(ann.gameId, bob.token);
+    await a.next("welcome");
+    await b.next("welcome");
+    // Bob readies up without orders twice, which puts his seat into civil disorder.
+    for (const phase of ["S1901M", "F1901M"]) {
+      a.send({ t: "orders.set", p: { phase, orders: [] } });
+      await a.next("orders.ack");
+      a.send({ t: "ready", p: { phase, ready: true } });
+      b.send({ t: "ready", p: { phase, ready: true } });
+      await a.next("state");
+    }
+    a.send({ t: "vote", p: { kind: "draw", value: true } });
+    const finished = await a.next("finished");
+    expect(finished.p.result).toBe("draw");
+  });
+
   it("rejects bad tokens and lets spectators watch", async () => {
     const ann = await create("Ann");
     const bad = await SELF.fetch(`http://cabal/api/games/${ann.gameId}/ws?token=${ann.gameId}.FRANCE.${"0".repeat(48)}`, {
