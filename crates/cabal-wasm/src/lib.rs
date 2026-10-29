@@ -360,28 +360,27 @@ fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOut
                     reason: describe_outcome(map, out),
                 });
             }
-            // retreat options come from the state after the phase
-            for d in &r.dislodged {
-                let options = cabal_engine::legal::legal_retreats(
-                    map,
-                    &game_state_after(game, record),
-                    d.unit.power,
-                )
-                .remove(&d.unit.province())
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|o| match o.command {
-                    cabal_engine::RetreatCommand::Retreat { dest, coast } => {
-                        Some(map.region_name(cabal_engine::Region::new(dest, coast)))
-                    }
-                    _ => None,
-                })
-                .collect();
-                dislodged.push(DislodgedInfo {
-                    unit: unit_text(map, &d.unit),
-                    attacker_from: map.province(d.attacker_from).name.to_ascii_uppercase(),
-                    retreat_options: options,
-                });
+            // retreat options come from the state after the phase, cloned once per phase
+            if !r.dislodged.is_empty() {
+                let after = game_state_after(game, record);
+                for d in &r.dislodged {
+                    let options = cabal_engine::legal::legal_retreats(map, &after, d.unit.power)
+                        .remove(&d.unit.province())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|o| match o.command {
+                            cabal_engine::RetreatCommand::Retreat { dest, coast } => {
+                                Some(map.region_name(cabal_engine::Region::new(dest, coast)))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    dislodged.push(DislodgedInfo {
+                        unit: unit_text(map, &d.unit),
+                        attacker_from: map.province(d.attacker_from).name.to_ascii_uppercase(),
+                        retreat_options: options,
+                    });
+                }
             }
             standoffs = r
                 .standoffs
