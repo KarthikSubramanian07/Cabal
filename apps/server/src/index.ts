@@ -21,9 +21,13 @@ const CORS: Record<string, string> = {
   "access-control-allow-headers": "content-type, authorization",
 };
 
+/** Request bodies are small JSON objects; anything larger is refused before parsing. */
+const MAX_BODY_BYTES = 4096;
+
 function withCors(res: Response): Response {
   const headers = new Headers(res.headers);
   for (const [k, v] of Object.entries(CORS)) headers.set(k, v);
+  headers.set("x-content-type-options", "nosniff");
   return new Response(res.body, { status: res.status, headers, webSocket: res.webSocket ?? null });
 }
 
@@ -33,6 +37,28 @@ function json(data: unknown, status = 200): Response {
 
 const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|replay|ws))?$/;
 
+async function readJson(request: Request): Promise<unknown> {
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > MAX_BODY_BYTES) return undefined;
+  const text = await request.text().catch(() => "");
+  if (text.length > MAX_BODY_BYTES) return undefined;
+  try {
+    return JSON.parse(text || "{}");
+  } catch {
+    return undefined;
+  }
+}
+
+/** True when the caller is over the limit. Missing bindings (tests, local dev) never limit. */
+async function limited(limiter: RateLimit | undefined, request: Request, route: string): Promise<boolean> {
+  if (!limiter) return false;
+  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+  const { success } = await limiter.limit({ key: `${route}:${ip}` });
+  return !success;
+}
+
+const tooMany = () => withCors(json({ error: "too many requests, try again in a minute" }, 429));
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
@@ -41,7 +67,8 @@ export default {
     if (url.pathname === "/health") return withCors(json({ ok: true }));
 
     if (url.pathname === "/api/games" && request.method === "POST") {
-      const body = CreateGameRequest.safeParse(await request.json().catch(() => ({})));
+      if (await limited(env.CREATE_LIMITER, request, "create")) return tooMany();
+      const body = CreateGameRequest.safeParse(await readJson(request));
       if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
       const id = gameCode();
       const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id));
@@ -60,7 +87,8 @@ export default {
         return stub.fetch(`https://room/ws${url.search}`, request);
       }
       if (action === "join" && request.method === "POST") {
-        const body = JoinGameRequest.safeParse(await request.json().catch(() => ({})));
+        if (await limited(env.JOIN_LIMITER, request, "join")) return tooMany();
+        const body = JoinGameRequest.safeParse(await readJson(request));
         if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
         return withCors(await stub.fetch("https://room/join", { method: "POST", body: JSON.stringify(body.data) }));
       }
