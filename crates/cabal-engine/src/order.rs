@@ -126,12 +126,18 @@ pub fn normalise(map: &Map, position: &Position, order: Order) -> Result<Order, 
         return Err(Illegal::ForeignUnit);
     }
 
-    let fleet_seas: BTreeSet<ProvinceId> = position
-        .units
-        .iter()
-        .filter(|u| u.kind == UnitKind::Fleet && map.is_sea(u.province()))
-        .map(|u| u.province())
-        .collect();
+    // Only convoy checks need the fleet positions; build them on demand so the
+    // common adjacent move stays a single adjacency lookup.
+    let fleet_seas = || -> BTreeSet<ProvinceId> {
+        position
+            .units
+            .iter()
+            .filter(|u| u.kind == UnitKind::Fleet && map.is_sea(u.province()))
+            .map(|u| u.province())
+            .collect()
+    };
+    // The canonical destination coast of a move, fixed while validating it.
+    let mut move_coast = None;
 
     match order.command {
         Command::Hold => {}
@@ -147,22 +153,20 @@ pub fn normalise(map: &Map, position: &Position, order: Order) -> Result<Order, 
 
             match unit.kind {
                 UnitKind::Army => {
-                    let adjacent = map.adjacent_province(unit.region, UnitKind::Army, dest);
-
-                    let convoy_available = crate::adjudicate::movement::convoy_possible(
-                        map,
-                        &fleet_seas,
-                        unit.province(),
-                        dest,
-                    );
-
-                    if !adjacent && !convoy_available {
+                    if !map.adjacent_province(unit.region, UnitKind::Army, dest)
+                        && !crate::adjudicate::movement::convoy_possible(
+                            map,
+                            &fleet_seas(),
+                            unit.province(),
+                            dest,
+                        )
+                    {
                         return Err(Illegal::Unreachable);
                     }
                 }
 
                 UnitKind::Fleet => match map.fleet_destination(unit.region, dest, coast) {
-                    Ok(_) => {}
+                    Ok(region) => move_coast = region.coast,
 
                     Err(crate::geo::CoastError::Ambiguous) => {
                         return Err(Illegal::AmbiguousCoast);
@@ -230,7 +234,7 @@ pub fn normalise(map: &Map, position: &Position, order: Order) -> Result<Order, 
 
             if !crate::adjudicate::movement::on_convoy_route(
                 map,
-                &fleet_seas,
+                &fleet_seas(),
                 army,
                 dest,
                 unit.province(),
@@ -242,19 +246,11 @@ pub fn normalise(map: &Map, position: &Position, order: Order) -> Result<Order, 
 
     let command = match order.command {
         Command::Move {
-            dest,
-            coast,
-            via_convoy,
+            dest, via_convoy, ..
         } => Command::Move {
             dest,
-            coast: match unit.kind {
-                UnitKind::Army => None,
-                UnitKind::Fleet => {
-                    map.fleet_destination(unit.region, dest, coast)
-                        .expect("destination validated above")
-                        .coast
-                }
-            },
+            // Armies never carry a coast; fleets get the one validated above.
+            coast: move_coast,
             via_convoy,
         },
         Command::SupportMove {
