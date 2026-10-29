@@ -32,7 +32,7 @@ flowchart LR
 3. **Projection.** A Lambert conformal conic (standard parallels 40°N and 62°N, centred on 15°E) framed from the Atlantic to the Caspian and from the Barents Sea to North Africa.
 4. **Seas.** Open water is split along the straight lines in `SEA_BOUNDARIES`, the way the printed board draws them. Each piece is named by the seed it contains. The Sea of Marmara and the Caspian are drawn as water that belongs to no zone.
 5. **Anchors.** Unit and label positions come from the pole of inaccessibility of each province. Supply centres sit on their real cities. The six named coasts are placed on the shoreline they face.
-6. **Validation.** Drawn adjacency is compared with `crates/cabal-engine/data/borders.csv`. The expected differences are straits, where the rules connect provinces across water: Denmark to Sweden, the Mid-Atlantic to the Western Mediterranean at Gibraltar, and the Baltic to the Skagerrak at the Great Belt.
+6. **Validation.** Drawn adjacency is compared with the borders in `crates/cabal-engine/data/maps/standard.json`. The expected differences are straits, where the rules connect provinces across water: Denmark to Sweden, the Mid-Atlantic to the Western Mediterranean at Gibraltar, and the Baltic to the Skagerrak at the Great Belt.
 
 The engine's border table stays the source of truth for the rules. The map only has to look right.
 
