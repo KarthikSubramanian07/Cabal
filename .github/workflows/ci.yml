@@ -22,14 +22,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: 1.97.0
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The wasm-bindgen tests only compile for wasm32, so lint that target too.
+      - run: cargo clippy -p cabal-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
+      - run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
       - run: cargo test --workspace
       - name: DATC report
         run: cargo run -p cabal-cli -- datc --report
@@ -46,14 +51,16 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: 1.97.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # Base and head run back to back on the same runner; comparing against a
       # number recorded on another machine would gate on hardware, not code.
       - name: Bench the base commit
+        # BENCH_ARGS is split into arguments on purpose.
         run: |
+          # shellcheck disable=SC2086
           if git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null && git worktree add -q ../base "$BASE_SHA" \
             && test -f ../base/crates/cabal-engine/benches/adjudicate.rs; then
             (cd ../base && cargo bench -p cabal-engine --bench adjudicate -- --save-baseline before $BENCH_ARGS)
@@ -61,22 +68,23 @@ jobs:
             echo "no benchable base commit; the recorded baseline will be used"
           fi
       - name: Bench this commit
-        run: cargo bench -p cabal-engine --bench adjudicate -- --baseline-lenient before $BENCH_ARGS
+        run: |
+          # shellcheck disable=SC2086
+          cargo bench -p cabal-engine --bench adjudicate -- --baseline-lenient before $BENCH_ARGS
       - name: Fail on a regression over 30 percent
         run: python3 tools/check-bench-regression.py --against before
 
   wasm:
     name: WASM build and size gate
     runs-on: ubuntu-latest
-    needs: rust
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: 1.97.0
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2
         with:
           tool: wasm-pack
       - run: wasm-pack test --node crates/cabal-wasm
@@ -102,7 +110,7 @@ jobs:
         with:
           name: engine-pkg
           path: packages/engine/pkg
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
@@ -116,20 +124,31 @@ jobs:
   e2e:
     name: End-to-end (Playwright)
     runs-on: ubuntu-latest
-    needs: node
+    needs: wasm
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: engine-pkg
           path: packages/engine/pkg
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @cabal/web exec playwright install --with-deps chromium
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(pnpm --filter @cabal/web exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        id: browsers
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - if: steps.browsers.outputs.cache-hit != 'true'
+        run: pnpm --filter @cabal/web exec playwright install --with-deps chromium
+      - if: steps.browsers.outputs.cache-hit == 'true'
+        run: pnpm --filter @cabal/web exec playwright install-deps chromium
       - run: pnpm test:e2e
       - uses: actions/upload-artifact@v7
         if: failure()
@@ -137,3 +156,40 @@ jobs:
           name: playwright-report
           path: apps/web/playwright-report
           retention-days: 7
+
+  audit:
+    name: Dependency and workflow audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - run: pnpm audit --prod --audit-level high
+      - name: actionlint
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
+
+  fuzz-build:
+    name: Fuzz targets compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: fuzz
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2
+        with:
+          tool: cargo-fuzz
+      # Only the nightly Stress workflow runs the fuzzers; this keeps them building on every change.
+      # The prebuilt cargo-fuzz defaults to its own musl target, which has no sanitizer support.
+      - run: cargo +nightly fuzz build --target x86_64-unknown-linux-gnu
