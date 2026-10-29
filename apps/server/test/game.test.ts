@@ -146,6 +146,47 @@ describe("GameRoom", () => {
     expect(saved.phases.map((p) => p.name)).toEqual(["S1901M", "F1901M"]);
   });
 
+  it("never lets default orders command another power's units", async () => {
+    // One opening move per power, keyed by the power name the server assigns.
+    const moves: Record<string, [string, string]> = {
+      AUSTRIA: ["A VIE - GAL", "A GAL"],
+      ENGLAND: ["F LON - NTH", "F NTH"],
+      FRANCE: ["A PAR - BUR", "A BUR"],
+      GERMANY: ["A MUN - RUH", "A RUH"],
+      ITALY: ["A VEN - PIE", "A PIE"],
+      RUSSIA: ["A MOS - UKR", "A UKR"],
+      TURKEY: ["A CON - BUL", "A BUL"],
+    };
+    const ann = await create("Ann", { aiFill: true, readyAdvance: true });
+    const bob = await join(ann.gameId, "Bob");
+    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ann.token}` },
+    });
+    const a = await Client.connect(ann.gameId, ann.token);
+    const b = await Client.connect(ann.gameId, bob.token);
+    const annUnits = [...(await a.next("welcome")).p.state.units[ann.power]!].sort();
+    await b.next("welcome");
+
+    // Bob files his own move plus one dressed up as Ann's, then submits nothing.
+    b.send({
+      t: "orders.default",
+      id: "d1",
+      p: { orders: [moves[bob.power]![0], `${ann.power}: ${moves[ann.power]![0]}`] },
+    });
+    const error = await b.next("error");
+    expect(error.p.code).toBe("bad_order");
+    expect(error.p.message).toContain(`submitted for`);
+
+    a.send({ t: "ready", p: { phase: "S1901M", ready: true } });
+    b.send({ t: "ready", p: { phase: "S1901M", ready: true } });
+    const state = await a.next("state");
+    expect(state.p.phase).toBe("F1901M");
+    expect([...state.p.state.units[ann.power]!].sort()).toEqual(annUnits);
+    // Bob's legitimate default still stood in for his missing orders.
+    expect(state.p.state.units[bob.power]).toContain(moves[bob.power]![1]);
+  });
+
   it("rejects bad tokens and lets spectators watch", async () => {
     const ann = await create("Ann");
     const bad = await SELF.fetch(`http://cabal/api/games/${ann.gameId}/ws?token=${ann.gameId}.FRANCE.${"0".repeat(48)}`, {

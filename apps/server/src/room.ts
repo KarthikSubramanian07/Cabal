@@ -345,12 +345,7 @@ export class GameRoom extends DurableObject<Env> {
       case "orders.set":
         return this.setOrders(ws, id, power, msg.p.phase, msg.p.orders);
       case "orders.default":
-        this.sql.exec(
-          "INSERT INTO defaults (power, orders_json) VALUES (?, ?) ON CONFLICT(power) DO UPDATE SET orders_json = excluded.orders_json",
-          power,
-          JSON.stringify(msg.p.orders),
-        );
-        return;
+        return this.setDefaults(ws, id, power, msg.p.orders);
       case "ready":
         return this.setReady(power, msg.p.phase, msg.p.ready);
       case "press.send":
@@ -441,6 +436,29 @@ export class GameRoom extends DurableObject<Env> {
       Date.now(),
     );
     this.send(ws, { t: "orders.ack", id, p: { phase, accepted, rejected } });
+  }
+
+  /** Standing movement orders used when a power submits nothing. They are canonicalised under the
+   * sender's own power, so a prefix naming another power can never be stored. */
+  private setDefaults(ws: WebSocket, id: string | undefined, power: PowerName, orders: string[]): void {
+    const accepted: string[] = [];
+    const rejected: { text: string; reason: string }[] = [];
+    for (const text of orders) {
+      try {
+        accepted.push(canonicalOrder(text, "M", power));
+      } catch (e) {
+        rejected.push({ text, reason: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    this.sql.exec(
+      "INSERT INTO defaults (power, orders_json) VALUES (?, ?) ON CONFLICT(power) DO UPDATE SET orders_json = excluded.orders_json",
+      power,
+      JSON.stringify(accepted),
+    );
+    if (rejected.length > 0) {
+      const detail = rejected.map((r) => `${r.text}: ${r.reason}`).join("; ");
+      this.send(ws, { t: "error", id, p: { code: "bad_order", message: `default orders rejected: ${detail}` } });
+    }
   }
 
   private async setReady(power: PowerName, phase: string, ready: boolean): Promise<void> {
@@ -594,7 +612,11 @@ export class GameRoom extends DurableObject<Env> {
   private ordersFor(phase: string, power: PowerName): { orders: string[]; submitted: boolean } {
     const row = this.sql.exec<{ orders_json: string }>("SELECT orders_json FROM orders WHERE phase = ? AND power = ?", phase, power).toArray()[0];
     if (row) return { orders: JSON.parse(row.orders_json) as string[], submitted: true };
-    const def = this.sql.exec<{ orders_json: string }>("SELECT orders_json FROM defaults WHERE power = ?", power).toArray()[0];
+    // Defaults are movement orders; retreats and adjustments fall back to the engine's own rules.
+    const def =
+      this.phaseKind() === "M"
+        ? this.sql.exec<{ orders_json: string }>("SELECT orders_json FROM defaults WHERE power = ?", power).toArray()[0]
+        : undefined;
     if (def) return { orders: JSON.parse(def.orders_json) as string[], submitted: false };
     return { orders: [], submitted: false };
   }
@@ -602,19 +624,41 @@ export class GameRoom extends DurableObject<Env> {
   private async adjudicate(): Promise<void> {
     const game = this.game!;
     const phase = game.phase();
+    const kind = this.phaseKind();
     const orders: Record<string, string[]> = {};
     const submittedBy: Record<string, string[]> = {};
-    for (const seat of this.seats()) {
-      const { orders: o, submitted } = this.ordersFor(phase, seat.power);
-      orders[seat.power] = o;
-      submittedBy[seat.power] = o;
-      if (seat.kind === "human" && seat.eliminated === 0 && this.phaseKind() === "M") {
-        const missed = submitted ? 0 : seat.missed + 1;
-        const kind = missed >= 2 ? "civil_disorder" : "human";
-        this.sql.exec("UPDATE seats SET missed = ?, kind = ? WHERE power = ?", missed, kind, seat.power);
+    const seats = this.seats();
+    const submittedSeats = new Set<string>();
+    for (const seat of seats) {
+      const { orders: stored, submitted } = this.ordersFor(phase, seat.power);
+      if (submitted) submittedSeats.add(seat.power);
+      // Re-validate every stored order on its own: one bad row must never stop the phase.
+      const valid: string[] = [];
+      for (const text of stored) {
+        try {
+          valid.push(canonicalOrder(text, kind, seat.power));
+        } catch {
+          // dropped; the unit is treated as unordered
+        }
+      }
+      orders[seat.power] = valid;
+      submittedBy[seat.power] = valid;
+    }
+    let outcome: ReturnType<Game["process"]>;
+    try {
+      outcome = game.process(game.normaliseOrders({ orders }));
+    } catch (e) {
+      // Unreachable with canonical orders, but an exception here would wedge the alarm for good.
+      console.error(JSON.stringify({ event: "adjudicate_fallback", phase, error: String(e) }));
+      outcome = game.process({ orders: {} });
+    }
+    for (const seat of seats) {
+      if (seat.kind === "human" && seat.eliminated === 0 && kind === "M") {
+        const missed = submittedSeats.has(seat.power) ? 0 : seat.missed + 1;
+        const nextKind = missed >= 2 ? "civil_disorder" : "human";
+        this.sql.exec("UPDATE seats SET missed = ?, kind = ? WHERE power = ?", missed, nextKind, seat.power);
       }
     }
-    const outcome = game.process(game.normaliseOrders({ orders }));
     this.sql.exec("INSERT INTO phases (name, results_json, adjudicated_at) VALUES (?, ?, ?)", phase, JSON.stringify(outcome), Date.now());
 
     // receipts for every pledge made in this phase
