@@ -211,6 +211,21 @@ describe("GameRoom", () => {
     expect(finished.p.result).toBe("draw");
   });
 
+  it("throttles a socket that floods the room", async () => {
+    const ann = await create("Ann");
+    const spectator = await Client.connect(ann.gameId);
+    await spectator.next("welcome");
+    for (let i = 0; i < 60; i++) spectator.send({ t: "sync", p: { since: 0 } });
+    const error = await spectator.next("error");
+    expect(error.p.code).toBe("rate_limited");
+  });
+
+  it("answers 404 for a code that names no game", async () => {
+    const res = await SELF.fetch("http://cabal/api/games/ZZZZZ9");
+    expect(res.status).toBe(404);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
   it("rejects bad tokens and lets spectators watch", async () => {
     const ann = await create("Ann");
     const bad = await SELF.fetch(`http://cabal/api/games/${ann.gameId}/ws?token=${ann.gameId}.FRANCE.${"0".repeat(48)}`, {

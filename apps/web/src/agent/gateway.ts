@@ -74,7 +74,42 @@ async function notFound(env: AssetEnv, url: URL, request: Request, asMarkdown: b
   return res;
 }
 
+/**
+ * Security headers for every response. Pages does not apply `_headers` to responses returned by a
+ * `_worker.js`, so the gateway sets them itself. The game is fully client side: scripts, styles,
+ * fonts and the WebAssembly engine are all same-origin.
+ */
+export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  "Content-Security-Policy": [
+    "default-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "connect-src 'self'",
+    "manifest-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "upgrade-insecure-requests",
+  ].join("; "),
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+  "X-Frame-Options": "DENY",
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+};
+
 export async function handleAgentRequest(request: Request, env: AssetEnv): Promise<Response> {
+  const res = await route(request, env);
+  const out = new Response(res.body, res);
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) out.headers.set(name, value);
+  return out;
+}
+
+async function route(request: Request, env: AssetEnv): Promise<Response> {
   const url = new URL(request.url);
   const path = normalizePath(url.pathname);
 
