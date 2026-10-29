@@ -320,11 +320,19 @@ fn phase_to_mila(map: &Map, record: &PhaseRecord) -> MilaPhase {
                     .entry(power_name(map, o.power))
                     .or_default()
                     .push(text.clone());
-                let codes = adjustment_result_codes(out);
-                results.insert(text, codes);
+                // MILA keys adjustment results by the order's first two
+                // words: the unit for builds and disbands, `WAIVE` for waives.
+                let key = text
+                    .split_whitespace()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                results.insert(key, adjustment_result_codes(out));
             }
+            // MILA turns civil disorder into ordinary disband orders, so the
+            // forced removals succeed with the empty OK code.
             for u in &r.civil_disorder {
-                results.insert(unit_text(map, u), vec!["disband".to_string()]);
+                results.insert(unit_text(map, u), vec![String::new()]);
             }
         }
     }
@@ -514,7 +522,33 @@ mod tests {
             .unwrap();
         adjustment.process_adjustment(&[build]);
         let saved = adjustment.to_saved("build");
-        assert_eq!(saved.phases[0].results["A MAR B"], vec!["".to_string()]);
+        assert_eq!(saved.phases[0].results["A MAR"], vec!["".to_string()]);
+        assert!(!saved.phases[0].results.contains_key("A MAR B"));
+    }
+
+    #[test]
+    fn civil_disorder_removals_use_the_mila_ok_code() {
+        let map = Map::standard();
+        let mut position = Position::initial(map);
+        // France keeps three units but loses Brest, so one unit must go.
+        position.owners.remove(&map.find_province("bre").unwrap());
+        let mut game = Game::from_state(
+            map,
+            Rulebook::default(),
+            GameState::from_position(
+                Phase::new(1901, crate::state::Season::Winter, PhaseKind::Adjustment),
+                position,
+            ),
+        );
+        game.process_adjustment(&[]);
+        let saved = game.to_saved("disorder");
+        let removed: Vec<_> = saved.phases[0]
+            .results
+            .iter()
+            .filter(|(unit, _)| unit.starts_with("A ") || unit.starts_with("F "))
+            .collect();
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].1, &vec![String::new()]);
     }
 
     #[test]
