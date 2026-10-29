@@ -83,11 +83,13 @@ preserved. Existing exports and Rust parse/legal/resolver signatures remain.
 `resolve_movement_with_dependencies` traces actual resolver queries, including
 cached queries and cycles. Sorted nodes and edges produce deterministic Graphviz
 DOT through `MovementDependencies::to_dot`. CLI `cabal explain --graph` emits a
-standalone graph. WASM `PhaseOutcome.dependencies` indexes `results`, and
-`dependency_dot` supplies the labelled graph (empty edges and null DOT for other
-phases). Rust corpus tests check traced/untraced equivalence and permutation
-invariance; TypeScript tests exercise normalisation, diagnostics, edges, DOT and
-JSON transport through the real compiled WASM module.
+standalone graph. WASM `Game.explain(index)` returns the trace for the movement
+phase at that history index as `{ edges, dot }`: edges index that phase
+outcome's `results`, and `dot` is the labelled graph. It throws for retreat and
+adjustment phases and for an index past the history. Rust corpus tests check
+traced/untraced equivalence and permutation invariance; TypeScript tests
+exercise normalisation, diagnostics, edges, DOT and JSON transport through the
+real compiled WASM module.
 
 ## Fuzzing and checks
 

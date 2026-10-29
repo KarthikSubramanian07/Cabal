@@ -13,6 +13,7 @@ import init, * as wasm from "../pkg/cabal_engine.js";
 export type {
   BuildInfo,
   DislodgedInfo,
+  Explanation,
   LegalOrders,
   MapInfo,
   OrderResult,

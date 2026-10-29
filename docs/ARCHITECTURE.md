@@ -110,8 +110,11 @@ trace of the equations queried, so short-circuited branches need not appear.
 `MovementDependencies::to_dot(map, position)` renders labelled Graphviz DOT.
 `cabal explain --graph "FRA: A PAR - BUR" "FRA: A MAR S A PAR - BUR"`
 prints a standalone graph suitable for piping to `dot -Tsvg`. The original
-`resolve_movement` API and result schema are unchanged. WASM phase outcomes add
-`dependencies` (edges indexing `results`) and `dependency_dot` for UI explanations.
+`resolve_movement` API and result schema are unchanged. Over WASM the trace is
+computed only on demand: `Game.explain(index)` re-runs the movement phase at
+that history index with tracing and returns `{ edges, dot }`, where edges index
+the phase outcome's `results`. Phase outcomes themselves carry no trace, so
+processing, previews and history lookups never pay for it.
 
 `order::normalise(map, position, order)` validates against the actual board unit
 and canonicalises destination coasts. The additive WASM `Game.normaliseOrders`
