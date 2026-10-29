@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use cabal_engine::geo::{Map, Power, SupplyCenter, Terrain, UnitKind};
-use cabal_engine::json::{MilaState, SavedGame, state_from_mila, state_to_mila};
+use cabal_engine::json::{MilaState, SavedGame, province_code, state_from_mila, state_to_mila};
 use cabal_engine::order::AnyOrder;
 use cabal_engine::outcome::{AdjustOutcome, RetreatOutcome};
 use cabal_engine::parse::parse;
@@ -83,7 +83,7 @@ pub fn map_info() -> Result<Ts<MapInfo>, JsError> {
             homes: map
                 .homes(p)
                 .iter()
-                .map(|&h| map.province(h).name.to_ascii_uppercase())
+                .map(|&h| province_code(map, h))
                 .collect(),
         })
         .collect();
@@ -105,12 +105,12 @@ pub fn map_info() -> Result<Ts<MapInfo>, JsError> {
             }
             let mut army_adjacent: Vec<String> = map
                 .reachable(cabal_engine::Region::land(p), UnitKind::Army)
-                .map(|d| map.province(d.province).name.to_ascii_uppercase())
+                .map(|d| province_code(map, d.province))
                 .collect();
             army_adjacent.sort();
             army_adjacent.dedup();
             ProvinceInfo {
-                id: prov.name.to_ascii_uppercase(),
+                id: province_code(map, p),
                 name: prov.full_name.clone(),
                 terrain: terrain_name(prov.terrain).to_string(),
                 supply_center: match prov.supply_center {
@@ -377,16 +377,12 @@ fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOut
                         .collect();
                     dislodged.push(DislodgedInfo {
                         unit: unit_text(map, &d.unit),
-                        attacker_from: map.province(d.attacker_from).name.to_ascii_uppercase(),
+                        attacker_from: province_code(map, d.attacker_from),
                         retreat_options: options,
                     });
                 }
             }
-            standoffs = r
-                .standoffs
-                .iter()
-                .map(|&p| map.province(p).name.to_ascii_uppercase())
-                .collect();
+            standoffs = r.standoffs.iter().map(|&p| province_code(map, p)).collect();
         }
         PhaseResult::Retreat(r) => {
             for (o, out) in r.orders.iter().zip(&r.outcomes) {
@@ -405,7 +401,7 @@ fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOut
                         format!(
                             "bounced with {}",
                             with.iter()
-                                .map(|&p| map.province(p).name.to_ascii_uppercase())
+                                .map(|&p| province_code(map, p))
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         ),
