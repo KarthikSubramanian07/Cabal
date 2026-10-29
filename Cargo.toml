@@ -23,8 +23,3 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
-
-# Size-optimised profile used for the wasm artifact
-[profile.wasm]
-inherits = "release"
-opt-level = "z"
