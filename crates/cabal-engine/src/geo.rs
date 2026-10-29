@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
 use std::sync::OnceLock;
 
+use crate::rulebook::RulebookOverrides;
 use serde::{Deserialize, Serialize};
 
 /// Index of a province in the map's province table.
@@ -143,6 +144,8 @@ pub struct PowerInfo {
 #[derive(Clone, Debug)]
 pub struct Map {
     pub name: String,
+    /// Variant-specific rulebook settings declared by the map document.
+    pub rulebook_overrides: RulebookOverrides,
     provinces: Vec<Province>,
     powers: Vec<PowerInfo>,
     by_name: HashMap<String, ProvinceId>,
@@ -154,12 +157,62 @@ pub struct Map {
     start_units: Vec<(Power, UnitKind, Region)>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapDocument {
+    name: String,
+    provinces: Vec<MapProvince>,
+    regions: Vec<MapRegion>,
+    borders: Vec<MapBorder>,
+    powers: Vec<PowerInfo>,
+    homes: BTreeMap<String, Vec<String>>,
+    starting_units: Vec<MapStartUnit>,
+    #[serde(default)]
+    rulebook_overrides: RulebookOverrides,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapProvince {
+    name: String,
+    full_name: String,
+    #[serde(default)]
+    supply_center: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapRegion {
+    province: String,
+    #[serde(default)]
+    coast: Option<String>,
+    terrain: Terrain,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapBorder {
+    from: String,
+    to: String,
+    terrain: Terrain,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapStartUnit {
+    power: String,
+    kind: UnitKind,
+    region: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum MapError {
-    #[error("malformed map data at line {line}: {msg}")]
-    Malformed { line: usize, msg: String },
+    #[error("invalid map: {0}")]
+    Invalid(String),
     #[error("unknown province {0}")]
     UnknownProvince(String),
+    #[error("invalid map JSON: {0}")]
+    Json(String),
 }
 
 impl Map {
@@ -167,15 +220,8 @@ impl Map {
     pub fn standard() -> &'static Map {
         static MAP: OnceLock<Map> = OnceLock::new();
         MAP.get_or_init(|| {
-            Map::from_csv(
-                "standard",
-                include_str!("../data/provinces.csv"),
-                include_str!("../data/regions.csv"),
-                include_str!("../data/borders.csv"),
-                &STANDARD_POWERS,
-                STANDARD_START,
-            )
-            .expect("bundled standard map is valid")
+            Map::from_json(include_str!("../data/maps/standard.json"))
+                .expect("bundled standard map is valid")
         })
     }
 
@@ -183,136 +229,133 @@ impl Map {
     pub fn by_name(name: &str) -> Option<&'static Map> {
         match name.to_ascii_lowercase().as_str() {
             "standard" | "classic" => Some(Map::standard()),
+            "duel" => {
+                static DUEL: OnceLock<Map> = OnceLock::new();
+                Some(DUEL.get_or_init(|| {
+                    Map::from_json(include_str!("../data/maps/duel.json"))
+                        .expect("bundled duel map is valid")
+                }))
+            }
             _ => None,
         }
     }
 
-    /// Build a map from the three CSV tables.
-    pub fn from_csv(
-        name: &str,
-        provinces_csv: &str,
-        regions_csv: &str,
-        borders_csv: &str,
-        powers: &[(&str, &str)],
-        start: &[(&str, char, &str)],
-    ) -> Result<Map, MapError> {
-        let powers: Vec<PowerInfo> = powers
-            .iter()
-            .map(|(code, name)| PowerInfo {
-                code: code.to_string(),
-                name: name.to_string(),
-            })
-            .collect();
-        let power_by_code: HashMap<&str, Power> = powers
+    /// Build a map from one self-contained JSON document (see `data/maps/`).
+    pub fn from_json(json: &str) -> Result<Map, MapError> {
+        let doc: MapDocument =
+            serde_json::from_str(json).map_err(|e| MapError::Json(e.to_string()))?;
+        Map::from_document(doc)
+    }
+
+    fn from_document(doc: MapDocument) -> Result<Map, MapError> {
+        let invalid = |msg: String| MapError::Invalid(msg);
+        let power_by_code: HashMap<&str, Power> = doc
+            .powers
             .iter()
             .enumerate()
             .map(|(i, p)| (p.code.as_str(), Power(i as u8)))
             .collect();
+        if doc.powers.is_empty() || doc.powers.len() > u8::MAX as usize {
+            return Err(invalid(format!("bad power count {}", doc.powers.len())));
+        }
+        if power_by_code.len() != doc.powers.len() {
+            return Err(invalid("duplicate power code".into()));
+        }
+        let power = |code: &str| {
+            power_by_code
+                .get(code)
+                .copied()
+                .ok_or_else(|| invalid(format!("unknown power {code}")))
+        };
 
-        let mut provinces = Vec::new();
-        let mut by_name = HashMap::new();
-        for (i, line) in provinces_csv.lines().enumerate().skip(1) {
-            if line.trim().is_empty() {
-                continue;
+        let mut provinces = Vec::with_capacity(doc.provinces.len());
+        let mut by_name = HashMap::with_capacity(doc.provinces.len());
+        for p in &doc.provinces {
+            let id = u8::try_from(provinces.len())
+                .map(ProvinceId)
+                .map_err(|_| invalid("more than 256 provinces".into()))?;
+            let name = p.name.to_ascii_lowercase();
+            if by_name.insert(name.clone(), id).is_some() {
+                return Err(invalid(format!("duplicate province {name}")));
             }
-            let cols: Vec<&str> = line.split(',').map(str::trim).collect();
-            if cols.len() < 3 {
-                return Err(MapError::Malformed {
-                    line: i + 1,
-                    msg: "expected 3 columns".into(),
-                });
-            }
-            let supply_center = match cols[2] {
-                "" => SupplyCenter::None,
-                "neutral" => SupplyCenter::Neutral,
-                code => SupplyCenter::Home(*power_by_code.get(code).ok_or_else(|| {
-                    MapError::Malformed {
-                        line: i + 1,
-                        msg: format!("unknown power {code}"),
-                    }
-                })?),
+            let supply_center = match p.supply_center.as_deref() {
+                None => SupplyCenter::None,
+                Some("neutral") => SupplyCenter::Neutral,
+                Some(code) => SupplyCenter::Home(power(code)?),
             };
-            let id = ProvinceId(provinces.len() as u8);
-            by_name.insert(cols[0].to_ascii_lowercase(), id);
             provinces.push(Province {
-                name: cols[0].to_ascii_lowercase(),
-                full_name: cols[1].to_string(),
-                terrain: Terrain::Land, // refined from regions.csv
+                name,
+                full_name: p.full_name.clone(),
+                terrain: Terrain::Land, // refined from the region table
                 supply_center,
                 coasts: Vec::new(),
             });
         }
 
-        for (i, line) in regions_csv.lines().enumerate().skip(1) {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let cols: Vec<&str> = line.split(',').map(str::trim).collect();
+        for r in &doc.regions {
             let id = *by_name
-                .get(&cols[0].to_ascii_lowercase())
-                .ok_or_else(|| MapError::UnknownProvince(cols[0].to_string()))?;
-            let terrain = parse_terrain(cols[2]).ok_or_else(|| MapError::Malformed {
-                line: i + 1,
-                msg: format!("bad terrain {}", cols[2]),
-            })?;
+                .get(&r.province.to_ascii_lowercase())
+                .ok_or_else(|| MapError::UnknownProvince(r.province.clone()))?;
             let province = &mut provinces[id.0 as usize];
-            if cols[1].is_empty() {
-                province.terrain = terrain;
-            } else {
-                let coast = Coast::parse(cols[1]).ok_or_else(|| MapError::Malformed {
-                    line: i + 1,
-                    msg: format!("bad coast {}", cols[1]),
-                })?;
-                province.coasts.push(coast);
-                province.terrain = Terrain::Coast;
+            match r.coast.as_deref() {
+                None => province.terrain = r.terrain,
+                Some(c) => {
+                    let coast = Coast::parse(c).ok_or_else(|| invalid(format!("bad coast {c}")))?;
+                    province.coasts.push(coast);
+                    province.terrain = Terrain::Coast;
+                }
             }
         }
 
         let mut adjacency: BTreeMap<Region, Vec<(Region, Terrain)>> = BTreeMap::new();
-        for (i, line) in borders_csv.lines().enumerate().skip(1) {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let cols: Vec<&str> = line.split(',').map(str::trim).collect();
-            let a = parse_region(&by_name, cols[0])?;
-            let b = parse_region(&by_name, cols[1])?;
-            let terrain = parse_terrain(cols[2]).ok_or_else(|| MapError::Malformed {
-                line: i + 1,
-                msg: format!("bad terrain {}", cols[2]),
-            })?;
-            adjacency.entry(a).or_default().push((b, terrain));
-            adjacency.entry(b).or_default().push((a, terrain));
+        for b in &doc.borders {
+            let a = parse_region(&by_name, &b.from)?;
+            let c = parse_region(&by_name, &b.to)?;
+            adjacency.entry(a).or_default().push((c, b.terrain));
+            adjacency.entry(c).or_default().push((a, b.terrain));
         }
         for edges in adjacency.values_mut() {
             edges.sort();
             edges.dedup();
         }
 
-        let mut homes = vec![Vec::new(); powers.len()];
+        let mut homes = vec![Vec::new(); doc.powers.len()];
         for (i, p) in provinces.iter().enumerate() {
             if let SupplyCenter::Home(power) = p.supply_center {
                 homes[power.0 as usize].push(ProvinceId(i as u8));
             }
         }
+        // `homes` restates the supply centre column so a variant author sees
+        // each power's home set at a glance; the two must agree.
+        if doc.homes.len() != doc.powers.len() {
+            return Err(invalid("homes must list every power exactly once".into()));
+        }
+        for (code, named) in &doc.homes {
+            let p = power(code)?;
+            let mut actual: Vec<String> = named.iter().map(|s| s.to_ascii_lowercase()).collect();
+            let mut expected: Vec<String> = homes[p.0 as usize]
+                .iter()
+                .map(|id| provinces[id.0 as usize].name.clone())
+                .collect();
+            actual.sort();
+            expected.sort();
+            if actual != expected {
+                return Err(invalid(format!(
+                    "home centres for {code} do not match province declarations"
+                )));
+            }
+        }
 
-        let mut start_units = Vec::new();
-        for (code, kind, region) in start {
-            let power = *power_by_code.get(code).ok_or_else(|| MapError::Malformed {
-                line: 0,
-                msg: format!("unknown power {code}"),
-            })?;
-            let kind = if *kind == 'A' {
-                UnitKind::Army
-            } else {
-                UnitKind::Fleet
-            };
-            start_units.push((power, kind, parse_region(&by_name, region)?));
+        let mut start_units = Vec::with_capacity(doc.starting_units.len());
+        for u in &doc.starting_units {
+            start_units.push((power(&u.power)?, u.kind, parse_region(&by_name, &u.region)?));
         }
 
         Ok(Map {
-            name: name.to_string(),
+            name: doc.name,
+            rulebook_overrides: doc.rulebook_overrides,
             provinces,
-            powers,
+            powers: doc.powers,
             by_name,
             adjacency,
             homes,
@@ -544,15 +587,6 @@ pub fn split_coast(s: &str) -> (&str, Option<&str>) {
     (s, None)
 }
 
-fn parse_terrain(s: &str) -> Option<Terrain> {
-    match s.to_ascii_lowercase().as_str() {
-        "land" => Some(Terrain::Land),
-        "coast" => Some(Terrain::Coast),
-        "sea" => Some(Terrain::Sea),
-        _ => None,
-    }
-}
-
 fn parse_region(by_name: &HashMap<String, ProvinceId>, s: &str) -> Result<Region, MapError> {
     let (name, coast) = split_coast(s);
     let province = *by_name
@@ -560,48 +594,12 @@ fn parse_region(by_name: &HashMap<String, ProvinceId>, s: &str) -> Result<Region
         .ok_or_else(|| MapError::UnknownProvince(name.to_string()))?;
     let coast = match coast {
         None => None,
-        Some(c) => Some(Coast::parse(c).ok_or_else(|| MapError::Malformed {
-            line: 0,
-            msg: format!("bad coast {c}"),
-        })?),
+        Some(c) => {
+            Some(Coast::parse(c).ok_or_else(|| MapError::Invalid(format!("bad coast {c}")))?)
+        }
     };
     Ok(Region::new(province, coast))
 }
-
-const STANDARD_POWERS: [(&str, &str); 7] = [
-    ("AUS", "Austria"),
-    ("ENG", "England"),
-    ("FRA", "France"),
-    ("GER", "Germany"),
-    ("ITA", "Italy"),
-    ("RUS", "Russia"),
-    ("TUR", "Turkey"),
-];
-
-const STANDARD_START: &[(&str, char, &str)] = &[
-    ("AUS", 'A', "vie"),
-    ("AUS", 'A', "bud"),
-    ("AUS", 'F', "tri"),
-    ("ENG", 'F', "lon"),
-    ("ENG", 'F', "edi"),
-    ("ENG", 'A', "lvp"),
-    ("FRA", 'A', "par"),
-    ("FRA", 'A', "mar"),
-    ("FRA", 'F', "bre"),
-    ("GER", 'A', "ber"),
-    ("GER", 'A', "mun"),
-    ("GER", 'F', "kie"),
-    ("ITA", 'A', "rom"),
-    ("ITA", 'A', "ven"),
-    ("ITA", 'F', "nap"),
-    ("RUS", 'A', "mos"),
-    ("RUS", 'A', "war"),
-    ("RUS", 'F', "sev"),
-    ("RUS", 'F', "stp(sc)"),
-    ("TUR", 'A', "con"),
-    ("TUR", 'A', "smy"),
-    ("TUR", 'F', "ank"),
-];
 
 #[cfg(test)]
 mod tests {
@@ -661,5 +659,60 @@ mod tests {
             let r = m.parse_region(s).unwrap();
             assert_eq!(m.parse_region(&m.region_name(r)), Some(r));
         }
+    }
+
+    #[test]
+    fn bundled_json_maps_load_standard_and_duel() {
+        let standard = Map::standard();
+        assert_eq!(standard.name, "standard");
+        assert_eq!(standard.provinces().len(), 76);
+        assert_eq!(Map::by_name("classic").unwrap().name, "standard");
+
+        let duel = Map::by_name("duel").unwrap();
+        assert_eq!(duel.powers().len(), 2);
+        assert_eq!(duel.start_units().len(), 2);
+        let game = crate::game::Game::new(duel, crate::rulebook::Rulebook::default());
+        assert!(game.rulebook.build_anywhere);
+        // A solo must be reachable: two of the three centres win.
+        assert_eq!(game.rulebook.victory_centers, 2);
+    }
+
+    fn duel_doc() -> serde_json::Value {
+        serde_json::from_str(include_str!("../data/maps/duel.json")).unwrap()
+    }
+
+    fn load(doc: &serde_json::Value) -> Result<Map, MapError> {
+        Map::from_json(&doc.to_string())
+    }
+
+    #[test]
+    fn map_documents_are_validated() {
+        assert!(load(&duel_doc()).is_ok());
+
+        let mut doc = duel_doc();
+        doc["provinces"][1]["name"] = "red".into();
+        assert!(
+            matches!(load(&doc), Err(MapError::Invalid(m)) if m.contains("duplicate province"))
+        );
+
+        let mut doc = duel_doc();
+        doc["homes"]["RED"] = serde_json::json!(["mid"]);
+        assert!(matches!(load(&doc), Err(MapError::Invalid(m)) if m.contains("home centres")));
+
+        let mut doc = duel_doc();
+        doc["borders"][0]["to"] = "nowhere".into();
+        assert!(matches!(load(&doc), Err(MapError::UnknownProvince(p)) if p == "nowhere"));
+
+        let mut doc = duel_doc();
+        doc["starting_units"][0]["power"] = "GREEN".into();
+        assert!(matches!(load(&doc), Err(MapError::Invalid(m)) if m.contains("unknown power")));
+
+        let mut doc = duel_doc();
+        doc["rulebook_overrides"] = serde_json::json!({"build_anywere": true});
+        assert!(matches!(load(&doc), Err(MapError::Json(_))));
+
+        let mut doc = duel_doc();
+        doc["regions"][0]["terrain"] = "lava".into();
+        assert!(matches!(load(&doc), Err(MapError::Json(_))));
     }
 }
