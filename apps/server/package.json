@@ -24,11 +24,11 @@
     "@cabal/protocol": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.22.0",
-    "@cloudflare/workers-types": "^5.20260915.1",
-    "oxlint": "^1.83.0",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.0",
-    "wrangler": "^4.132.0"
+    "@cloudflare/vitest-plugin": "^1.4.7",
+    "@cloudflare/workers-types": "^5.20261025.1",
+    "oxlint": "^1.89.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5",
+    "wrangler": "^4.152.0"
   }
 }

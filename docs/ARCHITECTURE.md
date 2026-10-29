@@ -111,7 +111,7 @@ Pre-processing decides statically whether an adjacent move uses a convoy (editio
 - Property tests (`proptest`): random legal order sets never panic, resolution is independent of order submission sequence, relabelling powers relabels outcomes.
 - Snapshot tests (`insta`) on explanations for the DipMath figures.
 - `criterion` benches: full board adjudication, legal order enumeration.
-- `cargo fuzz` target on the text parser.
+- Planned: `cargo fuzz` targets on the text parser and resolver (not wired in CI yet).
 
 ## 4. WebAssembly boundary (`crates/cabal-wasm`, `packages/engine`)
 
@@ -177,9 +177,11 @@ An agent is just another client. It receives the same state and message stream, 
 
 ## 9. Deployment
 
-- `apps/web` deploys to Cloudflare Pages as `playcabal.pages.dev` on every merge to `main`.
-- `apps/server` deploys with `wrangler deploy` from CI using `CLOUDFLARE_API_TOKEN`. Durable Object migrations are declared in `wrangler.jsonc`.
-- CI (`.github/workflows/ci.yml`): Rust fmt, clippy, tests, DATC, wasm build with a size gate; Node typecheck, unit, workerd tests, Playwright; deploy jobs on `main`.
+- Deploys are run by a maintainer from a machine logged in with `npx wrangler login`; CI holds no Cloudflare credentials.
+- `pnpm deploy:web` builds the engine and site and publishes `apps/web/dist` to Cloudflare Pages as `playcabal.pages.dev`.
+- `pnpm deploy:server` builds the engine and runs `wrangler deploy` for `apps/server`. Durable Object migrations are declared in `wrangler.jsonc`.
+- `pnpm deploy:all` does both (a bare `pnpm deploy` is a built-in pnpm command, not this script). Run it from an up to date `main` after CI is green.
+- CI (`.github/workflows/ci.yml`): Rust fmt, clippy, tests, DATC, wasm build with a size gate; Node typecheck, unit, workerd tests, Playwright.
 - Nightly (`stress.yml`): fuzzing, property tests with a larger case budget, and an AI arena game.
 
 ## 10. Security and fairness

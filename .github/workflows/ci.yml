@@ -21,7 +21,7 @@ jobs:
     name: "Rust: fmt, clippy, tests, DATC"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.0
@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: rust
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.0
@@ -54,7 +54,7 @@ jobs:
           size=$(gzip -c packages/engine/pkg/cabal_engine_bg.wasm | wc -c | tr -d ' ')
           echo "gzip size: $size bytes (budget $WASM_SIZE_BUDGET_BYTES)"
           test "$size" -le "$WASM_SIZE_BUDGET_BYTES"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: engine-pkg
           path: packages/engine/pkg
@@ -65,13 +65,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: wasm
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: engine-pkg
           path: packages/engine/pkg
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -86,80 +86,22 @@ jobs:
     runs-on: ubuntu-latest
     needs: node
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: engine-pkg
           path: packages/engine/pkg
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @cabal/web exec playwright install --with-deps chromium
       - run: pnpm test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
           path: apps/web/playwright-report
           retention-days: 7
-
-  deploy-web:
-    name: Deploy web to Cloudflare Pages
-    needs: [node, e2e]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-    steps:
-      - if: env.CLOUDFLARE_API_TOKEN == ''
-        run: echo "::notice::CLOUDFLARE_API_TOKEN not set, skipping Pages deploy."
-      - uses: actions/checkout@v5
-        if: env.CLOUDFLARE_API_TOKEN != ''
-      - uses: actions/download-artifact@v4
-        if: env.CLOUDFLARE_API_TOKEN != ''
-        with:
-          name: engine-pkg
-          path: packages/engine/pkg
-      - uses: pnpm/action-setup@v4
-        if: env.CLOUDFLARE_API_TOKEN != ''
-      - uses: actions/setup-node@v5
-        if: env.CLOUDFLARE_API_TOKEN != ''
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - if: env.CLOUDFLARE_API_TOKEN != ''
-        run: pnpm install --frozen-lockfile && pnpm --filter @cabal/web build
-      - if: env.CLOUDFLARE_API_TOKEN != ''
-        run: pnpm --filter @cabal/web exec wrangler pages deploy dist --project-name playcabal --branch main
-
-  deploy-server:
-    name: Deploy server worker
-    needs: [node, e2e]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-    steps:
-      - if: env.CLOUDFLARE_API_TOKEN == ''
-        run: echo "::notice::CLOUDFLARE_API_TOKEN not set, skipping worker deploy."
-      - uses: actions/checkout@v5
-        if: env.CLOUDFLARE_API_TOKEN != ''
-      - uses: actions/download-artifact@v4
-        if: env.CLOUDFLARE_API_TOKEN != ''
-        with:
-          name: engine-pkg
-          path: packages/engine/pkg
-      - uses: pnpm/action-setup@v4
-        if: env.CLOUDFLARE_API_TOKEN != ''
-      - uses: actions/setup-node@v5
-        if: env.CLOUDFLARE_API_TOKEN != ''
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - if: env.CLOUDFLARE_API_TOKEN != ''
-        run: pnpm install --frozen-lockfile && pnpm --filter @cabal/server deploy
