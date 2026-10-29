@@ -86,28 +86,32 @@ export class AgentClient {
   private async act(): Promise<void> {
     if (this.busy || !this.state || !this.map) return;
     this.busy = true;
+    // Everything below answers for this phase, even if the server moves on mid-decision.
+    const phase = this.phase;
     try {
       const power = this.opts.player.power;
       const game = Game.fromState(this.state);
       const legal = game.legal(power);
       if (Object.keys(legal.by_unit).length === 0) {
-        this.send({ t: "ready", p: { phase: this.phase, ready: true } });
+        this.send({ t: "ready", p: { phase, ready: true } });
         return;
       }
       const { validated, decision } = await this.opts.player.play({
-        phase: this.phase,
+        phase,
         state: this.state,
         map: this.map,
         legal,
         press: this.press
-          .filter((p) => p.phase === this.phase)
+          .filter((p) => p.phase === phase)
           .map((p) => ({ from: p.from, to: p.to, body: p.body, pledge: p.pledge?.orders ?? null })),
         myPledges: this.press
-          .filter((p) => p.phase === this.phase && p.from === power && p.pledge?.orders)
+          .filter((p) => p.phase === phase && p.from === power && p.pledge?.orders)
           .map((p) => p.pledge!.orders!),
         trust: this.trust,
       });
-      this.opts.onDecision?.(this.phase, validated);
+      // The phase resolved while the model was thinking: these orders are stale, so drop them.
+      if (this.phase !== phase) return;
+      this.opts.onDecision?.(phase, validated);
       for (const msg of decision.messages) {
         const pledge =
           decision.pledge && decision.pledge.to === msg.to
@@ -118,10 +122,12 @@ export class AgentClient {
           p: { to: msg.to, body: msg.body, ...(pledge && pledge.orders.length ? { pledge } : {}) },
         });
       }
-      this.send({ t: "orders.set", p: { phase: this.phase, orders: validated.orders } });
-      this.send({ t: "ready", p: { phase: this.phase, ready: true } });
+      this.send({ t: "orders.set", p: { phase, orders: validated.orders } });
+      this.send({ t: "ready", p: { phase, ready: true } });
     } finally {
       this.busy = false;
+      // A state frame for a new phase arrived while busy and was skipped; act on it now.
+      if (this.phase !== phase) void this.act();
     }
   }
 }
