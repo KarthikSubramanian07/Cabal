@@ -15,6 +15,9 @@ use crate::order::{
 use crate::rulebook::Rulebook;
 use crate::state::{GameState, Position};
 
+#[cfg(test)]
+mod reference;
+
 fn fleet_seas(map: &Map, position: &Position) -> BTreeSet<ProvinceId> {
     position
         .units
@@ -260,6 +263,107 @@ mod tests {
     use super::*;
     use crate::adjudicate::movement::resolve_movement;
     use crate::outcome::OrderOutcome;
+    use proptest::prelude::*;
+
+    /// A crowded board: up to 19 fleets at sea plus up to 20 units on land, so most
+    /// armies are convoyable and convoy routes branch (the shape that made the old
+    /// per-order route searches slow).
+    fn arb_crowded_position() -> impl Strategy<Value = Position> {
+        let map = Map::standard();
+        let seas: Vec<ProvinceId> = map.province_ids().filter(|&p| map.is_sea(p)).collect();
+        let land: Vec<ProvinceId> = map
+            .province_ids()
+            .filter(|&p| !map.is_sea(p) && map.province(p).name != "swi")
+            .collect();
+        (
+            prop::collection::vec((prop::sample::select(seas), 0..7u8), 0..=19),
+            prop::collection::vec(
+                (prop::sample::select(land), 0..7u8, any::<bool>(), 0..2usize),
+                0..=20,
+            ),
+        )
+            .prop_map(move |(fleets, others)| {
+                let mut pos = Position::default();
+                for (p, power) in fleets {
+                    if pos.unit_at(p).is_none() {
+                        pos.add_unit(Unit {
+                            power: Power(power),
+                            kind: UnitKind::Fleet,
+                            region: Region::land(p),
+                        });
+                    }
+                }
+                for (p, power, fleet, coast_pick) in others {
+                    if pos.unit_at(p).is_some() {
+                        continue;
+                    }
+                    let coasts = &map.province(p).coasts;
+                    let (kind, region) = if fleet && map.is_coastal(p) {
+                        let coast = coasts.get(coast_pick % coasts.len().max(1)).copied();
+                        (UnitKind::Fleet, Region::new(p, coast))
+                    } else {
+                        (UnitKind::Army, Region::land(p))
+                    };
+                    pos.add_unit(Unit {
+                        power: Power(power),
+                        kind,
+                        region,
+                    });
+                }
+                pos
+            })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(
+            std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
+        ))]
+
+        #[test]
+        fn prop_legal_movement_matches_reference(pos in arb_crowded_position()) {
+            let map = Map::standard();
+            for power in map.power_ids() {
+                prop_assert_eq!(
+                    legal_movement(map, &pos, power),
+                    reference::legal_movement(map, &pos, power),
+                    "power {:?} on {:?}", power, pos.units
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn midgame_matches_reference() {
+        let map = Map::standard();
+        let mut pos = Position::default();
+        let seas: Vec<ProvinceId> = map.province_ids().filter(|&p| map.is_sea(p)).collect();
+        for (i, &p) in seas.iter().enumerate() {
+            pos.add_unit(Unit {
+                power: Power((i % 7) as u8),
+                kind: UnitKind::Fleet,
+                region: Region::land(p),
+            });
+        }
+        for (i, p) in map
+            .province_ids()
+            .filter(|&p| map.is_coastal(p))
+            .enumerate()
+        {
+            if i % 2 == 0 {
+                pos.add_unit(Unit {
+                    power: Power((i % 7) as u8),
+                    kind: UnitKind::Army,
+                    region: Region::land(p),
+                });
+            }
+        }
+        for power in map.power_ids() {
+            assert_eq!(
+                legal_movement(map, &pos, power),
+                reference::legal_movement(map, &pos, power)
+            );
+        }
+    }
 
     #[test]
     fn opening_position_orders_are_all_legal() {
