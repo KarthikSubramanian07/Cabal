@@ -972,13 +972,6 @@ impl<'a> Resolver<'a> {
     }
 }
 
-/// Fleet adjacency between two provinces, considering every coast region of `a`.
-fn fleet_adjacent(map: &Map, a: ProvinceId, b: ProvinceId) -> bool {
-    map.regions_of(a)
-        .into_iter()
-        .any(|r| map.adjacent_province(r, UnitKind::Fleet, b))
-}
-
 /// Is there any chain of fleet-occupied sea provinces from `origin` to `dest`?
 pub(crate) fn convoy_possible(
     map: &Map,
@@ -1010,7 +1003,7 @@ pub(crate) fn on_convoy_route(
     fleet: ProvinceId,
 ) -> bool {
     let seas: Vec<ProvinceId> = fleet_seas.iter().copied().collect();
-    let adj = |a: ProvinceId, b: ProvinceId| fleet_adjacent(map, a, b);
+    let adj = |a: ProvinceId, b: ProvinceId| map.fleet_adjacent(a, b);
     let mut chain = Vec::new();
     chordless_dfs(&seas, &mut chain, origin, dest, fleet, &adj)
 }
@@ -1061,7 +1054,7 @@ fn reachable_seas(map: &Map, seas: &[ProvinceId], start: ProvinceId) -> BTreeSet
     let mut queue: VecDeque<ProvinceId> = seas
         .iter()
         .copied()
-        .filter(|&s| fleet_adjacent(map, s, start))
+        .filter(|&s| map.fleet_adjacent(s, start))
         .collect();
     while let Some(s) = queue.pop_front() {
         if !seen.insert(s) {
@@ -1083,5 +1076,5 @@ fn sea_path_exists(map: &Map, seas: &[ProvinceId], origin: ProvinceId, dest: Pro
     }
     reachable_seas(map, seas, origin)
         .iter()
-        .any(|&s| fleet_adjacent(map, s, dest))
+        .any(|&s| map.fleet_adjacent(s, dest))
 }
