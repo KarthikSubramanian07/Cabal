@@ -14,7 +14,7 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::geo::{Map, Power, ProvinceId, Region, UnitKind};
-use crate::order::{Command, Order, Unit, normalise};
+use crate::order::{Command, Order, Unit, check, fleet_seas};
 use crate::outcome::{
     ConvoyOutcome, HoldOutcome, Illegal, MoveOutcome, OrderOutcome, SupportOutcome,
 };
@@ -224,118 +224,20 @@ impl<'a> Resolver<'a> {
             e.command = o.command;
         }
 
-        let fleet_seas: BTreeSet<ProvinceId> = units
-            .iter()
-            .filter(|u| u.kind == UnitKind::Fleet && map.is_sea(u.province()))
-            .map(|u| u.province())
-            .collect();
-
-        // validate each command (DATC section 3 / 4.E.1)
-        for i in 0..entries.len() {
-            let e = &entries[i];
-            if e.illegal.is_some() {
-                continue;
-            }
-            let unit = e.unit;
-
+        // validate each command (DATC section 3 / 4.E.1); `check` is `normalise`, so the
+        // resolver adjudicates exactly the canonical order a host would have submitted
+        let fleet_seas = fleet_seas(map, position);
+        for e in entries.iter_mut().filter(|e| e.illegal.is_none()) {
             let order = Order {
-                power: unit.power,
-                unit: unit.province(),
+                power: e.unit.power,
+                unit: e.province(),
                 command: e.command,
             };
-
-            match normalise(map, position, order) {
-                Ok(order) => entries[i].command = order.command,
-                Err(reason) => {
-                    let e = &mut entries[i];
-                    e.illegal = Some(reason);
-                    e.command = Command::Hold;
-                    continue;
-                }
-            }
-            let e = &entries[i];
-
-            let verdict: Result<(Option<Region>, bool), Illegal> = match e.command {
-                Command::Hold => Ok((None, false)),
-                Command::Move {
-                    dest,
-                    coast,
-                    via_convoy,
-                } => {
-                    if dest == unit.province() {
-                        Err(Illegal::MoveToSelf)
-                    } else {
-                        match unit.kind {
-                            UnitKind::Army => {
-                                if map.adjacent_province(unit.region, UnitKind::Army, dest) {
-                                    Ok((Some(Region::land(dest)), via_convoy))
-                                } else if convoy_possible(map, &fleet_seas, unit.province(), dest) {
-                                    Ok((Some(Region::land(dest)), true))
-                                } else {
-                                    Err(Illegal::Unreachable)
-                                }
-                            }
-                            UnitKind::Fleet => {
-                                match map.fleet_destination(unit.region, dest, coast) {
-                                    Ok(r) => Ok((Some(r), false)),
-                                    Err(crate::geo::CoastError::Ambiguous) => {
-                                        Err(Illegal::AmbiguousCoast)
-                                    }
-                                    Err(crate::geo::CoastError::Unreachable) => {
-                                        Err(Illegal::Unreachable)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Command::SupportHold { target } => {
-                    if target == unit.province() {
-                        Err(Illegal::SupportSelf)
-                    } else if !at.contains_key(&target) {
-                        Err(Illegal::SupportNoUnit)
-                    } else if !map.adjacent_province(unit.region, unit.kind, target) {
-                        Err(Illegal::SupportUnreachable)
-                    } else {
-                        Ok((None, false))
-                    }
-                }
-                Command::SupportMove { target, dest, .. } => {
-                    if target == unit.province() {
-                        Err(Illegal::SupportSelf)
-                    } else if dest == unit.province() {
-                        Err(Illegal::Unreachable)
-                    } else if !at.contains_key(&target) {
-                        Err(Illegal::SupportNoUnit)
-                    } else if !map.adjacent_province(unit.region, unit.kind, dest) {
-                        Err(Illegal::SupportUnreachable)
-                    } else {
-                        Ok((None, false))
-                    }
-                }
-                Command::Convoy { army, dest } => {
-                    if unit.kind != UnitKind::Fleet || !map.is_sea(unit.province()) {
-                        Err(Illegal::ConvoyNotAtSea)
-                    } else if !at
-                        .get(&army)
-                        .map(|&j| entries[j].unit.kind == UnitKind::Army)
-                        .unwrap_or(false)
-                    {
-                        Err(Illegal::ConvoyNotArmy)
-                    } else if !map.is_coastal(army) || !map.is_coastal(dest) || army == dest {
-                        Err(Illegal::Unreachable)
-                    } else if !on_convoy_route(map, &fleet_seas, army, dest, unit.province()) {
-                        Err(Illegal::ConvoyNoRoute)
-                    } else {
-                        Ok((None, false))
-                    }
-                }
-            };
-            let e = &mut entries[i];
-            match verdict {
-                Ok((dest_region, by_convoy)) => {
-                    e.dest_region = dest_region;
-                    e.by_convoy = by_convoy;
+            match check(map, position, &fleet_seas, order) {
+                Ok(checked) => {
+                    e.command = checked.order.command;
+                    e.dest_region = checked.dest_region;
+                    e.by_convoy = checked.by_convoy;
                 }
                 Err(reason) => {
                     e.illegal = Some(reason);

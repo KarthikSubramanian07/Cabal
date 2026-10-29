@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 034f82e2eafc917e6dc3d989143a7182e9f41c277ddf7c3d1e445b1f22f3e3ff # shrinks to pos = Position { units: [Unit { power: Power(0), kind: Army, region: Region { province: ProvinceId(4), coast: None } }, Unit { power: Power(0), kind: Fleet, region: Region { province: ProvinceId(29), coast: None } }, Unit { power: Power(0), kind: Fleet, region: Region { province: ProvinceId(68), coast: None } }], owners: {} }

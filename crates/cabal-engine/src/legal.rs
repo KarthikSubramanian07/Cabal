@@ -10,22 +10,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::adjudicate::movement::{convoy_destinations, convoy_route_fleets};
 use crate::geo::{Map, Power, ProvinceId, Region, SupplyCenter, UnitKind};
 use crate::order::{
-    AdjustCommand, AdjustOrder, Command, Order, RetreatCommand, RetreatOrder, Unit,
+    AdjustCommand, AdjustOrder, Command, Order, RetreatCommand, RetreatOrder, Unit, fleet_seas,
 };
 use crate::rulebook::Rulebook;
 use crate::state::{GameState, Position};
 
 #[cfg(test)]
 mod reference;
-
-fn fleet_seas(map: &Map, position: &Position) -> BTreeSet<ProvinceId> {
-    position
-        .units
-        .iter()
-        .filter(|u| u.kind == UnitKind::Fleet && map.is_sea(u.province()))
-        .map(|u| u.province())
-        .collect()
-}
 
 /// Convoy reachability for one position, searched once per army and shared by every
 /// order that asks about it.
