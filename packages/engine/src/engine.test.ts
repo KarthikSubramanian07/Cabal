@@ -109,18 +109,36 @@ describe("Game", () => {
   });
 
   it("exposes deterministic explanation edges and standalone DOT to both hosts", () => {
-    const game = new Game();
     const input = { orders: { FRANCE: ["A PAR - BUR", "A MAR S A PAR - BUR"], GERMANY: ["A MUN - BUR"] } };
-    const first = preview(game.state(), input);
-    const second = preview(game.state(), { orders: { GERMANY: input.orders.GERMANY, FRANCE: [...input.orders.FRANCE].reverse() } });
-    expect(first.dependencies.length).toBeGreaterThan(0);
-    expect(second.dependencies).toEqual(first.dependencies);
-    expect(second.dependency_dot).toBe(first.dependency_dot);
-    expect(first.dependency_dot).toMatch(/^digraph movement \{/);
-    const par = first.results.findIndex((r) => r.unit === "A PAR");
-    const mar = first.results.findIndex((r) => r.unit === "A MAR");
-    expect(first.dependencies).toContainEqual([par, mar]);
-    expect(JSON.parse(JSON.stringify(first)).dependencies).toEqual(first.dependencies);
+    const reversed = { orders: { GERMANY: input.orders.GERMANY, FRANCE: [...input.orders.FRANCE].reverse() } };
+    const play = (orders: typeof input) => {
+      const game = new Game();
+      const outcome = game.process(orders);
+      return { game, outcome, explanation: game.explain(0) };
+    };
+    const first = play(input);
+    const second = play(reversed);
+    expect(first.outcome).not.toHaveProperty("dependencies");
+    expect(first.explanation.edges.length).toBeGreaterThan(0);
+    expect(second.explanation.edges).toEqual(first.explanation.edges);
+    expect(second.explanation.dot).toBe(first.explanation.dot);
+    expect(first.explanation.dot).toMatch(/^digraph movement \{/);
+    const par = first.outcome.results.findIndex((r) => r.unit === "A PAR");
+    const mar = first.outcome.results.findIndex((r) => r.unit === "A MAR");
+    expect(first.explanation.edges).toContainEqual([par, mar]);
+    expect(JSON.parse(JSON.stringify(first.explanation)).edges).toEqual(first.explanation.edges);
+    expect(() => first.game.explain(1)).toThrow(/no such phase/);
+  });
+
+  it("explains movement phases only", () => {
+    const state = new Game().state();
+    state.units = { FRANCE: ["A BUR"], GERMANY: ["A MUN", "A RUH"] };
+    const game = Game.fromState(state);
+    game.process({ orders: { GERMANY: ["A MUN - BUR", "A RUH S A MUN - BUR"] } });
+    expect(game.phase()).toBe("S1901R");
+    game.process({ orders: { FRANCE: ["A BUR - PAR"] } });
+    expect(game.explain(0).edges.length).toBeGreaterThan(0);
+    expect(() => game.explain(1)).toThrow(/not a movement phase/);
   });
 
   it("never lets a power prefix order another power's units", () => {

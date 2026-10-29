@@ -155,6 +155,10 @@ pub struct Map {
     homes: Vec<Vec<ProvinceId>>,
     /// Starting units, `(power, kind, region)`.
     start_units: Vec<(Power, UnitKind, Region)>,
+    /// Province-level fleet adjacency, row-major `[from * len + to]`: can a fleet on
+    /// any region of `from` move directly into some region of `to`? Precomputed so
+    /// convoy route searches never allocate or walk border lists.
+    fleet_adjacency: Vec<bool>,
 }
 
 #[derive(Deserialize)]
@@ -351,7 +355,7 @@ impl Map {
             start_units.push((power(&u.power)?, u.kind, parse_region(&by_name, &u.region)?));
         }
 
-        Ok(Map {
+        let mut map = Map {
             name: doc.name,
             rulebook_overrides: doc.rulebook_overrides,
             provinces,
@@ -360,7 +364,19 @@ impl Map {
             adjacency,
             homes,
             start_units,
-        })
+            fleet_adjacency: Vec::new(),
+        };
+        let n = map.provinces.len();
+        let mut fleet_adjacency = vec![false; n * n];
+        for a in map.province_ids() {
+            for r in map.regions_of(a) {
+                for to in map.reachable(r, UnitKind::Fleet) {
+                    fleet_adjacency[a.0 as usize * n + to.province.0 as usize] = true;
+                }
+            }
+        }
+        map.fleet_adjacency = fleet_adjacency;
+        Ok(map)
     }
 
     pub fn provinces(&self) -> &[Province] {
@@ -451,6 +467,11 @@ impl Map {
     /// Can a unit of `kind` at `from` move directly to any region of `to`?
     pub fn adjacent_province(&self, from: Region, kind: UnitKind, to: ProvinceId) -> bool {
         self.reachable(from, kind).any(|r| r.province == to)
+    }
+
+    /// Can a fleet on any region of province `a` move directly into province `b`?
+    pub fn fleet_adjacent(&self, a: ProvinceId, b: ProvinceId) -> bool {
+        self.fleet_adjacency[a.0 as usize * self.provinces.len() + b.0 as usize]
     }
 
     /// Provinces adjacent to `p` by any border at all (used for civil disorder distance).
@@ -610,6 +631,21 @@ fn parse_region(by_name: &HashMap<String, ProvinceId>, s: &str) -> Result<Region
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fleet_adjacency_matches_the_border_lists() {
+        for m in [Map::standard(), Map::by_name("duel").unwrap()] {
+            for a in m.province_ids() {
+                for b in m.province_ids() {
+                    let walked = m
+                        .regions_of(a)
+                        .into_iter()
+                        .any(|r| m.adjacent_province(r, UnitKind::Fleet, b));
+                    assert_eq!(m.fleet_adjacent(a, b), walked, "{a:?} -> {b:?}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn standard_map_shape() {

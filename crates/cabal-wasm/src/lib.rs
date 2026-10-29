@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use cabal_engine::geo::{Map, Power, SupplyCenter, Terrain, UnitKind};
-use cabal_engine::json::{MilaState, SavedGame, state_from_mila, state_to_mila};
+use cabal_engine::json::{MilaState, SavedGame, province_code, state_from_mila, state_to_mila};
 use cabal_engine::order::AnyOrder;
 use cabal_engine::outcome::{AdjustOutcome, RetreatOutcome};
 use cabal_engine::parse::parse;
@@ -83,7 +83,7 @@ pub fn map_info() -> Result<Ts<MapInfo>, JsError> {
             homes: map
                 .homes(p)
                 .iter()
-                .map(|&h| map.province(h).name.to_ascii_uppercase())
+                .map(|&h| province_code(map, h))
                 .collect(),
         })
         .collect();
@@ -105,12 +105,12 @@ pub fn map_info() -> Result<Ts<MapInfo>, JsError> {
             }
             let mut army_adjacent: Vec<String> = map
                 .reachable(cabal_engine::Region::land(p), UnitKind::Army)
-                .map(|d| map.province(d.province).name.to_ascii_uppercase())
+                .map(|d| province_code(map, d.province))
                 .collect();
             army_adjacent.sort();
             army_adjacent.dedup();
             ProvinceInfo {
-                id: prov.name.to_ascii_uppercase(),
+                id: province_code(map, p),
                 name: prov.full_name.clone(),
                 terrain: terrain_name(prov.terrain).to_string(),
                 supply_center: match prov.supply_center {
@@ -251,15 +251,20 @@ pub struct PhaseOutcome {
     pub standoffs: Vec<String>,
     /// Units removed by the civil disorder rule (adjustment phases).
     pub civil_disorder: Vec<String>,
-    /// Movement explanation nodes correspond to `results`; an edge [a, b]
-    /// means result a queried result b. Empty for other phases.
-    pub dependencies: Vec<(usize, usize)>,
-    /// Standalone Graphviz DOT for movement phases.
-    pub dependency_dot: Option<String>,
     /// State after the phase, named with the next phase.
     pub next: State,
     /// `active`, `solo:<POWER>` or `draw`.
     pub status: String,
+}
+
+/// Why a movement phase resolved as it did, from `Game.explain`.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct Explanation {
+    /// Nodes are the phase outcome's `results`, in the same order; an edge
+    /// [a, b] means resolving result a queried result b.
+    pub edges: Vec<(usize, usize)>,
+    /// Standalone Graphviz DOT of the same graph, labelled with orders and outcomes.
+    pub dot: String,
 }
 
 #[derive(Tsify, Serialize, Deserialize, Clone, Debug, Default)]
@@ -339,26 +344,8 @@ fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOut
     let mut dislodged = Vec::new();
     let mut standoffs = Vec::new();
     let mut civil_disorder = Vec::new();
-    let mut dependencies = Vec::new();
-    let mut dependency_dot = None;
     match &record.result {
         PhaseResult::Movement(r) => {
-            let submitted: Vec<_> = record
-                .orders
-                .iter()
-                .filter_map(|o| match o {
-                    AnyOrder::Movement(o) => Some(*o),
-                    _ => None,
-                })
-                .collect();
-            let (_, graph) = cabal_engine::adjudicate::movement::resolve_movement_with_dependencies(
-                map,
-                pos,
-                game.rulebook,
-                &submitted,
-            );
-            dependencies = graph.edges.iter().copied().collect();
-            dependency_dot = Some(graph.to_dot(map, pos));
             for (o, out) in r.orders.iter().zip(&r.outcomes) {
                 let unit = pos
                     .unit_at(o.unit)
@@ -373,34 +360,29 @@ fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOut
                     reason: describe_outcome(map, out),
                 });
             }
-            // retreat options come from the state after the phase
-            for d in &r.dislodged {
-                let options = cabal_engine::legal::legal_retreats(
-                    map,
-                    &game_state_after(game, record),
-                    d.unit.power,
-                )
-                .remove(&d.unit.province())
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|o| match o.command {
-                    cabal_engine::RetreatCommand::Retreat { dest, coast } => {
-                        Some(map.region_name(cabal_engine::Region::new(dest, coast)))
-                    }
-                    _ => None,
-                })
-                .collect();
-                dislodged.push(DislodgedInfo {
-                    unit: unit_text(map, &d.unit),
-                    attacker_from: map.province(d.attacker_from).name.to_ascii_uppercase(),
-                    retreat_options: options,
-                });
+            // retreat options come from the state after the phase, cloned once per phase
+            if !r.dislodged.is_empty() {
+                let after = game_state_after(game, record);
+                for d in &r.dislodged {
+                    let options = cabal_engine::legal::legal_retreats(map, &after, d.unit.power)
+                        .remove(&d.unit.province())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|o| match o.command {
+                            cabal_engine::RetreatCommand::Retreat { dest, coast } => {
+                                Some(map.region_name(cabal_engine::Region::new(dest, coast)))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    dislodged.push(DislodgedInfo {
+                        unit: unit_text(map, &d.unit),
+                        attacker_from: province_code(map, d.attacker_from),
+                        retreat_options: options,
+                    });
+                }
             }
-            standoffs = r
-                .standoffs
-                .iter()
-                .map(|&p| map.province(p).name.to_ascii_uppercase())
-                .collect();
+            standoffs = r.standoffs.iter().map(|&p| province_code(map, p)).collect();
         }
         PhaseResult::Retreat(r) => {
             for (o, out) in r.orders.iter().zip(&r.outcomes) {
@@ -419,7 +401,7 @@ fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOut
                         format!(
                             "bounced with {}",
                             with.iter()
-                                .map(|&p| map.province(p).name.to_ascii_uppercase())
+                                .map(|&p| province_code(map, p))
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         ),
@@ -467,8 +449,6 @@ fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOut
         dislodged,
         standoffs,
         civil_disorder,
-        dependencies,
-        dependency_dot,
         next: state_to_mila(map, &game.state).into(),
         status: status_text(map, game.status),
     }
@@ -501,6 +481,28 @@ mod wasm_tests {
         assert_eq!(outcome.phase, "S1901M");
         assert_eq!(outcome.next.name, "F1901M");
         assert_eq!(outcome.status, "active");
+    }
+
+    #[wasm_bindgen_test]
+    fn explain_traces_past_movement_phases_only() {
+        let mut game = Game::new(None).unwrap();
+        let mut orders = OrdersByPower::default();
+        orders.orders.insert(
+            "FRANCE".into(),
+            vec!["A PAR - BUR".into(), "A MAR S A PAR - BUR".into()],
+        );
+        orders
+            .orders
+            .insert("GERMANY".into(), vec!["A MUN - BUR".into()]);
+        let orders = Ts::new_unchecked(serde_wasm_bindgen::to_value(&orders).unwrap());
+        game.process(orders).unwrap();
+
+        let explanation = game.explain(0).unwrap();
+        let explanation: Explanation =
+            serde_wasm_bindgen::from_value(explanation.js_value()).unwrap();
+        assert!(!explanation.edges.is_empty());
+        assert!(explanation.dot.starts_with("digraph movement {"));
+        assert!(game.explain(1).is_err());
     }
 }
 
@@ -687,6 +689,45 @@ impl Game {
             .get(index)
             .ok_or_else(|| JsError::new("no such phase"))?;
         Ok(outcome_of(&self.inner, record).into_ts()?)
+    }
+
+    /// Why the movement phase at `index` in the history resolved as it did: the
+    /// dependency edges between its results and a standalone Graphviz DOT graph.
+    /// Computed on demand by re-running the resolution with tracing; throws for
+    /// retreat and adjustment phases and for an index past the history.
+    pub fn explain(&self, index: usize) -> Result<Ts<Explanation>, JsError> {
+        let record = self
+            .inner
+            .history
+            .get(index)
+            .ok_or_else(|| JsError::new("no such phase"))?;
+        if !matches!(record.result, PhaseResult::Movement(_)) {
+            return Err(JsError::new(&format!(
+                "{} is not a movement phase",
+                record.state.phase
+            )));
+        }
+        let map = self.inner.map();
+        let pos = &record.state.position;
+        let submitted: Vec<_> = record
+            .orders
+            .iter()
+            .filter_map(|o| match o {
+                AnyOrder::Movement(o) => Some(*o),
+                _ => None,
+            })
+            .collect();
+        let (_, graph) = cabal_engine::adjudicate::movement::resolve_movement_with_dependencies(
+            map,
+            pos,
+            self.inner.rulebook,
+            &submitted,
+        );
+        Ok(Explanation {
+            edges: graph.edges.iter().copied().collect(),
+            dot: graph.to_dot(map, pos),
+        }
+        .into_ts()?)
     }
 
     /// Export as MILA saved game JSON text.
