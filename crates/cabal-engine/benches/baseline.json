@@ -1,0 +1,7 @@
+{
+  "benchmark": "adjudicate spring 1901 (22 units)",
+  "statistic": "mean",
+  "unit": "nanoseconds",
+  "estimate": 9302.907802314,
+  "recorded_with": "Criterion 0.8.2, sample-size 10, warm-up 1s, measurement 1s"
+}

@@ -127,7 +127,7 @@ Pre-processing decides statically whether an adjacent move uses a convoy (editio
 - DATC v3.0 corpus (171 cases, Main, Retreat, Build, editions) drives `tests/datc.rs`. The independent `oracle_godip.json` corpus asserts full units, dislodgements, and owners for 18 godip production cases plus two official DATC cases. Provenance, phase-boundary adapters, and the unresolved 6.K source requirement are documented in [ISSUE_6_VERIFICATION.md](ISSUE_6_VERIFICATION.md).
 - Property tests (`proptest`): random legal order sets never panic, resolution is independent of order submission sequence, relabelling powers relabels outcomes.
 - Snapshot tests (`insta`) on explanations for the DipMath figures.
-- `criterion` benches: full board adjudication, legal order enumeration.
+- `criterion` benches: full board adjudication, legal order enumeration. The CI `bench` job runs the opening adjudication bench on the base commit and on the change, back to back on one runner, and `tools/check-bench-regression.py` fails the build on a slowdown over 30 percent (`benches/baseline.json` is the fallback for local runs).
 - `cargo fuzz` targets on the text parser and legal movement order sets live in `fuzz/`; the nightly Stress workflow runs each for 600 seconds and retains crash artifacts. See `fuzz/README.md`.
 
 ## 4. WebAssembly boundary (`crates/cabal-wasm`, `packages/engine`)
