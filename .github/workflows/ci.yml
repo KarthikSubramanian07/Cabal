@@ -48,6 +48,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
+      - run: wasm-pack test --node crates/cabal-wasm
       - run: wasm-pack build crates/cabal-wasm --target web --release --out-dir ../../packages/engine/pkg --out-name cabal_engine
       - name: Size gate
         run: |
