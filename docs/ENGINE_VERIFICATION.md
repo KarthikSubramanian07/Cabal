@@ -1,4 +1,7 @@
-# Issue #6 verification
+# Engine verification
+
+How the adjudicator is checked beyond the DATC corpus: the independent
+position oracle, order normalisation, the explanation graph and fuzzing.
 
 ## Independent position oracle
 
@@ -55,16 +58,13 @@ checks resolver phase boundaries, not `Game.process`'s subsequent phase skipping
 or Fall ownership update. Retreat restrictions present in `PRESTATE_RESULTS`
 are transcribed and restored without running Cabal's preceding movement resolver.
 
-### Unresolved source requirement
+### DATC 6.K
 
-Issue #6 requests **DATC 6.K.1 and 6.K.2**. The published
+Issue #6 originally asked for DATC 6.K.1 and 6.K.2. The published
 [DATC v3.0 specification](https://webdiplomacy.net/doc/DATC_v3_0.html) ends at
-6.J.11; its table of contents contains only sections A–J. Godip's checked-in
-`datc_v2.4_06.txt` also ends at 6.J.11. No official source for 6.K.1 or 6.K.2
-was located. These identifiers have not been invented, relabelled, skipped, or
-claimed as passing. The two supplemental official cases above are **not**
-substitutes for this unresolved requirement. The issue cannot truthfully be
-reported fully complete without a source or a correction to these identifiers.
+6.J.11 (sections A to J only), as does godip's `datc_v2.4_06.txt`, so those
+identifiers do not exist. The issue scope was corrected; 6.B.15 and 6.C.8 are
+carried here as full-state cases instead.
 
 ## Normalisation and explanations
 
@@ -99,50 +99,3 @@ permutation invariance, conservation, ownership, and unique occupation.
 `fuzz/Cargo.toml` isolates nightly fuzz dependencies from the stable workspace.
 The scheduled stress workflow has separate parser/movement matrix jobs, each
 with `-max_total_time=600`, `fail-fast: false`, and crash artifact upload.
-
-Local commands and final results are recorded below once their runs finish.
-
-## Files in the resulting Issue #6 working tree
-
-The work started with uncommitted CLI, tracing, normalisation tests, DATC test
-improvements, fuzzing, workflow and architecture changes. Those were preserved
-and verified. The nested untracked `Cabal/` directory was not modified.
-
-- Engine implementation: `crates/cabal-engine/src/order.rs`,
-  `crates/cabal-engine/src/geo.rs`, `crates/cabal-engine/src/adjudicate/movement.rs`.
-- Engine tests/data: `crates/cabal-engine/tests/datc.rs`,
-  `crates/cabal-engine/tests/properties.rs`, `crates/cabal-engine/tests/normalisation.rs`,
-  `crates/cabal-engine/tests/dependencies.rs`, `crates/cabal-engine/tests/oracle.rs`,
-  `crates/cabal-engine/tests/data/oracle_godip.json`.
-- CLI: `crates/cabal-cli/src/main.rs`, `crates/cabal-cli/tests/explain.rs`.
-- Shared WASM and hosts: `crates/cabal-wasm/src/lib.rs`,
-  `packages/engine/src/engine.test.ts`, `apps/server/src/room.ts`,
-  `apps/web/src/game/useSandbox.ts`.
-- Fuzz infrastructure: `fuzz/Cargo.toml`, `fuzz/Cargo.lock`,
-  `fuzz/fuzz_targets/parser.rs`, `fuzz/fuzz_targets/movement.rs`, `fuzz/README.md`,
-  named seeds `fuzz/corpus/parser/coast`, `fuzz/corpus/parser/convoy`,
-  `fuzz/corpus/movement/opening`, `.github/workflows/stress.yml`, `.gitignore`.
-- Provenance and documentation: `tools/check_godip_oracle.py`,
-  `docs/ARCHITECTURE.md`, this report.
-
-Generated SHA-1-named fuzz discoveries, crash artifacts, logs, and WASM package
-output remain local/ignored. No unrelated files were deleted. No commit, push,
-pull request, issue update, or deployment was performed.
-
-## Verified functional results
-
-| Check | Result |
-| --- | --- |
-| `python3 tools/check_godip_oracle.py` | All 18 original production transcriptions match the independent checkout. |
-| `cargo fmt --all` and format check | Pass. |
-| `cargo test --workspace` | 41 passed, 0 failed; one pre-existing ignored fixture-writing helper (`make_fixture`), which is not a corpus case. |
-| `cargo test -p cabal-engine --test datc -- --nocapture` | 171/171 original DATC cases; no skipped cases. Corpus JSON byte-for-byte unchanged from HEAD. |
-| `cargo test -p cabal-engine --test oracle -- --nocapture` | 20/20 full-state cases; no skipped cases. |
-| `cargo clippy --workspace --all-targets -- -D warnings` | Pass. |
-| `WASM_PACK_CACHE=/private/tmp/cabal-wasm-cache pnpm engine:build` | Pass. Existing cached wasm-bindgen/wasm-opt executables copied to the writable cache after an installation attempt hit read-only Cargo cache permissions. |
-| `WRANGLER_LOG_PATH=/private/tmp/cabal-wrangler.log pnpm check` | Typecheck and lint pass; 60 TypeScript tests pass, including 13 real-WASM engine tests. |
-| API audit | All original public WASM function names preserved; Rust parse, legal and movement resolver signatures preserved. |
-
-Full local logs: `/private/tmp/cabal-test.log`, `/private/tmp/cabal-clippy.log`,
-`/private/tmp/cabal-datc.log`, `/private/tmp/cabal-wasm-build.log`,
-`/private/tmp/cabal-pnpm-check.log`.
