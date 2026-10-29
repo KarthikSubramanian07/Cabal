@@ -100,18 +100,35 @@ flowchart LR
 
 ### 3.3 Resolution
 
-The movement resolver implements the partial information algorithm from DATC v3.0 chapter 5.E (Kruijswijk). Every order has a Boolean result that never changes once decided. `adjudicate(order, optimistic)` evaluates the rule equations (attack, hold, defend, prevent strength, path, support cut, convoy) using optimistic or pessimistic values for anything undecided; `resolve(order, optimistic)` memoises, detects dependency cycles with a `recursion_hits` counter, and applies the backup rule (circular movement succeeds; convoy paradox fails the convoys per Szykman). Illegal orders are stripped before resolution and never influence it. After resolution a final explanation pass turns Booleans into `Outcome` values and a dependency graph for the UI.
+The movement resolver implements the partial information algorithm from DATC v3.0 chapter 5.E (Kruijswijk). Every order has a Boolean result that never changes once decided. `adjudicate(order, optimistic)` evaluates the rule equations (attack, hold, defend, prevent strength, path, support cut, convoy) using optimistic or pessimistic values for anything undecided; `resolve(order, optimistic)` memoises, detects dependency cycles with a `recursion_hits` counter, and applies the backup rule (circular movement succeeds; convoy paradox fails the convoys per Szykman). Illegal orders are stripped before resolution and never influence it. After resolution a final explanation pass turns Booleans into `Outcome` values.
+
+`resolve_movement_with_dependencies` additionally returns `MovementDependencies`:
+order and outcome nodes in stable region order, with sorted, deduplicated edges
+`(a, b)` when resolving order `a` queries order `b`. Cached queries and cycle
+edges are included; final explanation queries are excluded. This is an execution
+trace of the equations queried, so short-circuited branches need not appear.
+`MovementDependencies::to_dot(map, position)` renders labelled Graphviz DOT.
+`cabal explain --graph "FRA: A PAR - BUR" "FRA: A MAR S A PAR - BUR"`
+prints a standalone graph suitable for piping to `dot -Tsvg`. The original
+`resolve_movement` API and result schema are unchanged. WASM phase outcomes add
+`dependencies` (edges indexing `results`) and `dependency_dot` for UI explanations.
+
+`order::normalise(map, position, order)` validates against the actual board unit
+and canonicalises destination coasts. The additive WASM `Game.normaliseOrders`
+method is shared by server adjudication and browser sandbox adjudication/replay
+before `Game.process`. Invalid and duplicate orders are retained for diagnostics;
+typed WASM processing also normalises movement orders.
 
 Pre-processing decides statically whether an adjacent move uses a convoy (edition policy), matches supports and convoys to moves, and identifies head-to-head pairs (never when either side is convoyed).
 
 ### 3.4 Determinism and testing
 
 - No I/O, no randomness in adjudication. Civil disorder tie breaks are alphabetical by province name.
-- DATC v3.0 corpus (171 cases, Main, Retreat, Build, editions) drives `tests/datc.rs`. A second corpus asserts full post-state positions. Both are JSON under `crates/cabal-engine/tests/data`.
+- DATC v3.0 corpus (171 cases, Main, Retreat, Build, editions) drives `tests/datc.rs`. The independent `oracle_godip.json` corpus asserts full units, dislodgements, and owners for 18 godip production cases plus two official DATC cases. Provenance, phase-boundary adapters and the DATC 6.K note are in [ENGINE_VERIFICATION.md](ENGINE_VERIFICATION.md).
 - Property tests (`proptest`): random legal order sets never panic, resolution is independent of order submission sequence, relabelling powers relabels outcomes.
 - Snapshot tests (`insta`) on explanations for the DipMath figures.
 - `criterion` benches: full board adjudication, legal order enumeration. The CI `bench` job runs the opening adjudication bench on the base commit and on the change, back to back on one runner, and `tools/check-bench-regression.py` fails the build on a slowdown over 30 percent (`benches/baseline.json` is the fallback for local runs).
-- Planned: `cargo fuzz` targets on the text parser and resolver (not wired in CI yet).
+- `cargo fuzz` targets on the text parser and legal movement order sets live in `fuzz/`; the nightly Stress workflow runs each for 600 seconds and retains crash artifacts. See `fuzz/README.md`.
 
 ## 4. WebAssembly boundary (`crates/cabal-wasm`, `packages/engine`)
 

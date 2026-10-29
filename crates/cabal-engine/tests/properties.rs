@@ -67,6 +67,15 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(256)))]
 
     #[test]
+    fn prop_normalise_is_idempotent((pos, orders) in arb_position(14).prop_flat_map(|pos| { let o = arb_orders(&pos); o.prop_map(move |orders| (pos.clone(), orders)) })) {
+        let map = Map::standard();
+        for order in orders {
+            let once = cabal_engine::order::normalise(map, &pos, order).expect("legal order");
+            prop_assert_eq!(cabal_engine::order::normalise(map, &pos, once), Ok(once));
+        }
+    }
+
+    #[test]
     fn prop_legal_orders_are_never_illegal(pos in arb_position(14)) {
         let map = Map::standard();
         for power in map.power_ids() {

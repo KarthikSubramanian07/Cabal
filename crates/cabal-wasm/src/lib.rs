@@ -251,6 +251,11 @@ pub struct PhaseOutcome {
     pub standoffs: Vec<String>,
     /// Units removed by the civil disorder rule (adjustment phases).
     pub civil_disorder: Vec<String>,
+    /// Movement explanation nodes correspond to `results`; an edge [a, b]
+    /// means result a queried result b. Empty for other phases.
+    pub dependencies: Vec<(usize, usize)>,
+    /// Standalone Graphviz DOT for movement phases.
+    pub dependency_dot: Option<String>,
     /// State after the phase, named with the next phase.
     pub next: State,
     /// `active`, `solo:<POWER>` or `draw`.
@@ -298,6 +303,12 @@ fn typed_orders(game: &EngineGame, orders: &OrdersByPower) -> Result<Vec<AnyOrde
                 PhaseKind::Adjustment => parsed.to_adjustment(Some(p)).map(AnyOrder::Adjustment),
             }
             .map_err(|e| JsError::new(&format!("{text}: {e}")))?;
+            let order = match order {
+                AnyOrder::Movement(o) => AnyOrder::Movement(
+                    cabal_engine::order::normalise(map, &game.state.position, o).unwrap_or(o),
+                ),
+                other => other,
+            };
             out.push(order);
         }
     }
@@ -312,8 +323,26 @@ fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOut
     let mut dislodged = Vec::new();
     let mut standoffs = Vec::new();
     let mut civil_disorder = Vec::new();
+    let mut dependencies = Vec::new();
+    let mut dependency_dot = None;
     match &record.result {
         PhaseResult::Movement(r) => {
+            let submitted: Vec<_> = record
+                .orders
+                .iter()
+                .filter_map(|o| match o {
+                    AnyOrder::Movement(o) => Some(*o),
+                    _ => None,
+                })
+                .collect();
+            let (_, graph) = cabal_engine::adjudicate::movement::resolve_movement_with_dependencies(
+                map,
+                pos,
+                game.rulebook,
+                &submitted,
+            );
+            dependencies = graph.edges.iter().copied().collect();
+            dependency_dot = Some(graph.to_dot(map, pos));
             for (o, out) in r.orders.iter().zip(&r.outcomes) {
                 let unit = pos
                     .unit_at(o.unit)
@@ -422,6 +451,8 @@ fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOut
         dislodged,
         standoffs,
         civil_disorder,
+        dependencies,
+        dependency_dot,
         next: state_to_mila(map, &game.state).into(),
         status: status_text(map, game.status),
     }
@@ -528,6 +559,44 @@ impl Game {
 
     pub fn state(&self) -> Result<Ts<State>, JsError> {
         Ok(State::from(state_to_mila(self.inner.map(), &self.inner.state)).into_ts()?)
+    }
+
+    /// Canonicalise movement orders against the actual board before submission.
+    /// Illegal orders remain present so process can report their original failure;
+    /// retreat and adjustment orders retain their phase-specific validation.
+    #[wasm_bindgen(js_name = normaliseOrders)]
+    pub fn normalise_orders(
+        &self,
+        orders: Ts<OrdersByPower>,
+    ) -> Result<Ts<OrdersByPower>, JsError> {
+        let input: OrdersByPower = orders.to_rust()?;
+        if self.inner.phase().kind != PhaseKind::Movement {
+            return Ok(input.into_ts()?);
+        }
+        let mut output = input.clone();
+        let map = self.inner.map();
+        for (power, texts) in &mut output.orders {
+            let p = map
+                .find_power(power)
+                .ok_or_else(|| JsError::new(&format!("unknown power {power}")))?;
+            for text in texts {
+                let parsed = parse(map, text).map_err(|e| JsError::new(&e.to_string()))?;
+                let order = parsed
+                    .to_movement(Some(p))
+                    .map_err(|e| JsError::new(&e.to_string()))?;
+                if let Ok(order) =
+                    cabal_engine::order::normalise(map, &self.inner.state.position, order)
+                {
+                    let canonical = order_text(map, &self.inner.state.position, &order);
+                    *text = if parsed.power.is_some() {
+                        format!("{}: {canonical}", map.power(order.power).code)
+                    } else {
+                        canonical
+                    };
+                }
+            }
+        }
+        Ok(output.into_ts()?)
     }
 
     /// Legal orders for a power in the current phase.

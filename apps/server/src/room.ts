@@ -614,7 +614,7 @@ export class GameRoom extends DurableObject<Env> {
         this.sql.exec("UPDATE seats SET missed = ?, kind = ? WHERE power = ?", missed, kind, seat.power);
       }
     }
-    const outcome = game.process({ orders });
+    const outcome = game.process(game.normaliseOrders({ orders }));
     this.sql.exec("INSERT INTO phases (name, results_json, adjudicated_at) VALUES (?, ?, ?)", phase, JSON.stringify(outcome), Date.now());
 
     // receipts for every pledge made in this phase

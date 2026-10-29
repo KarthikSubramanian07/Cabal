@@ -1,0 +1,31 @@
+[package]
+name = "cabal-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+cabal-engine = { path = "../crates/cabal-engine" }
+serde_json = "1"
+
+# Keep fuzz-only dependencies out of the stable workspace and WASM builds.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "parser"
+path = "fuzz_targets/parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "movement"
+path = "fuzz_targets/movement.rs"
+test = false
+doc = false
+bench = false

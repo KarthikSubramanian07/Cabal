@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use indexmap::IndexMap;
 
 use cabal_engine::adjudicate::adjustment::resolve_adjustment;
-use cabal_engine::adjudicate::movement::resolve_movement;
+use cabal_engine::adjudicate::movement::{resolve_movement, resolve_movement_with_dependencies};
 use cabal_engine::adjudicate::retreat::resolve_retreat;
 use cabal_engine::geo::{Map, UnitKind};
 use cabal_engine::order::{AdjustOrder, Order, RetreatOrder, Unit};
@@ -130,6 +130,23 @@ fn run_main(
         .map(|(t, p)| p.to_movement(None).unwrap_or_else(|e| panic!("{t}: {e}")))
         .collect();
     let result = resolve_movement(map, &pos, rb, &typed);
+    let (traced, dependencies) = resolve_movement_with_dependencies(map, &pos, rb, &typed);
+    assert_eq!(
+        traced, result,
+        "dependency tracing must not affect adjudication"
+    );
+    let mut reversed = typed.clone();
+    reversed.reverse();
+    let mut reversed_position = pos.clone();
+    reversed_position.units.reverse();
+    let (repeated, repeated_dependencies) =
+        resolve_movement_with_dependencies(map, &reversed_position, rb, &reversed);
+    assert_eq!(repeated, traced);
+    assert_eq!(repeated_dependencies, dependencies);
+    assert_eq!(
+        dependencies.to_dot(map, &pos),
+        repeated_dependencies.to_dot(map, &reversed_position)
+    );
     if std::env::var_os("CABAL_DEBUG").is_some() {
         for (o, out) in result.orders.iter().zip(&result.outcomes) {
             eprintln!(
@@ -279,6 +296,7 @@ fn run_case(map: &Map, case: &Case) -> Vec<String> {
 fn datc_v3_corpus() {
     let map = Map::standard();
     let corpus = corpus();
+    assert_eq!(corpus.cases.len(), 171, "preserve the original DATC corpus");
     let mut by_section: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     let mut failed: Vec<(String, Vec<String>)> = Vec::new();
     let mut seen: HashMap<String, usize> = HashMap::new();
