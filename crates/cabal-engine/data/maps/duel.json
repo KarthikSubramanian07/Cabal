@@ -23,5 +23,5 @@
     {"power": "RED", "kind": "army", "region": "red"},
     {"power": "BLUE", "kind": "army", "region": "blue"}
   ],
-  "rulebook_overrides": {"build_anywhere": true}
+  "rulebook_overrides": {"build_anywhere": true, "victory_centers": 2}
 }
