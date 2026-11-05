@@ -25,6 +25,28 @@ interface Picker {
   options: string[];
 }
 
+type ReceiptStatus = "kept" | "broken" | "pending";
+
+type PressMessage = {
+  id: number;
+  from: string;
+  to: string;
+  body: string;
+  sealed: boolean;
+  receipt: ReceiptStatus;
+};
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+}
+
+const INITIAL_PRESS: PressMessage[] = [
+  { id: 1, from: "FRANCE", to: "ALL", body: "I can keep the channel open if we seal it before the deadline.", sealed: true, receipt: "kept" },
+  { id: 2, from: "ENGLAND", to: "FRANCE", body: "I am not moving into Belgium before you clarify your convoy plan.", sealed: false, receipt: "pending" },
+  { id: 3, from: "GERMANY", to: "RUSSIA", body: "The pact holds if both of us agree to a neutral turn in the north.", sealed: true, receipt: "broken" },
+];
+
 const IDLE: Draft = { step: "idle" };
 
 export function App() {
@@ -35,8 +57,22 @@ export function App() {
   const [picker, setPicker] = useState<Picker | null>(null);
   const [viewing, setViewing] = useState<number | null>(null);
   const [help, setHelp] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [pressMessages, setPressMessages] = useState<PressMessage[]>(INITIAL_PRESS);
+  const [pressTo, setPressTo] = useState("ALL");
+  const [pressBody, setPressBody] = useState("Hold the channel open and I will seal this order set.");
   const boardWrap = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const onBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+
+    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+  }, []);
 
   const ctx = useMemo<ComposeContext | null>(
     () => (sb ? { phase: sb.kind, pieces: sb.pieces, legal: sb.legal } : null),
@@ -360,6 +396,38 @@ export function App() {
             </>
           )}
 
+          <Issue10Panel
+            pressMessages={pressMessages}
+            pressTo={pressTo}
+            setPressTo={setPressTo}
+            pressBody={pressBody}
+            setPressBody={setPressBody}
+            onSendPress={() => {
+              const next = pressBody.trim();
+              if (!next) return;
+              setPressMessages((current) => [
+                {
+                  id: Date.now(),
+                  from: "FRANCE",
+                  to: pressTo,
+                  body: next,
+                  sealed: true,
+                  receipt: "pending",
+                },
+                ...current,
+              ]);
+              setPressBody("");
+            }}
+            installPrompt={installPrompt}
+            onInstall={() => {
+              if (!installPrompt) return;
+              installPrompt.prompt();
+              void installPrompt.userChoice.then((choice) => {
+                if (choice.outcome === "accepted") setInstallPrompt(null);
+              });
+            }}
+          />
+
           <section className="game-tools">
             <button type="button" className="btn small" onClick={sb.undo} disabled={sb.history.length === 0}>
               Undo last phase
@@ -397,6 +465,154 @@ export function App() {
 
       <HowToPlay open={help} onClose={() => setHelp(false)} />
     </div>
+  );
+}
+
+function Issue10Panel({
+  pressMessages,
+  pressTo,
+  setPressTo,
+  pressBody,
+  setPressBody,
+  onSendPress,
+  installPrompt,
+  onInstall,
+}: {
+  pressMessages: PressMessage[];
+  pressTo: string;
+  setPressTo: (value: string) => void;
+  pressBody: string;
+  setPressBody: (value: string) => void;
+  onSendPress: () => void;
+  installPrompt: BeforeInstallPromptEvent | null;
+  onInstall: () => void;
+}) {
+  const ledger = [
+    { power: "FRANCE", score: 0.82, delta: "+0.14" },
+    { power: "ENGLAND", score: 0.68, delta: "+0.03" },
+    { power: "GERMANY", score: 0.42, delta: "-0.07" },
+    { power: "ITALY", score: 0.58, delta: "+0.09" },
+  ];
+
+  const notifications = [
+    { title: "Lobby ready", detail: "Five seats are filled. One AI seat remains open.", time: "2m ago" },
+    { title: "Receipt issued", detail: "France's sealed pledge to hold Paris stayed kept.", time: "9m ago" },
+    { title: "Trust update", detail: "Germany’s ledger dipped after a broken convoy pledge.", time: "18m ago" },
+  ];
+
+  return (
+    <section className="issue-panel" aria-label="Lobby and press panel">
+      <div className="issue-panel-header">
+        <div>
+          <p className="eyebrow">Game room</p>
+          <h2>Lobby, press & receipts</h2>
+        </div>
+        {installPrompt ? (
+          <button type="button" className="btn small primary" onClick={onInstall}>
+            Install app
+          </button>
+        ) : (
+          <span className="status-pill">PWA ready</span>
+        )}
+      </div>
+
+      <div className="lobby-grid">
+        <div className="lobby-card">
+          <span className="card-label">Table</span>
+          <strong>Classic 1901</strong>
+          <small>7 seats · public press · sealed promises</small>
+        </div>
+        <div className="lobby-card">
+          <span className="card-label">Deadline</span>
+          <strong>Ready to advance</strong>
+          <small>8h 02m left</small>
+        </div>
+        <div className="lobby-card">
+          <span className="card-label">Pledges</span>
+          <strong>3 receipts</strong>
+          <small>2 kept · 1 broken</small>
+        </div>
+      </div>
+
+      <div className="issue-subsection">
+        <div className="subsection-header">
+          <h3>Press</h3>
+          <span className="status-pill muted">sealed</span>
+        </div>
+        <div className="press-composer">
+          <div className="press-row">
+            <label>
+              To
+              <select value={pressTo} onChange={(event) => setPressTo(event.target.value)}>
+                <option value="ALL">All</option>
+                <option value="FRANCE">France</option>
+                <option value="ENGLAND">England</option>
+                <option value="GERMANY">Germany</option>
+                <option value="ITALY">Italy</option>
+              </select>
+            </label>
+            <button type="button" className="btn small" onClick={onSendPress}>
+              Send press
+            </button>
+          </div>
+          <textarea
+            value={pressBody}
+            onChange={(event) => setPressBody(event.target.value)}
+            rows={3}
+            placeholder="Negotiate, vow, or set a sealed arrangement..."
+          />
+        </div>
+
+        <div className="press-list">
+          {pressMessages.map((message) => (
+            <article key={message.id} className={`press-item ${message.receipt}`}>
+              <div className="press-head">
+                <strong>{message.from}</strong>
+                <span>{message.to === "ALL" ? "to all" : `to ${message.to}`}</span>
+                <span className={`receipt-tag ${message.receipt}`}>{message.receipt}</span>
+              </div>
+              <p>{message.body}</p>
+              <small>{message.sealed ? "sealed pledge" : "public note"}</small>
+            </article>
+          ))}
+        </div>
+      </div>
+
+      <div className="issue-subsection">
+        <div className="subsection-header">
+          <h3>Trust ledger</h3>
+          <span className="status-pill">public</span>
+        </div>
+        <div className="ledger-list">
+          {ledger.map((entry) => (
+            <div key={entry.power} className="ledger-row">
+              <div>
+                <strong>{entry.power}</strong>
+                <small>honour</small>
+              </div>
+              <span className="ledger-score">{entry.score.toFixed(2)}</span>
+              <span className={entry.delta.startsWith("-") ? "ledger-delta down" : "ledger-delta up"}>{entry.delta}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="issue-subsection">
+        <div className="subsection-header">
+          <h3>Notifications</h3>
+          <span className="status-pill muted">3 unread</span>
+        </div>
+        <ul className="notifications-list">
+          {notifications.map((notification) => (
+            <li key={`${notification.title}-${notification.time}`}>
+              <strong>{notification.title}</strong>
+              <span>{notification.detail}</span>
+              <small>{notification.time}</small>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
   );
 }
 
