@@ -5,6 +5,13 @@ import "./styles.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  });
+}
+
 createRoot(root).render(
   <StrictMode>
     <App />

@@ -192,6 +192,239 @@ kbd {
   margin-left: auto;
 }
 
+.issue-panel {
+  display: grid;
+  gap: 16px;
+  padding: 18px 16px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(244, 240, 230, 0.94), rgba(255, 255, 255, 0.7));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.issue-panel-header,
+.subsection-header,
+.press-row,
+.press-head,
+.ledger-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.issue-panel-header {
+  align-items: flex-start;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.issue-panel h2,
+.issue-panel h3 {
+  margin: 0;
+}
+
+.lobby-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.lobby-card {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.card-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.lobby-card strong {
+  font-size: 1rem;
+}
+
+.lobby-card small,
+.press-item small,
+.notifications-list small,
+.ledger-row small {
+  color: var(--ink-3);
+}
+
+.issue-subsection {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(122, 112, 100, 0.35);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(47, 125, 69, 0.14);
+  color: var(--kept);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.status-pill.muted {
+  background: rgba(122, 112, 100, 0.12);
+  color: var(--ink-3);
+}
+
+.press-composer {
+  display: grid;
+  gap: 8px;
+}
+
+.press-row {
+  align-items: end;
+}
+
+.press-composer label {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.press-composer textarea,
+.press-composer select {
+  width: 100%;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.65);
+  padding: 9px 10px;
+  color: var(--ink);
+}
+
+.press-list,
+.notifications-list,
+.ledger-list {
+  display: grid;
+  gap: 8px;
+}
+
+.press-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.press-item p {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.press-head {
+  justify-content: flex-start;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.press-item .receipt-tag {
+  margin-left: auto;
+  display: inline-flex;
+  padding: 3px 7px;
+  border-radius: 999px;
+  text-transform: capitalize;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.receipt-tag.kept,
+.press-item.kept {
+  background: rgba(47, 125, 69, 0.12);
+  color: var(--kept);
+}
+
+.receipt-tag.broken,
+.press-item.broken {
+  background: rgba(217, 79, 48, 0.12);
+  color: var(--vermilion-deep);
+}
+
+.receipt-tag.pending,
+.press-item.pending {
+  background: rgba(200, 162, 74, 0.12);
+  color: var(--brass-deep);
+}
+
+.ledger-row {
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.ledger-row strong {
+  display: block;
+}
+
+.ledger-score {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.ledger-delta {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.ledger-delta.up {
+  color: var(--kept);
+}
+
+.ledger-delta.down {
+  color: var(--vermilion-deep);
+}
+
+.notifications-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.notifications-list li {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.notifications-list span {
+  color: var(--ink-2);
+}
+
+@media (max-width: 1000px) {
+  .lobby-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---------------------------------------------------------------- board */
 
 .board-wrap {
