@@ -106,7 +106,7 @@ export function OrderList({
   if (kind === "A") {
     const entries = Object.entries(orders);
     return (
-      <div className="orders" aria-label={`${titleCase(power)} orders`}>
+      <div className="orders" role="group" aria-label={`${titleCase(power)} orders`}>
         {allowance === 0 ? <p className="hint">{titleCase(power)} has nothing to build or disband.</p> : null}
         {allowance > 0 ? (
           <p className="hint">
@@ -138,7 +138,7 @@ export function OrderList({
     );
   }
   return (
-    <div className="orders" aria-label={`${titleCase(power)} orders`}>
+    <div className="orders" role="group" aria-label={`${titleCase(power)} orders`}>
       {units.map((unit) => {
         const text = orders[unit];
         return (
@@ -171,7 +171,7 @@ export function Results({ record }: { record: PhaseRecord }) {
   }
   const { dislodged, standoffs, civil_disorder: removed } = record.outcome;
   return (
-    <div className="results" aria-label="Adjudication results">
+    <div className="results" role="group" aria-label="Adjudication results">
       {[...byPower.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([power, list]) => (
         <section key={power} style={{ "--power": POWER_COLOR[power] } as CSSProperties}>
           <h3>
@@ -180,10 +180,13 @@ export function Results({ record }: { record: PhaseRecord }) {
           </h3>
           {list.map((r, i) => (
             <div className={`receipt ${r.ok ? "ok" : "fail"}`} key={`${r.order}-${i}`}>
-              <span className="mark" aria-label={r.ok ? "succeeded" : "failed"}>
+              <span className="mark" aria-hidden="true">
                 {r.ok ? "✓" : "✕"}
               </span>
-              <code>{r.order}</code>
+              <code>
+                {r.order}
+                <span className="sr-only">{r.ok ? ": succeeded" : ": failed"}</span>
+              </code>
               {r.ok ? null : <span className="why">{r.reason}</span>}
             </div>
           ))}
