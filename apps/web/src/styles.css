@@ -103,6 +103,40 @@ kbd {
   outline-offset: 2px;
 }
 
+/* Programmatic focus targets (skip link, choice panel) need no ring of their own. */
+[tabindex="-1"]:focus {
+  outline: none;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 50;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  font-weight: 600;
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
 /* ---------------------------------------------------------------- frame */
 
 .app {
@@ -564,6 +598,72 @@ svg.board {
 
 .toolbar .hint.alert {
   color: var(--vermilion-deep);
+}
+
+/* Keyboard and text path for the map: what a click would offer, and the board as lists. */
+.choices {
+  padding-top: 10px;
+}
+
+.choices h2 {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.choice-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tool.choice {
+  font-weight: 450;
+  font-size: 13.5px;
+}
+
+.board-text {
+  margin-top: 10px;
+  color: var(--ink-2);
+}
+
+.board-text summary {
+  display: inline-block;
+  padding: 4px 0;
+  cursor: pointer;
+  font-weight: 550;
+}
+
+.board-text section {
+  padding: 6px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.board-text h3 {
+  margin: 0 0 2px;
+  font-size: 13.5px;
+}
+
+.board-text p {
+  margin: 0 0 2px;
+  font-size: 13px;
+}
+
+.setting {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.setting input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  flex: none;
 }
 
 /* ---------------------------------------------------------------- sidebar */

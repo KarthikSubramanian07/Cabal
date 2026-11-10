@@ -12,9 +12,28 @@ import {
   holdSelected,
   setMode,
 } from "./game/compose.js";
+import {
+  choicePrompt,
+  choicesFor,
+  describeBoard,
+  describeOrder,
+  describeOutcome,
+  phaseLine,
+  statusLine,
+} from "./game/describe.js";
 import { describePhase, parseOrder, parseUnit, provinceOf, titleCase } from "./game/notation.js";
 import { useSandbox } from "./game/useSandbox.js";
 import { Board, type DrawnOrder } from "./map/Board.jsx";
+
+const SHORTCUTS_KEY = "cabal.shortcuts";
+
+function readShortcuts(): boolean {
+  try {
+    return localStorage.getItem(SHORTCUTS_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
 
 interface Picker {
   x: number;
@@ -35,8 +54,29 @@ export function App() {
   const [picker, setPicker] = useState<Picker | null>(null);
   const [viewing, setViewing] = useState<number | null>(null);
   const [help, setHelp] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
+  const [shortcuts, setShortcutsState] = useState(readShortcuts);
   const boardWrap = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const choicesRef = useRef<HTMLElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  /** Set when a keyboard choice (or Escape) removed the focused button, so focus moves on. */
+  const refocus = useRef(false);
+
+  const setShortcuts = useCallback((on: boolean) => {
+    setShortcutsState(on);
+    try {
+      localStorage.setItem(SHORTCUTS_KEY, on ? "on" : "off");
+    } catch {
+      // storage can be unavailable (private windows); the choice still holds for this visit
+    }
+  }, []);
+
+  const announce = useCallback((text: string) => {
+    // Clearing first makes a repeated message announce again.
+    setAnnouncement("");
+    window.setTimeout(() => setAnnouncement(text), 50);
+  }, []);
 
   const ctx = useMemo<ComposeContext | null>(
     () => (sb ? { phase: sb.kind, pieces: sb.pieces, legal: sb.legal } : null),
@@ -53,11 +93,20 @@ export function App() {
         sb.setOrder(effect.power, effect.key, effect.text);
         setActive(effect.power);
         setMessage(null);
+        announce(describeOrder(effect.text));
       } else if (effect.kind === "choose") {
         const rect = boardWrap.current?.getBoundingClientRect();
+        const frame = boardWrap.current?.querySelector(".board-frame")?.getBoundingClientRect();
+        // Without a pointer (the keyboard choices), open it in the middle of the board. Either way
+        // keep it on screen and over the map, so it never hides the order tools under the map.
+        const half = 100;
+        const tall = 34 + effect.options.length * 34;
+        const x = client && rect ? client.x - rect.left : rect ? rect.width / 2 : 40;
+        const y = client && rect ? client.y - rect.top : rect ? rect.height / 3 : 40;
+        const maxY = frame && rect ? frame.bottom - rect.top - tall - 12 : y;
         setPicker({
-          x: client && rect ? client.x - rect.left : 40,
-          y: client && rect ? client.y - rect.top : 40,
+          x: rect ? Math.min(Math.max(x, half), rect.width - half) : x,
+          y: Math.max(0, Math.min(y, maxY)),
           title: effect.title,
           power: effect.power,
           key: effect.key,
@@ -70,7 +119,7 @@ export function App() {
         setMessage(null);
       }
     },
-    [sb],
+    [sb, announce],
   );
 
   const onProvince = useCallback(
@@ -91,6 +140,8 @@ export function App() {
   );
 
   const cancel = useCallback(() => {
+    // If the focused control (a picker option, Cancel) is about to vanish, move focus on.
+    if (document.activeElement?.closest(".picker, .choices, [data-vanishes]")) refocus.current = true;
     setDraft(IDLE);
     setPicker(null);
     setMessage(null);
@@ -98,10 +149,33 @@ export function App() {
 
   const adjudicate = useCallback(() => {
     if (!sb) return;
+    const given = new Set(Object.values(sb.orders).flatMap((o) => Object.values(o)));
     const outcome = sb.adjudicate();
     cancel();
-    if (outcome) setViewing(sb.history.length);
-  }, [sb, cancel]);
+    if (outcome) {
+      setViewing(sb.history.length);
+      announce(describeOutcome(outcome, given));
+    }
+  }, [sb, cancel, announce]);
+
+  // Say where the player is when they step through the phase history or back to the live phase.
+  const lastViewing = useRef<number | null>(null);
+  useEffect(() => {
+    const was = lastViewing.current;
+    lastViewing.current = viewing;
+    if (!sb || was === viewing) return;
+    // Adjudicating or leaving the results swaps the sidebar and removes the focused button.
+    // Land on the button in the same place (Adjudicate, Next phase, Continue) so Enter keeps going.
+    if (!document.activeElement || document.activeElement === document.body) {
+      document.querySelector<HTMLButtonElement>(".sidebar .actions .btn.primary")?.focus();
+    }
+    if (viewing === null) {
+      announce(statusLine(sb.status) ?? `Now ${phaseLine(sb.phase)}. Give orders for each power.`);
+    } else if (was !== null) {
+      const record = sb.history[viewing];
+      if (record) announce(`Showing the ${phaseLine(record.phase)} results.`);
+    }
+  }, [viewing, sb, announce]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -109,9 +183,11 @@ export function App() {
       if (el.closest("input, select, textarea, dialog[open]") || e.metaKey || e.ctrlKey || e.altKey) return;
       if (!ctx) return;
       const key = e.key.toLowerCase();
+      // Enter and Space belong to whatever button or link has focus.
+      const onControl = Boolean(el.closest("button, a, [role='button']"));
       if (key === "escape") return cancel();
       if (viewing !== null) {
-        if (key === "enter" || key === "arrowright") {
+        if ((key === "enter" && !onControl) || key === "arrowright") {
           e.preventDefault();
           setViewing(viewing + 1 >= (sb?.history.length ?? 0) ? null : viewing + 1);
         } else if (key === "arrowleft" && viewing > 0) {
@@ -120,6 +196,8 @@ export function App() {
         return;
       }
       if (key === "arrowleft" && sb && sb.history.length > 0) return setViewing(sb.history.length - 1);
+      // Single-key shortcuts can be switched off (WCAG 2.1.4) in How to play.
+      if (!shortcuts) return;
       if (key === "s") return mode("support");
       if (key === "c") return mode("convoy");
       if (key === "m") return mode("move");
@@ -128,7 +206,27 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [ctx, draft, mode, apply, cancel, viewing, sb]);
+  }, [ctx, draft, mode, apply, cancel, viewing, sb, shortcuts]);
+
+  // Keyboard path: after a choice, a shortcut or a cancel, focus the first new choice (or the
+  // coast picker) instead of leaving focus on a button that no longer exists.
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
+    if (picker) {
+      pickerRef.current?.querySelector("button")?.focus();
+      return;
+    }
+    const lost = !document.activeElement || document.activeElement === document.body;
+    if (!refocus.current && !lost) return;
+    refocus.current = false;
+    const panel = choicesRef.current;
+    const first = panel?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+    (first ?? panel)?.focus();
+  }, [draft, picker, viewing]);
 
   // provinces the current draft can act on
   const targets = useMemo(() => {
@@ -176,6 +274,17 @@ export function App() {
   const { season, year } = describePhase(sb.phase);
   const activeSummary = sb.powers.find((p) => p.power === active);
   const orderableUnits = Object.keys(sb.legal[active] ?? {}).filter((u) => u !== "");
+  const choices =
+    !record && sb.status === "active" && ctx
+      ? choicesFor(ctx, draft, active, orderableUnits, targets, sb.board.provinces)
+      : [];
+  const choose = (code: string) => {
+    if (!ctx || viewing !== null || sb.status !== "active") return;
+    setPicker(null);
+    refocus.current = true;
+    apply(click(ctx, draft, code));
+  };
+  const boardText = describeBoard(mapState, sb.board.provinces);
 
   const hint = (() => {
     if (record) return "Showing how the phase resolved. Use the arrows or Enter to step forward.";
@@ -221,6 +330,7 @@ export function App() {
       sb.importSaved(await file.text());
       setViewing(null);
       cancel();
+      announce(`Game loaded from ${file.name}.`);
     } catch (err) {
       setMessage(`That file could not be loaded: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -228,9 +338,13 @@ export function App() {
 
   return (
     <div className="app">
+      <a className="skip-link" href="#main">
+        Skip to the board
+      </a>
       <TopBar onHelp={() => setHelp(true)} />
 
-      <main className="table">
+      <main className="table" id="main" tabIndex={-1}>
+        <h1 className="sr-only">Cabal Diplomacy sandbox</h1>
         <div className="board-wrap" ref={boardWrap}>
           <Board
             board={sb.board}
@@ -242,8 +356,35 @@ export function App() {
             onProvince={onProvince}
           />
           {picker ? (
-            <div className="picker" style={{ left: picker.x, top: picker.y }} role="menu" aria-label={picker.title}>
-              <div className="picker-title">{picker.title}</div>
+            <div
+              className="picker"
+              ref={pickerRef}
+              style={{ left: picker.x, top: picker.y }}
+              role="menu"
+              aria-labelledby="picker-title"
+              onKeyDown={(e) => {
+                // Menu keys: arrows and Home/End move between options; Escape cancels (window handler).
+                const items = [...e.currentTarget.querySelectorAll<HTMLButtonElement>("[role='menuitem']")];
+                const at = items.indexOf(document.activeElement as HTMLButtonElement);
+                const next =
+                  e.key === "ArrowDown"
+                    ? (at + 1) % items.length
+                    : e.key === "ArrowUp"
+                      ? (at - 1 + items.length) % items.length
+                      : e.key === "Home"
+                        ? 0
+                        : e.key === "End"
+                          ? items.length - 1
+                          : -1;
+                if (next < 0) return;
+                e.preventDefault();
+                e.stopPropagation();
+                items[next]?.focus();
+              }}
+            >
+              <div className="picker-title" id="picker-title" role="presentation">
+                {picker.title}
+              </div>
               {picker.options.map((o) => (
                 <button
                   key={o}
@@ -253,6 +394,8 @@ export function App() {
                     sb.setOrder(picker.power, picker.key, o);
                     setActive(picker.power);
                     setPicker(null);
+                    refocus.current = true;
+                    announce(describeOrder(o));
                   }}
                 >
                   {o}
@@ -261,7 +404,7 @@ export function App() {
             </div>
           ) : null}
 
-          <div className="toolbar" role="toolbar" aria-label="Order tools">
+          <div className="toolbar" role="group" aria-label="Order tools">
             {sb.kind === "M" && !record ? (
               <>
                 <button type="button" className="tool" aria-pressed={draft.step === "unit"} onClick={() => mode("move")}>
@@ -294,7 +437,7 @@ export function App() {
               </button>
             ) : null}
             {draft.step !== "idle" || picker ? (
-              <button type="button" className="tool" onClick={cancel}>
+              <button type="button" className="tool" onClick={cancel} data-vanishes>
                 Cancel <kbd>Esc</kbd>
               </button>
             ) : null}
@@ -302,6 +445,36 @@ export function App() {
               {hint}
             </p>
           </div>
+
+          {choices.length ? (
+            <section className="choices" ref={choicesRef} tabIndex={-1} aria-labelledby="choices-title">
+              <h2 id="choices-title">{choicePrompt(sb.kind, draft, draft.step === "idle" ? active : draft.power)}</h2>
+              <div className="choice-list">
+                {choices.map((c) => (
+                  <button key={c.code} type="button" className="tool choice" onClick={() => choose(c.code)}>
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : (
+            <section className="choices" ref={choicesRef} tabIndex={-1} aria-label="Choices" hidden />
+          )}
+
+          <details className="board-text">
+            <summary>Board as text</summary>
+            {boardText.map((p) => (
+              <section key={p.power}>
+                <h3>{p.power}</h3>
+                <p>
+                  Units: {p.units.length ? p.units.join("; ") : "none"}.
+                </p>
+                <p>
+                  Supply centres ({p.centers.length}): {p.centers.length ? p.centers.join(", ") : "none"}.
+                </p>
+              </section>
+            ))}
+          </details>
         </div>
 
         <aside className="sidebar">
@@ -361,7 +534,15 @@ export function App() {
           )}
 
           <section className="game-tools">
-            <button type="button" className="btn small" onClick={sb.undo} disabled={sb.history.length === 0}>
+            <button
+              type="button"
+              className="btn small"
+              onClick={() => {
+                sb.undo();
+                announce("Last phase undone.");
+              }}
+              disabled={sb.history.length === 0}
+            >
               Undo last phase
             </button>
             <button
@@ -372,6 +553,7 @@ export function App() {
                   sb.reset();
                   setViewing(null);
                   cancel();
+                  announce("New game started: Spring 1901 movement.");
                 }
               }}
             >
@@ -399,7 +581,11 @@ export function App() {
         <a href="https://github.com/KarthikSubramanian07/Cabal">Source</a>
       </footer>
 
-      <HowToPlay open={help} onClose={() => setHelp(false)} />
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </div>
+
+      <HowToPlay open={help} onClose={() => setHelp(false)} shortcuts={shortcuts} onShortcuts={setShortcuts} />
     </div>
   );
 }
