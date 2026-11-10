@@ -11,7 +11,7 @@
   --ink: #121110;
   --ink-2: #2b2825;
   --ink-3: #5f5a53;
-  --ink-4: #8d877e;
+  --ink-4: #6c6760;
   --bone: #f4f0e6;
   --bone-2: #ece6d8;
   --bone-3: #e1d9c6;
@@ -21,7 +21,7 @@
   --brass-deep: #94731f;
   --vermilion: #d94f30;
   --vermilion-deep: #b23c20;
-  --kept: #2f7d45;
+  --kept: #2c7541;
 
   /* board */
   --sea: #b9d0da;
@@ -894,7 +894,7 @@ table.powers td.done {
 }
 
 .receipt.fail .mark {
-  color: var(--vermilion);
+  color: var(--vermilion-deep);
 }
 
 .receipt code {
