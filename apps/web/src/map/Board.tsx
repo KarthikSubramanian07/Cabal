@@ -190,7 +190,7 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
   }, [state]);
 
   const pieces = useMemo(() => {
-    const list: { power: string; kind: "A" | "F"; at: Point; dislodged: boolean; key: string }[] = [];
+    const list: { power: string; kind: "A" | "F"; at: Point; dislodged: boolean; key: string; label: string }[] = [];
     for (const [power, units] of Object.entries(state.units)) {
       for (const u of units) {
         const ref = parseUnit(u);
@@ -203,6 +203,7 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
           at: dislodged ? [p[0] + 11, p[1] - 11] : p,
           dislodged,
           key: `${power}-${u}`,
+          label: `${power.charAt(0)}${power.slice(1).toLowerCase()}: ${ref.unit}${dislodged ? " (dislodged)" : ""}`,
         });
       }
     }
@@ -229,6 +230,9 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
       return clamp({ x: px - ((px - v.x) * w) / v.w, y: py - ((py - v.y) * h) / v.h, w, h });
     });
   };
+
+  /** Move the zoomed view by a share of its size: the button alternative to dragging. */
+  const pan = (fx: number, fy: number) => setView((v) => clamp({ ...v, x: v.x + v.w * fx, y: v.y + v.h * fy }));
 
   const toBoard = (clientX: number, clientY: number, v: Box) => {
     const rect = svgRef.current!.getBoundingClientRect();
@@ -321,7 +325,7 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
         className="board"
         viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
         role="img"
-        aria-label="Diplomacy board"
+        aria-label="Diplomacy board. The same positions are listed under Board as text, and orders can be given with the choices under the map."
         style={{ aspectRatio: `${full.w} / ${full.h}`, touchAction: zoomed ? "none" : "pan-y" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -412,6 +416,7 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
             className={`unit${u.dislodged ? " dislodged" : ""}`}
             style={{ "--power": POWER_COLOR[u.power] } as CSSProperties}
           >
+            <title>{u.label}</title>
             <UnitShape kind={u.kind} at={u.at} />
           </g>
         ))}
@@ -430,6 +435,22 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
         <button type="button" onClick={() => setView(full)} aria-label="Show the whole board" disabled={!zoomed}>
           ⤢
         </button>
+        {zoomed ? (
+          <>
+            <button type="button" onClick={() => pan(0, -0.25)} aria-label="Pan up">
+              ↑
+            </button>
+            <button type="button" onClick={() => pan(-0.25, 0)} aria-label="Pan left">
+              ←
+            </button>
+            <button type="button" onClick={() => pan(0.25, 0)} aria-label="Pan right">
+              →
+            </button>
+            <button type="button" onClick={() => pan(0, 0.25)} aria-label="Pan down">
+              ↓
+            </button>
+          </>
+        ) : null}
       </div>
     </div>
   );
