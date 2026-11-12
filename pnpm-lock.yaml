@@ -18,6 +18,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@cabal/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@cabal/engine':
         specifier: workspace:*
         version: link:../../packages/engine

@@ -14,7 +14,10 @@ describe("settings", () => {
     const s = GameSettings.parse({});
     expect(s.rulebook).toBe("2023");
     expect(s.press).toBe("full");
-    expect(s.movementSeconds).toBe(86400);
+    expect(s.movementSeconds).toBe(172800);
+    expect(s.shortPhaseSeconds).toBe(86400);
+    expect(s.graceSeconds).toBe(300);
+    expect(s.whisperBudget).toBe(10);
     expect(ratingCluster(s)).toBe("standard:full:async");
   });
 });
@@ -59,6 +62,14 @@ describe("server frames", () => {
     const r = ServerMessage.safeParse({
       t: "finished",
       p: { result: "draw", winners: ["FRANCE", "GERMANY"], scores: { FRANCE: 0.5, GERMANY: 0.5 } },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("validates a paused status update with a recovery reason", () => {
+    const r = ServerMessage.safeParse({
+      t: "status",
+      p: { status: "paused", reason: "adjudication_failed" },
     });
     expect(r.success).toBe(true);
   });

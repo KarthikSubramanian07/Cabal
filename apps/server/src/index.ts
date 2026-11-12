@@ -10,6 +10,7 @@
  *   GET  /health
  */
 import { CreateGameRequest, JoinGameRequest } from "@cabal/protocol";
+import { AgentClient, ClaudeBrain, FallbackBrain, PERSONAS, Player } from "@cabal/agents";
 import type { Env } from "./env.js";
 import { gameCode } from "./tokens.js";
 
@@ -21,9 +22,13 @@ const CORS: Record<string, string> = {
   "access-control-allow-headers": "content-type, authorization",
 };
 
+/** Request bodies are small JSON objects; anything larger is refused before parsing. */
+const MAX_BODY_BYTES = 4096;
+
 function withCors(res: Response): Response {
   const headers = new Headers(res.headers);
   for (const [k, v] of Object.entries(CORS)) headers.set(k, v);
+  headers.set("x-content-type-options", "nosniff");
   return new Response(res.body, { status: res.status, headers, webSocket: res.webSocket ?? null });
 }
 
@@ -31,36 +36,29 @@ function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8" } });
 }
 
-class BodyTooLarge extends Error {}
-
-async function rateLimited(env: Env, request: Request, action: "create" | "join"): Promise<boolean> {
-  const ip = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for")?.split(",", 1)[0]?.trim() ?? "unknown";
-  const limit = action === "create" ? 10 : 30;
-  const id = env.GAME_ROOM.idFromName(`rate:${action}:${ip}`);
-  const response = await env.GAME_ROOM.get(id).fetch(`https://room/rate-limit?limit=${limit}`, { method: "POST" });
-  return response.status === 429;
-}
+const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|replay|ledger|ws))?$/;
 
 async function readJson(request: Request): Promise<unknown> {
-  const length = Number(request.headers.get("content-length") ?? 0);
-  if (length > 4096) throw new BodyTooLarge("body exceeds 4 KB");
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > 4096) throw new BodyTooLarge("body exceeds 4 KB");
-  return JSON.parse(text);
-}
-
-async function requestBody(request: Request): Promise<{ data: unknown } | { error: string; status: number }> {
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > MAX_BODY_BYTES) return undefined;
+  const text = await request.text().catch(() => "");
+  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) return undefined;
   try {
-    return { data: await readJson(request) };
-  } catch (error) {
-    return {
-      error: error instanceof Error ? error.message : "invalid JSON body",
-      status: error instanceof BodyTooLarge ? 413 : 400,
-    };
+    return JSON.parse(text || "{}");
+  } catch {
+    return undefined;
   }
 }
 
-const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|replay|ws))?$/;
+/** True when the caller is over the limit. Missing bindings (tests, local dev) never limit. */
+async function limited(limiter: RateLimit | undefined, request: Request, route: string): Promise<boolean> {
+  if (!limiter) return false;
+  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+  const { success } = await limiter.limit({ key: `${route}:${ip}` });
+  return !success;
+}
+
+const tooMany = () => withCors(json({ error: "too many requests, try again in a minute" }, 429));
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -70,16 +68,18 @@ export default {
     if (url.pathname === "/health") return withCors(json({ ok: true }));
 
     if (url.pathname === "/api/games" && request.method === "POST") {
-      if (await rateLimited(env, request, "create")) return withCors(json({ error: "rate limit exceeded" }, 429));
-      const parsed = await requestBody(request);
-      if ("error" in parsed) return withCors(json({ error: parsed.error }, parsed.status));
-      const body = CreateGameRequest.safeParse(parsed.data);
+      if (await limited(env.CREATE_LIMITER, request, "create")) return tooMany();
+      const rawBody = await readJson(request);
+      const body = CreateGameRequest.safeParse(rawBody);
       if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
+      const rawSettings = typeof rawBody === "object" && rawBody !== null && "settings" in rawBody ? rawBody.settings : {};
       const id = gameCode();
       const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id));
+      // `http://cabal` is the workerd test service host, not a routable agent endpoint.
+      const agentOrigin = url.hostname === "cabal" ? undefined : url.origin;
       const res = await stub.fetch("https://room/create", {
         method: "POST",
-        body: JSON.stringify({ id, name: body.data.name, settings: body.data.settings }),
+        body: JSON.stringify({ id, name: body.data.name, settings: rawSettings, ...(agentOrigin ? { serverUrl: agentOrigin } : {}) }),
       });
       return withCors(res);
     }
@@ -92,10 +92,8 @@ export default {
         return stub.fetch(`https://room/ws${url.search}`, request);
       }
       if (action === "join" && request.method === "POST") {
-        if (await rateLimited(env, request, "join")) return withCors(json({ error: "rate limit exceeded" }, 429));
-        const parsed = await requestBody(request);
-        if ("error" in parsed) return withCors(json({ error: parsed.error }, parsed.status));
-        const body = JoinGameRequest.safeParse(parsed.data);
+        if (await limited(env.JOIN_LIMITER, request, "join")) return tooMany();
+        const body = JoinGameRequest.safeParse(await readJson(request));
         if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
         return withCors(await stub.fetch("https://room/join", { method: "POST", body: JSON.stringify(body.data) }));
       }
@@ -105,8 +103,38 @@ export default {
         );
       }
       if (action === "replay" && request.method === "GET") return withCors(await stub.fetch("https://room/replay"));
+      if (action === "ledger" && request.method === "GET") return withCors(await stub.fetch("https://room/ledger"));
       if (!action && request.method === "GET") return withCors(await stub.fetch("https://room/summary"));
     }
     return withCors(json({ error: "not found" }, 404));
+  },
+  async queue(batch: MessageBatch, env: Env): Promise<void> {
+    for (const message of batch.messages) {
+      const { gameId, power, token, serverUrl } = message.body as { gameId: string; power: string; token: string; serverUrl: string };
+      if (!serverUrl && !env.SERVER_URL) {
+        console.error(JSON.stringify({ event: "agent_server_url_missing", gameId, power }));
+        message.retry({ delaySeconds: 60 });
+        continue;
+      }
+      const brain = env.ANTHROPIC_API_KEY ? new ClaudeBrain({ apiKey: env.ANTHROPIC_API_KEY }) : new FallbackBrain();
+      if (!env.ANTHROPIC_API_KEY) console.warn(JSON.stringify({ event: "agent_fallback_brain", gameId, power }));
+      const player = new Player(power, PERSONAS[power] ?? "A careful strategist.", brain);
+      const client = new AgentClient({
+        serverUrl: serverUrl ?? env.SERVER_URL!,
+        gameId,
+        token,
+        player,
+      });
+      try {
+        await client.connect();
+        await client.awaitTurn();
+        client.close();
+        message.ack();
+      } catch (error) {
+        client.close();
+        console.error(JSON.stringify({ event: "agent_turn_failed", gameId, power, error: String(error) }));
+        message.retry({ delaySeconds: 30 });
+      }
+    }
   },
 } satisfies ExportedHandler<Env>;

@@ -42,6 +42,7 @@ Server replies to a client message with the same `id` when the message has one.
 | `orders.set` | `{ phase, orders: string[] }` | replaces the seat's orders for the phase |
 | `orders.default` | `{ orders: string[] }` | sealed defaults used if the seat misses the deadline |
 | `ready` | `{ phase, ready: boolean }` | ready to advance |
+| `extend` | `{ phase }` | requests a one time deadline extension; two distinct seats must request it |
 | `press.send` | `{ to: power or "ALL", body, pledge? }` | `pledge` is `{ orders: string[], sealed: boolean, nonce? }` |
 | `vote` | `{ kind: "draw", value: boolean }` | |
 | `sync` | `{ since: seq }` | request events after a sequence number |
@@ -58,6 +59,8 @@ Server replies to a client message with the same `id` when the message has one.
 | `pledge.verdict` | `{ pledgeId, verdict: "kept" or "broken" or "void", revealed?: string[] }` | after adjudication |
 | `seats` | `{ seats: [...] }` | join, leave, ready, civil disorder changes |
 | `deadline` | `{ phase, deadlineAt }` | |
+| `extend.ack` | `{ phase, requests, extended }` | extension request status |
+| `status` | `{ status, reason }` | lifecycle transition, including `paused` and `abandoned` |
 | `finished` | `{ result: "solo" or "draw", winners, scores }` | |
 | `error` | `{ code, message }` | |
 
@@ -78,4 +81,5 @@ Verification is deterministic and reproducible from the saved game, so anyone ca
 | `POST /api/games/:id/join` | claim a seat, returns a socket token | |
 | `GET /api/games/:id` | public summary and current public state | |
 | `GET /api/games/:id/replay` | MILA-compatible saved game JSON | |
+| `GET /api/games/:id/ledger` | per-power kept and broken pledge counts | |
 | `GET /api/players/:id` | profile, ratings, trust ledger | |

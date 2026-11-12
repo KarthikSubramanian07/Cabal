@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src test",
     "test": "vitest run --passWithNoTests",
+    "load:sockets": "node scripts/load-sockets.mjs",
     "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types",
     "engine:sync": "node scripts/sync-wasm.mjs",
@@ -20,6 +21,7 @@
     "predeploy": "node scripts/sync-wasm.mjs"
   },
   "dependencies": {
+    "@cabal/agents": "workspace:*",
     "@cabal/engine": "workspace:*",
     "@cabal/protocol": "workspace:*"
   },
