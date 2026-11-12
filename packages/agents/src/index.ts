@@ -4,6 +4,7 @@ export {
   ClaudeBrain,
   type ClaudeBrainOptions,
   Decision,
+  FallbackBrain,
   PERSONAS,
   Player,
   type Validated,

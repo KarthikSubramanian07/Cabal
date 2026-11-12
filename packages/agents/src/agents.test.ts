@@ -69,7 +69,7 @@ describe("Player", () => {
     expect(prompt).toContain("Unowned centres");
   });
 
-  it("falls back to holds when the brain fails", async () => {
+  it("falls back to legal orders when the brain fails", async () => {
     const brain: Brain = {
       decide: async () => {
         throw new Error("boom");
@@ -77,16 +77,18 @@ describe("Player", () => {
     };
     const game = new Game();
     const player = new Player("ITALY", PERSONAS["ITALY"]!, brain);
+    const legal = game.legal("ITALY");
     const { validated, decision } = await player.play({
       phase: "S1901M",
       state: game.state(),
       map: mapInfo(),
-      legal: game.legal("ITALY"),
+      legal,
       press: [],
       myPledges: [],
       trust: {},
     });
-    expect(validated.orders).toEqual([]);
+    expect(validated.orders).toHaveLength(Object.keys(legal.by_unit).length);
+    expect(validated.orders.every((order) => Object.values(legal.by_unit).some((menu) => menu.includes(order)))).toBe(true);
     expect(decision.reasoning).toContain("boom");
   });
 

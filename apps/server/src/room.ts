@@ -1,3 +1,4 @@
+import { adjudicateStrict } from "./adjudicate-guard.js";
 /**
  * GameRoom: one Durable Object per game.
  *
@@ -31,8 +32,9 @@ import {
   randomNonce,
 } from "./engine.js";
 import { hashToken, mintToken, parseToken, randomId } from "./tokens.js";
+import { ADJUDICATION_RETRY_MS, recoverSchedule } from "./deadlines.js";
 
-type Status = "lobby" | "active" | "finished";
+type Status = "lobby" | "active" | "paused" | "finished" | "abandoned";
 
 /** Abuse limits. A room is single threaded, so every unbounded input is a way to stall a game. */
 const LIMITS = {
@@ -56,6 +58,8 @@ interface Meta {
   deadlineAt: number | null;
   creator: PowerName;
   finished: { result: "solo" | "draw"; winners: PowerName[]; scores: Record<string, number> } | null;
+  pauseReason?: string | null;
+  noOrderPhases?: number;
 }
 
 interface SeatRow extends Record<string, SqlStorageValue> {
@@ -70,6 +74,7 @@ interface SeatRow extends Record<string, SqlStorageValue> {
 
 interface Attachment {
   power: PowerName | null;
+  clientIp?: string | null;
 }
 
 const SCHEMA = `
@@ -119,6 +124,19 @@ CREATE TABLE IF NOT EXISTS votes (
   value INTEGER NOT NULL,
   PRIMARY KEY (power, kind)
 );
+CREATE TABLE IF NOT EXISTS phase_extensions (
+  phase TEXT PRIMARY KEY,
+  used INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS extension_requests (
+  phase TEXT NOT NULL,
+  power TEXT NOT NULL,
+  PRIMARY KEY (phase, power)
+);
+CREATE TABLE IF NOT EXISTS agent_tokens (
+  power TEXT PRIMARY KEY,
+  token TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS phases (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -154,12 +172,45 @@ export class GameRoom extends DurableObject<Env> {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
       await engineReady();
-      this.meta = (await ctx.storage.get<Meta>("meta")) ?? null;
+      const storedMeta = await ctx.storage.get<Meta>("meta");
+      if (storedMeta) {
+        this.meta = { ...storedMeta, settings: GameSettings.parse(storedMeta.settings) };
+        // Fill settings added after this game was created, while preserving its saved pacing values.
+        if (JSON.stringify(this.meta.settings) !== JSON.stringify(storedMeta.settings)) {
+          await ctx.storage.put("meta", this.meta);
+        }
+      } else {
+        this.meta = null;
+      }
       // Looking up a code that names no game must not write storage; create() lays the schema down.
       if (this.meta) this.sql.exec(SCHEMA);
       const saved = await ctx.storage.get<string>("saved");
       if (saved) this.game = Game.fromSaved(saved, this.meta?.settings.rulebook);
       else if (this.meta) this.game = new Game(this.meta.settings.rulebook);
+      if (this.meta && (this.meta.status === "active" || this.meta.status === "paused")) {
+        const alarm = await ctx.storage.getAlarm();
+        const recovered = recoverSchedule(
+          this.meta.status,
+          this.meta.pauseReason,
+          this.game?.phase() ?? "S1901M",
+          this.meta.deadlineAt,
+          this.meta.settings,
+          Date.now(),
+        );
+        if (this.meta.status === "active" && this.meta.deadlineAt === null && recovered.deadlineAt !== null) {
+          this.meta.deadlineAt = recovered.deadlineAt;
+          await ctx.storage.put("meta", this.meta);
+        }
+        const shouldRepair = this.meta.status === "active"
+          ? alarm !== recovered.alarmAt
+          : recovered.alarmAt !== null && alarm === null;
+        if (shouldRepair && recovered.alarmAt !== null) {
+          await ctx.storage.setAlarm(recovered.alarmAt);
+        }
+      }
+      if (this.meta?.status === "finished" && (await ctx.storage.get("d1-outbox")) && env.DB) {
+        if ((await ctx.storage.getAlarm()) === null) await ctx.storage.setAlarm(Date.now() + 1);
+      }
     });
   }
 
@@ -175,6 +226,12 @@ export class GameRoom extends DurableObject<Env> {
       if (!this.meta) return bad("no such game", 404);
       return json(this.summary());
     }
+    if (request.method === "GET" && path === "/agent/state") return this.agentState(request);
+    if (request.method === "POST" && path === "/agent/act") return this.agentAct(request);
+    if (request.method === "GET" && path === "/ledger") {
+      if (!this.meta) return bad("no such game", 404);
+      return json(this.ledger());
+    }
     if (request.method === "GET" && path === "/replay") {
       if (!this.game || !this.meta) return bad("no such game", 404);
       return new Response(this.game.toSaved(this.meta.id), {
@@ -189,7 +246,14 @@ export class GameRoom extends DurableObject<Env> {
     if (this.meta) return bad("game exists", 409);
     this.sql.exec(SCHEMA);
     const body = (await request.json()) as { id: string; name: string; settings?: unknown };
-    const settings = GameSettings.parse(body.settings ?? {});
+    const rawSettings = (body.settings ?? {}) as Partial<Settings>;
+    const pacing = rawSettings.pacing ?? "async";
+    const preset = pacing === "live" ? [600, 300] : pacing === "daily" ? [86400, 43200] : [172800, 86400];
+    const settings = GameSettings.parse({
+      ...rawSettings,
+      movementSeconds: rawSettings.movementSeconds ?? preset[0],
+      shortPhaseSeconds: rawSettings.shortPhaseSeconds ?? preset[1],
+    });
     const creator = POWERS[Math.floor(Math.random() * POWERS.length)] as PowerName;
     this.meta = {
       id: body.id,
@@ -199,6 +263,8 @@ export class GameRoom extends DurableObject<Env> {
       deadlineAt: null,
       creator,
       finished: null,
+      pauseReason: null,
+      noOrderPhases: 0,
     };
     this.game = new Game(settings.rulebook);
     for (const p of POWERS) {
@@ -215,24 +281,81 @@ export class GameRoom extends DurableObject<Env> {
     return json({ gameId: body.id, token, power: creator });
   }
 
+  /** Private Queue-to-room RPC. Agent state and actions stay on the DO binding. */
+  private async agentState(request: Request): Promise<Response> {
+    const power = await this.authorise(request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "");
+    if (!power || this.seat(power)?.kind !== "ai") return bad("AI seat authorization required", 403);
+    if (!this.meta || !this.game || this.meta.status !== "active") return bad("game is not active", 409);
+    return json(this.welcome(power));
+  }
+
+  /** Accept only the three frames an agent may emit, under its authenticated AI seat. */
+  private async agentAct(request: Request): Promise<Response> {
+    const declared = Number(request.headers.get("content-length") ?? "0");
+    if (declared > 4096) return bad("agent action too large", 413);
+    const power = await this.authorise(request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "");
+    if (!power || this.seat(power)?.kind !== "ai") return bad("AI seat authorization required", 403);
+    if (!this.meta || !this.game || this.meta.status !== "active") return bad("game is not active", 409);
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      return bad("invalid agent action", 400);
+    }
+    if (typeof raw !== "object" || raw === null || !("frames" in raw) || !Array.isArray(raw.frames) || raw.frames.length > 64) {
+      return bad("invalid agent action", 400);
+    }
+    const messages = [];
+    for (const rawFrame of raw.frames) {
+      const msg = parseClientMessage(rawFrame);
+      if (!msg || !["press.send", "orders.set", "ready"].includes(msg.t)) return bad("invalid agent frame", 400);
+      messages.push(msg);
+    }
+    const ws = {
+      send: () => undefined,
+      deserializeAttachment: () => ({ power, clientIp: `${this.meta!.id}:${power}` }),
+    } as unknown as WebSocket;
+    for (const msg of messages) {
+      switch (msg.t) {
+        case "press.send":
+          await this.press(ws, undefined, power, msg.p.to, msg.p.body, msg.p.pledge);
+          break;
+        case "orders.set":
+          this.setOrders(ws, undefined, power, msg.p.phase, msg.p.orders);
+          break;
+        case "ready":
+          await this.setReady(power, msg.p.phase, msg.p.ready);
+          break;
+        default:
+          return bad("invalid agent frame", 400);
+      }
+    }
+    return json({ ok: true });
+  }
+
   private async join(request: Request): Promise<Response> {
     if (!this.meta) return bad("no such game", 404);
-    if (this.meta.status !== "lobby") return bad("game already started", 409);
+    const joiningLobby = this.meta.status === "lobby";
     const body = (await request.json()) as { name: string; power?: PowerName };
-    const open = this.seats().filter((s) => s.kind === "open");
+    const candidates = this.seats().filter((s) =>
+      this.meta!.status === "lobby" ? s.kind === "open" : this.meta!.status === "active" && s.kind === "civil_disorder",
+    );
+    if (this.meta.status !== "lobby" && this.meta.status !== "active") return bad("game already started", 409);
+    const open = candidates;
     if (open.length === 0) return bad("no open seats", 409);
     const chosen =
       (body.power && open.find((s) => s.power === body.power)) ?? open[Math.floor(Math.random() * open.length)];
     if (!chosen) return bad("no open seats", 409);
     const token = mintToken(this.meta.id, chosen.power);
     this.sql.exec(
-      "UPDATE seats SET kind = 'human', name = ?, token_hash = ? WHERE power = ?",
+      "UPDATE seats SET kind = 'human', name = ?, token_hash = ?, missed = 0, ready = 0 WHERE power = ?",
       body.name,
       await hashToken(token),
       chosen.power,
     );
+    this.sql.exec("DELETE FROM agent_tokens WHERE power = ?", chosen.power);
     this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
-    if (this.seats().every((s) => s.kind !== "open")) await this.begin();
+    if (joiningLobby && this.seats().every((s) => s.kind !== "open")) await this.begin();
     return json({ gameId: this.meta.id, token, power: chosen.power });
   }
 
@@ -253,10 +376,38 @@ export class GameRoom extends DurableObject<Env> {
   private async begin(): Promise<void> {
     if (!this.meta) return;
     this.meta.status = "active";
+    await this.ensureAgentTokens();
     await this.scheduleDeadline();
     await this.persist();
+    await this.enqueueAgents();
+    console.info(JSON.stringify({ event: "game_started", gameId: this.meta!.id, phase: this.game!.phase() }));
     this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
     this.broadcastState();
+  }
+
+  private async ensureAgentTokens(): Promise<void> {
+    for (const seat of this.seats().filter((row) => row.kind === "ai" && row.eliminated === 0)) {
+      const stored = this.sql.exec<{ token: string }>("SELECT token FROM agent_tokens WHERE power = ?", seat.power).toArray()[0];
+      const token = stored?.token ?? mintToken(this.meta!.id, seat.power);
+      if (!stored) {
+        this.sql.exec("INSERT INTO agent_tokens (power, token) VALUES (?, ?)", seat.power, token);
+        this.sql.exec("UPDATE seats SET token_hash = ? WHERE power = ?", await hashToken(token), seat.power);
+      }
+    }
+  }
+
+  private async enqueueAgents(): Promise<void> {
+    if (!this.meta || !this.env.AGENT_QUEUE) {
+      if (this.meta && this.seats().some((seat) => seat.kind === "ai")) {
+        console.error(JSON.stringify({ event: "agent_queue_unavailable", gameId: this.meta.id, hasQueue: !!this.env.AGENT_QUEUE }));
+      }
+      return;
+    }
+    await this.ensureAgentTokens();
+    for (const seat of this.seats().filter((row) => row.kind === "ai" && row.eliminated === 0)) {
+      const token = this.sql.exec<{ token: string }>("SELECT token FROM agent_tokens WHERE power = ?", seat.power).one().token;
+      await this.env.AGENT_QUEUE.send({ gameId: this.meta.id, power: seat.power, token });
+    }
   }
 
   private summary() {
@@ -268,7 +419,19 @@ export class GameRoom extends DurableObject<Env> {
       deadlineAt: this.meta?.deadlineAt ?? null,
       seats: this.seatViews(),
       finished: this.meta?.finished ?? null,
+      pauseReason: this.meta?.pauseReason ?? null,
     };
+  }
+
+  private ledger(): { gameId: string | null; ledger: Record<string, { kept: number; broken: number }> } {
+    const ledger: Record<string, { kept: number; broken: number }> = Object.fromEntries(POWERS.map((power) => [power, { kept: 0, broken: 0 }]));
+    for (const row of this.sql.exec<{ pledger: string; receipt: string; n: number }>(
+      "SELECT pledger, receipt, COUNT(*) AS n FROM pledges WHERE receipt IN ('kept', 'broken') GROUP BY pledger, receipt",
+    ).toArray()) {
+      if (row.receipt === "kept") ledger[row.pledger]!.kept = row.n;
+      else ledger[row.pledger]!.broken = row.n;
+    }
+    return { gameId: this.meta?.id ?? null, ledger };
   }
 
   // ---------- seats and auth ----------
@@ -314,7 +477,16 @@ export class GameRoom extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(server, [power ?? "spectator"]);
-    server.serializeAttachment({ power } satisfies Attachment);
+    server.serializeAttachment({ power, clientIp: request.headers.get("cf-connecting-ip") } satisfies Attachment);
+    if (power && this.meta.status === "paused" && this.meta.pauseReason === "humans_absent") {
+      this.meta.status = "active";
+      this.meta.pauseReason = null;
+      await this.scheduleDeadline();
+      await this.persist();
+      this.broadcast({ t: "status", p: { status: "active", reason: null } }, "ALL");
+      this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
+      this.broadcastState();
+    }
     this.send(server, { t: "welcome", p: this.welcome(power) });
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -333,6 +505,7 @@ export class GameRoom extends DurableObject<Env> {
       gameId: meta.id,
       settings: meta.settings,
       status: meta.status,
+      pauseReason: meta.pauseReason ?? null,
       power,
       phase,
       state: game.state() as StateView,
@@ -357,6 +530,10 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   override async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
+    const byteLength = typeof raw === "string" ? new TextEncoder().encode(raw).byteLength : raw.byteLength;
+    if (byteLength > 4096) {
+      return this.send(ws, { t: "error", p: { code: "too_large", message: "frame exceeds 4 KB" } });
+    }
     if (typeof raw !== "string") return;
     if (!this.allow(ws)) {
       return this.send(ws, { t: "error", p: { code: "rate_limited", message: "slow down" } });
@@ -387,6 +564,8 @@ export class GameRoom extends DurableObject<Env> {
         return this.setDefaults(ws, id, power, msg.p.orders);
       case "ready":
         return this.setReady(power, msg.p.phase, msg.p.ready);
+      case "extend":
+        return this.requestExtension(ws, id, power, msg.p.phase);
       case "press.send":
         return this.press(ws, id, power, msg.p.to, msg.p.body, msg.p.pledge);
       case "vote":
@@ -396,6 +575,32 @@ export class GameRoom extends DurableObject<Env> {
 
   override async webSocketClose(ws: WebSocket): Promise<void> {
     ws.close();
+    await this.updateHumanPresence();
+  }
+
+  override async webSocketError(_ws: WebSocket): Promise<void> {
+    await this.updateHumanPresence();
+  }
+
+  private async updateHumanPresence(): Promise<void> {
+    if (!this.meta || this.meta.status !== "active") return;
+    const connectedHumanPowers = new Set(
+      this.ctx.getWebSockets()
+        .filter((socket) => socket.readyState === WebSocket.OPEN)
+        .map((socket) => (socket.deserializeAttachment() as Attachment).power)
+        .filter((power): power is PowerName => !!power && this.seat(power)?.kind === "human"),
+    );
+    const activeHumans = this.seats().filter((seat) => seat.kind === "human" && seat.eliminated === 0);
+    if (activeHumans.length > 0 && activeHumans.every((seat) => !connectedHumanPowers.has(seat.power))) {
+      this.meta.status = "paused";
+      this.meta.pauseReason = "humans_absent";
+      this.meta.deadlineAt = null;
+      await this.ctx.storage.deleteAlarm();
+      await this.persist();
+      this.broadcast({ t: "status", p: { status: "paused", reason: "humans_absent" } }, "ALL");
+      this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
+      this.broadcastState();
+    }
   }
 
   private send(ws: WebSocket, message: ServerMessage): void {
@@ -456,8 +661,28 @@ export class GameRoom extends DurableObject<Env> {
     return k === "R" ? "R" : k === "A" ? "A" : "M";
   }
 
+  private canonicalOwnOrder(text: string, kind: "M" | "R" | "A", power: PowerName): string {
+    const explicitPower = /^([A-Z]+):/.exec(text.trim().toUpperCase())?.[1];
+    const explicitOwner: Partial<Record<string, PowerName>> = {
+      AUS: "AUSTRIA", AUSTRIA: "AUSTRIA",
+      ENG: "ENGLAND", ENGLAND: "ENGLAND",
+      FRA: "FRANCE", FRANCE: "FRANCE",
+      GER: "GERMANY", GERMANY: "GERMANY",
+      ITA: "ITALY", ITALY: "ITALY",
+      RUS: "RUSSIA", RUSSIA: "RUSSIA",
+      TUR: "TURKEY", TURKEY: "TURKEY",
+    };
+    if (explicitPower && explicitOwner[explicitPower] !== power) throw new Error("order names another power");
+    const canonical = canonicalOrder(text, kind, power);
+    return canonical;
+  }
+
   private setOrders(ws: WebSocket, id: string | undefined, power: PowerName, phase: string, orders: string[]): void {
     const game = this.game!;
+    const seat = this.seat(power);
+    if (!seat || seat.eliminated === 1) {
+      return this.send(ws, { t: "error", id, p: { code: "seat_inactive", message: "this seat cannot submit orders" } });
+    }
     if (phase !== game.phase()) {
       return this.send(ws, { t: "error", id, p: { code: "stale_phase", message: `current phase is ${game.phase()}` } });
     }
@@ -466,7 +691,7 @@ export class GameRoom extends DurableObject<Env> {
     const kind = this.phaseKind();
     for (const text of orders) {
       try {
-        accepted.push(canonicalOrder(text, kind, power));
+        accepted.push(this.canonicalOwnOrder(text, kind, power));
       } catch (e) {
         rejected.push({ text, reason: e instanceof Error ? e.message : String(e) });
       }
@@ -478,6 +703,9 @@ export class GameRoom extends DurableObject<Env> {
       JSON.stringify(accepted),
       Date.now(),
     );
+    if (seat.kind === "civil_disorder") {
+      this.sql.exec("UPDATE seats SET kind = 'human', missed = 0 WHERE power = ?", power);
+    }
     this.send(ws, { t: "orders.ack", id, p: { phase, accepted, rejected } });
   }
 
@@ -488,7 +716,7 @@ export class GameRoom extends DurableObject<Env> {
     const rejected: { text: string; reason: string }[] = [];
     for (const text of orders) {
       try {
-        accepted.push(canonicalOrder(text, "M", power));
+        accepted.push(this.canonicalOwnOrder(text, "M", power));
       } catch (e) {
         rejected.push({ text, reason: e instanceof Error ? e.message : String(e) });
       }
@@ -511,6 +739,26 @@ export class GameRoom extends DurableObject<Env> {
     this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
     const waiting = this.seats().filter((s) => s.kind === "human" && s.eliminated === 0 && s.ready === 0);
     if (this.meta?.settings.readyAdvance && waiting.length === 0) await this.adjudicate();
+  }
+
+  private async requestExtension(ws: WebSocket, id: string | undefined, power: PowerName, phase: string): Promise<void> {
+    if (phase !== this.game!.phase()) {
+      return this.send(ws, { t: "error", id, p: { code: "stale_phase", message: `current phase is ${this.game!.phase()}` } });
+    }
+    this.sql.exec("INSERT OR IGNORE INTO phase_extensions (phase, used) VALUES (?, 0)", phase);
+    const used = this.sql.exec<{ used: number }>("SELECT used FROM phase_extensions WHERE phase = ?", phase).one().used;
+    if (used) return this.send(ws, { t: "error", id, p: { code: "extension_used", message: "this phase was already extended" } });
+    this.sql.exec("INSERT OR IGNORE INTO extension_requests (phase, power) VALUES (?, ?)", phase, power);
+    const requests = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM extension_requests WHERE phase = ?", phase).one().n;
+    const extended = requests >= 2;
+    if (extended) {
+      this.sql.exec("UPDATE phase_extensions SET used = 1 WHERE phase = ?", phase);
+      this.meta!.deadlineAt = Math.max(Date.now(), this.meta!.deadlineAt ?? Date.now()) + this.meta!.settings.graceSeconds * 1000;
+      await this.ctx.storage.setAlarm(this.meta!.deadlineAt);
+      await this.persist();
+      this.broadcast({ t: "deadline", p: { phase, deadlineAt: this.meta!.deadlineAt } }, "ALL");
+    }
+    this.send(ws, { t: "extend.ack", id, p: { phase, requests, extended } });
   }
 
   // ---------- press and pledges ----------
@@ -560,15 +808,26 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
-  private press(
+  private async press(
     ws: WebSocket,
     id: string | undefined,
     from: PowerName,
     to: PowerName | "ALL",
     body: string,
     pledge: { orders: string[]; sealed: boolean; nonce?: string | undefined } | undefined,
-  ): void {
+  ): Promise<void> {
     const mode = this.meta!.settings.press;
+    const phaseKind = this.phaseKind();
+    if (phaseKind === "R" || phaseKind === "A") {
+      return this.send(ws, {
+        t: "error",
+        id,
+        p: {
+          code: "press_closed",
+          message: "press is unavailable during retreat and adjustment phases",
+        },
+      });
+    }
     if (mode === "gunboat") return this.send(ws, { t: "error", id, p: { code: "no_press", message: "gunboat: no press" } });
     if (mode === "public" && to !== "ALL") {
       return this.send(ws, { t: "error", id, p: { code: "public_only", message: "public press only" } });
@@ -580,12 +839,25 @@ export class GameRoom extends DurableObject<Env> {
     if (sent >= LIMITS.pressPerPhase) {
       return this.send(ws, { t: "error", id, p: { code: "press_limit", message: `at most ${LIMITS.pressPerPhase} messages per phase` } });
     }
+    if (to !== "ALL") {
+      const whispers = this.sql
+        .exec<{ n: number }>("SELECT COUNT(*) AS n FROM press WHERE sender = ? AND phase = ? AND recipient <> 'ALL'", from, phase)
+        .one().n;
+      if (whispers >= this.meta!.settings.whisperBudget) {
+        return this.send(ws, { t: "error", id, p: { code: "whisper_budget", message: `at most ${this.meta!.settings.whisperBudget} private messages per phase` } });
+      }
+    }
+    if (this.env.PRESS_LIMITER) {
+      const { clientIp } = ws.deserializeAttachment() as Attachment;
+      const { success } = await this.env.PRESS_LIMITER.limit({ key: clientIp ?? `${this.meta!.id}:${from}` });
+      if (!success) return this.send(ws, { t: "error", id, p: { code: "press_rate_limited", message: "too many press messages, try again later" } });
+    }
     let pledgeId: string | null = null;
     if (pledge) {
       const kind = this.phaseKind();
       let canonical: string[];
       try {
-        canonical = pledge.orders.map((o) => canonicalOrder(o, kind, from));
+        canonical = pledge.orders.map((o) => this.canonicalOwnOrder(o, kind, from));
       } catch (e) {
         return this.send(ws, { t: "error", id, p: { code: "bad_pledge", message: e instanceof Error ? e.message : String(e) } });
       }
@@ -647,9 +919,13 @@ export class GameRoom extends DurableObject<Env> {
     const yes = new Set(
       this.sql.exec<{ power: string }>("SELECT power FROM votes WHERE kind = 'draw' AND value = 1").toArray().map((r) => r.power),
     );
-    // Seats nobody is playing (AI or civil disorder) cannot vote, so they never block a draw.
+    // AI and civil-disorder seats abstain; active players follow DIAS or non-DIAS rules.
     const absent = (s: SeatRow) => s.kind === "ai" || s.kind === "civil_disorder";
-    if (voters.every((s) => yes.has(s.power) || absent(s))) await this.finish("draw");
+    const required = voters.filter((s) => !absent(s));
+    const passed = this.meta!.settings.dias
+      ? required.every((seat) => yes.has(seat.power))
+      : required.filter((seat) => yes.has(seat.power)).length >= 2;
+    if (passed) await this.finish("draw");
   }
 
   // ---------- deadlines and adjudication ----------
@@ -657,25 +933,44 @@ export class GameRoom extends DurableObject<Env> {
   private async scheduleDeadline(): Promise<void> {
     if (!this.meta || !this.game) return;
     const seconds = this.phaseKind() === "M" ? this.meta.settings.movementSeconds : this.meta.settings.shortPhaseSeconds;
-    this.meta.deadlineAt = Date.now() + seconds * 1000;
+    this.meta.deadlineAt = Date.now() + (seconds + this.meta.settings.graceSeconds) * 1000;
     await this.ctx.storage.setAlarm(this.meta.deadlineAt);
     this.broadcast({ t: "deadline", p: { phase: this.game.phase(), deadlineAt: this.meta.deadlineAt } }, "ALL");
   }
 
   override async alarm(): Promise<void> {
-    if (this.meta?.status === "active") await this.adjudicate();
+    if (this.meta?.status === "active") {
+      if (this.meta.deadlineAt !== null && Date.now() < this.meta.deadlineAt) {
+        await this.ctx.storage.setAlarm(this.meta.deadlineAt);
+        return;
+      }
+      await this.adjudicate();
+    } else if (this.meta?.status === "paused" && this.meta.pauseReason === "adjudication_failed") {
+      await this.adjudicate();
+    } else if (this.meta?.status === "finished") {
+      await this.flushD1Summary();
+    }
   }
 
   private ordersFor(phase: string, power: PowerName): { orders: string[]; submitted: boolean } {
     const row = this.sql.exec<{ orders_json: string }>("SELECT orders_json FROM orders WHERE phase = ? AND power = ?", phase, power).toArray()[0];
-    if (row) return { orders: JSON.parse(row.orders_json) as string[], submitted: true };
+    if (row) return { orders: this.parseOrderList(row.orders_json), submitted: true };
     // Defaults are movement orders; retreats and adjustments fall back to the engine's own rules.
     const def =
       this.phaseKind() === "M"
         ? this.sql.exec<{ orders_json: string }>("SELECT orders_json FROM defaults WHERE power = ?", power).toArray()[0]
         : undefined;
-    if (def) return { orders: JSON.parse(def.orders_json) as string[], submitted: false };
+    if (def) return { orders: this.parseOrderList(def.orders_json), submitted: false };
     return { orders: [], submitted: false };
+  }
+
+  private parseOrderList(raw: string): string[] {
+    try {
+      const value: unknown = JSON.parse(raw);
+      return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+    } catch {
+      return [];
+    }
   }
 
   private async adjudicate(): Promise<void> {
@@ -693,7 +988,7 @@ export class GameRoom extends DurableObject<Env> {
       const valid: string[] = [];
       for (const text of stored) {
         try {
-          valid.push(canonicalOrder(text, kind, seat.power));
+          valid.push(this.canonicalOwnOrder(text, kind, seat.power));
         } catch {
           // dropped; the unit is treated as unordered
         }
@@ -701,22 +996,46 @@ export class GameRoom extends DurableObject<Env> {
       orders[seat.power] = valid;
       submittedBy[seat.power] = valid;
     }
+    const savedBeforeAdjudication = game.toSaved(this.meta!.id);
+    const recovering = this.meta!.status === "paused";
     let outcome: ReturnType<Game["process"]>;
     try {
-      outcome = game.process(game.normaliseOrders({ orders }));
-    } catch (e) {
-      // Unreachable with canonical orders, but an exception here would wedge the alarm for good.
-      console.error(JSON.stringify({ event: "adjudicate_fallback", phase, error: String(e) }));
-      outcome = game.process({ orders: {} });
+      outcome = adjudicateStrict(game, { orders }, (e) =>
+        console.error(JSON.stringify({ event: "adjudicate_failed", phase, error: String(e) })),
+      );
+    } catch (error) {
+      // `process` may mutate before throwing. Restore the durable snapshot so retrying
+      // can never apply a partially adjudicated phase a second time.
+      this.game = Game.fromSaved(savedBeforeAdjudication, this.meta!.settings.rulebook);
+      this.meta!.status = "paused";
+      this.meta!.deadlineAt = null;
+      this.meta!.pauseReason = "adjudication_failed";
+      await this.ctx.storage.setAlarm(Date.now() + ADJUDICATION_RETRY_MS);
+      await this.persist();
+      this.broadcast({ t: "status", p: { status: "paused", reason: "adjudication_failed" } }, "ALL");
+      this.broadcast({ t: "deadline", p: { phase, deadlineAt: null } }, "ALL");
+      this.broadcast({ t: "error", p: { code: "adjudication_failed", message: "The phase could not be adjudicated. The server will retry automatically." } }, "ALL");
+      console.error(JSON.stringify({ event: "adjudicate_retry_scheduled", phase, error: String(error) }));
+      return;
     }
+    this.meta!.status = "active";
+    this.meta!.pauseReason = null;
     for (const seat of seats) {
-      if (seat.kind === "human" && seat.eliminated === 0 && kind === "M") {
+      if ((seat.kind === "human" || seat.kind === "civil_disorder") && seat.eliminated === 0 && kind === "M") {
         const missed = submittedSeats.has(seat.power) ? 0 : seat.missed + 1;
-        const nextKind = missed >= 2 ? "civil_disorder" : "human";
+        const nextKind = missed >= 3 && this.meta!.settings.aiFill ? "ai" : missed >= 2 ? "civil_disorder" : "human";
         this.sql.exec("UPDATE seats SET missed = ?, kind = ? WHERE power = ?", missed, nextKind, seat.power);
+        if (nextKind === "ai") {
+          const token = mintToken(this.meta!.id, seat.power);
+          this.sql.exec("INSERT OR REPLACE INTO agent_tokens (power, token) VALUES (?, ?)", seat.power, token);
+          this.sql.exec("UPDATE seats SET token_hash = ?, name = 'Automaton' WHERE power = ?", await hashToken(token), seat.power);
+        }
       }
     }
+    const phaseHadOrders = Object.values(submittedBy).some((powerOrders) => powerOrders.length > 0);
+    this.meta!.noOrderPhases = phaseHadOrders ? 0 : (this.meta!.noOrderPhases ?? 0) + 1;
     this.sql.exec("INSERT INTO phases (name, results_json, adjudicated_at) VALUES (?, ?, ?)", phase, JSON.stringify(outcome), Date.now());
+    console.info(JSON.stringify({ event: "phase_adjudicated", gameId: this.meta!.id, phase, nextPhase: this.game!.phase() }));
 
     // receipts for every pledge made in this phase
     const pledges = this.sql
@@ -761,6 +1080,16 @@ export class GameRoom extends DurableObject<Env> {
     );
     this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
 
+    if ((this.meta!.noOrderPhases ?? 0) >= 3) {
+      this.meta!.status = "abandoned";
+      this.meta!.deadlineAt = null;
+      await this.ctx.storage.deleteAlarm();
+      await this.persist();
+      this.broadcast({ t: "status", p: { status: "abandoned", reason: "no_orders" } }, "ALL");
+      this.broadcastState();
+      return;
+    }
+
     if (outcome.status !== "active") {
       const winner = outcome.status.startsWith("solo:") ? (outcome.status.slice(5) as PowerName) : null;
       await this.finish(winner ? "solo" : "draw", winner);
@@ -768,6 +1097,8 @@ export class GameRoom extends DurableObject<Env> {
     }
     await this.scheduleDeadline();
     await this.persist();
+    await this.enqueueAgents();
+    if (recovering) this.broadcast({ t: "status", p: { status: "active", reason: null } }, "ALL");
     this.broadcastState();
   }
 
@@ -782,11 +1113,63 @@ export class GameRoom extends DurableObject<Env> {
     const winners = winner ? [winner] : (POWERS.filter((p) => centers[p]! > 0) as PowerName[]);
     meta.status = "finished";
     meta.deadlineAt = null;
+    meta.pauseReason = null;
     meta.finished = { result, winners, scores };
+    console.info(JSON.stringify({ event: "game_finished", gameId: meta.id, result, winners }));
+    const phaseCount = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM phases").one().n;
+    await this.ctx.storage.put("d1-outbox", {
+      gameId: meta.id,
+      result,
+      winners,
+      scores,
+      settings: meta.settings,
+      phaseCount,
+      finishedAt: Date.now(),
+      ledger: this.ledger().ledger,
+    });
     await this.ctx.storage.deleteAlarm();
     await this.persist();
+    await this.flushD1Summary();
+    this.broadcast({ t: "status", p: { status: "finished", reason: null } }, "ALL");
     this.broadcast({ t: "finished", p: { result, winners, scores } }, "ALL");
     this.broadcastState();
+  }
+
+  private async flushD1Summary(): Promise<void> {
+    const summary = await this.ctx.storage.get<{
+      gameId: string;
+      result: string;
+      winners: string[];
+      scores: Record<string, number>;
+      settings: Settings;
+      phaseCount: number;
+      finishedAt: number;
+      ledger: Record<string, { kept: number; broken: number }>;
+    }>("d1-outbox");
+    if (!summary || !this.env.DB) return;
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO games_index (game_id, result, winners_json, scores_json, settings_json, phase_count, finished_at, ledger_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(game_id) DO UPDATE SET result = excluded.result, winners_json = excluded.winners_json,
+         scores_json = excluded.scores_json, settings_json = excluded.settings_json,
+         phase_count = excluded.phase_count, finished_at = excluded.finished_at, ledger_json = excluded.ledger_json`,
+      ).bind(
+        summary.gameId,
+        summary.result,
+        JSON.stringify(summary.winners),
+        JSON.stringify(summary.scores),
+        JSON.stringify(summary.settings),
+        summary.phaseCount,
+        summary.finishedAt,
+        JSON.stringify(summary.ledger),
+      ).run();
+      await this.ctx.storage.delete("d1-outbox");
+      await this.ctx.storage.deleteAlarm();
+    } catch (error) {
+      console.error(JSON.stringify({ event: "d1_handoff_failed", gameId: summary.gameId, error: String(error) }));
+      await this.ctx.storage.setAlarm(Date.now() + ADJUDICATION_RETRY_MS);
+    }
   }
 
   private async persist(): Promise<void> {

@@ -27,6 +27,8 @@ export class AgentClient {
   private state: StateView | null = null;
   private map: MapInfo | null = null;
   private busy = false;
+  private turnComplete = false;
+  private turnWaiters: (() => void)[] = [];
 
   constructor(private opts: AgentClientOptions) {}
 
@@ -46,6 +48,12 @@ export class AgentClient {
     this.ws?.close();
   }
 
+  /** Resolve after this connection has submitted its current phase's orders. */
+  awaitTurn(): Promise<void> {
+    if (this.turnComplete) return Promise.resolve();
+    return new Promise((resolve) => this.turnWaiters.push(resolve));
+  }
+
   private send(frame: unknown): void {
     this.ws?.send(JSON.stringify(frame));
   }
@@ -58,6 +66,7 @@ export class AgentClient {
         this.press = m.p.press;
         this.map ??= mapInfo();
         if (m.p.status === "active") await this.act();
+        else this.completeTurn();
         return;
       case "state":
         this.phase = m.p.phase;
@@ -67,6 +76,12 @@ export class AgentClient {
         return;
       case "press":
         this.press.push(m.p);
+        return;
+      case "status":
+        if (m.p.status !== "active") this.completeTurn();
+        return;
+      case "finished":
+        this.completeTurn();
         return;
       case "pledge.receipt": {
         const pledge = this.press.find((p) => p.pledge?.id === m.p.pledgeId)?.pledge;
@@ -126,8 +141,14 @@ export class AgentClient {
       this.send({ t: "ready", p: { phase, ready: true } });
     } finally {
       this.busy = false;
+      this.completeTurn();
       // A state frame for a new phase arrived while busy and was skipped; act on it now.
       if (this.phase !== phase) void this.act();
     }
+  }
+
+  private completeTurn(): void {
+    this.turnComplete = true;
+    for (const resolve of this.turnWaiters.splice(0)) resolve();
   }
 }

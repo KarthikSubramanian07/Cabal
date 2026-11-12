@@ -10,6 +10,10 @@
  *   GET  /health
  */
 import { CreateGameRequest, JoinGameRequest } from "@cabal/protocol";
+import { ClaudeBrain, FallbackBrain, PERSONAS, Player } from "@cabal/agents";
+import { Game, mapInfo } from "@cabal/engine";
+import type { PowerName, PressView, StateView } from "@cabal/protocol";
+import { engineReady } from "./engine.js";
 import type { Env } from "./env.js";
 import { gameCode } from "./tokens.js";
 
@@ -35,13 +39,38 @@ function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8" } });
 }
 
-const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|replay|ws))?$/;
+const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|replay|ledger|ws))?$/;
 
 async function readJson(request: Request): Promise<unknown> {
   const declared = Number(request.headers.get("content-length") ?? "0");
   if (declared > MAX_BODY_BYTES) return undefined;
-  const text = await request.text().catch(() => "");
-  if (text.length > MAX_BODY_BYTES) return undefined;
+  const reader = request.body?.getReader();
+  if (!reader) return {};
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      byteLength += value.byteLength;
+      if (byteLength > MAX_BODY_BYTES) {
+        await reader.cancel();
+        return undefined;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return undefined;
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const text = new TextDecoder().decode(bytes);
   try {
     return JSON.parse(text || "{}");
   } catch {
@@ -68,13 +97,15 @@ export default {
 
     if (url.pathname === "/api/games" && request.method === "POST") {
       if (await limited(env.CREATE_LIMITER, request, "create")) return tooMany();
-      const body = CreateGameRequest.safeParse(await readJson(request));
+      const rawBody = await readJson(request);
+      const body = CreateGameRequest.safeParse(rawBody);
       if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
+      const rawSettings = typeof rawBody === "object" && rawBody !== null && "settings" in rawBody ? rawBody.settings : {};
       const id = gameCode();
       const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id));
       const res = await stub.fetch("https://room/create", {
         method: "POST",
-        body: JSON.stringify({ id, name: body.data.name, settings: body.data.settings }),
+        body: JSON.stringify({ id, name: body.data.name, settings: rawSettings }),
       });
       return withCors(res);
     }
@@ -98,8 +129,72 @@ export default {
         );
       }
       if (action === "replay" && request.method === "GET") return withCors(await stub.fetch("https://room/replay"));
+      if (action === "ledger" && request.method === "GET") return withCors(await stub.fetch("https://room/ledger"));
       if (!action && request.method === "GET") return withCors(await stub.fetch("https://room/summary"));
     }
     return withCors(json({ error: "not found" }, 404));
+  },
+  async queue(batch: MessageBatch, env: Env): Promise<void> {
+    await engineReady();
+    for (const message of batch.messages) {
+      const { gameId, power, token } = message.body as { gameId: string; power: PowerName; token: string };
+      const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(gameId));
+      const brain = env.ANTHROPIC_API_KEY ? new ClaudeBrain({ apiKey: env.ANTHROPIC_API_KEY }) : new FallbackBrain();
+      const player = new Player(power, PERSONAS[power] ?? "A careful strategist.", brain);
+      try {
+        const authorization = { authorization: `Bearer ${token}` };
+        const stateResponse = await room.fetch("https://room/agent/state", { headers: authorization });
+        if (stateResponse.status === 409) {
+          message.ack();
+          continue;
+        }
+        if (!stateResponse.ok) throw new Error(`agent state failed: ${stateResponse.status}`);
+        const welcome = await stateResponse.json() as { phase: string; state: StateView; press: PressView[] };
+        const game = Game.fromState(welcome.state);
+        const { decision, validated } = await player.play({
+          phase: welcome.phase,
+          state: welcome.state,
+          map: mapInfo(),
+          legal: game.legal(power),
+          press: welcome.press.map((item) => ({ from: item.from, to: item.to, body: item.body, pledge: item.pledge?.orders ?? null })),
+          myPledges: welcome.press
+            .filter((item) => item.phase === welcome.phase && item.from === power && item.pledge?.orders)
+            .map((item) => item.pledge!.orders!),
+          trust: {},
+        });
+        const knownPowers = new Set<PowerName>(["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"]);
+        const frames: unknown[] = decision.messages
+          .filter((item) => item.to === "ALL" || knownPowers.has(item.to as PowerName))
+          .map((item) => {
+            const pledgedOrders = decision.pledge?.to === item.to
+              ? decision.pledge.orders.filter((order) => validated.orders.includes(order))
+              : [];
+            return {
+              t: "press.send",
+              p: {
+                to: item.to,
+                body: item.body,
+                ...(pledgedOrders.length > 0 && decision.pledge
+                  ? { pledge: { orders: pledgedOrders, sealed: decision.pledge.sealed } }
+                  : {}),
+              },
+            };
+          });
+        frames.push(
+          { t: "orders.set", p: { phase: welcome.phase, orders: validated.orders } },
+          { t: "ready", p: { phase: welcome.phase, ready: true } },
+        );
+        const actionResponse = await room.fetch("https://room/agent/act", {
+          method: "POST",
+          headers: { ...authorization, "content-type": "application/json" },
+          body: JSON.stringify({ frames }),
+        });
+        if (!actionResponse.ok) throw new Error(`agent action failed: ${actionResponse.status} ${await actionResponse.text()}`);
+        message.ack();
+      } catch (error) {
+        console.error(JSON.stringify({ event: "agent_turn_failed", gameId, power, error: String(error) }));
+        message.retry({ delaySeconds: 30 });
+      }
+    }
   },
 } satisfies ExportedHandler<Env>;

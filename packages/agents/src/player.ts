@@ -41,6 +41,7 @@ export interface Brain {
 }
 
 export interface ClaudeBrainOptions {
+  apiKey?: string;
   model?: string;
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
   client?: Anthropic;
@@ -53,7 +54,7 @@ export class ClaudeBrain implements Brain {
   private effort: NonNullable<ClaudeBrainOptions["effort"]>;
 
   constructor(opts: ClaudeBrainOptions = {}) {
-    this.client = opts.client ?? new Anthropic();
+    this.client = opts.client ?? new Anthropic(opts.apiKey ? { apiKey: opts.apiKey } : undefined);
     this.model = opts.model ?? "claude-opus-5";
     this.effort = opts.effort ?? "medium";
   }
@@ -71,6 +72,13 @@ export class ClaudeBrain implements Brain {
       throw new Error(`no decision (stop_reason ${response.stop_reason})`);
     }
     return response.parsed_output;
+  }
+}
+
+/** Used when no model API key is configured; Player selects only legal orders. */
+export class FallbackBrain implements Brain {
+  async decide(): Promise<Decision> {
+    throw new Error("no model provider configured");
   }
 }
 
@@ -123,7 +131,7 @@ export class Player {
     this.brain = brain;
   }
 
-  /** Decide a phase. Never throws on model misbehaviour: falls back to holds. */
+  /** Decide a phase. Never throws on model misbehaviour: fallback orders come from the legal menu. */
   async play(input: Omit<PromptInput, "power" | "persona" | "diary" | "relationships">): Promise<{
     decision: Decision;
     validated: Validated;
@@ -139,9 +147,13 @@ export class Player {
     try {
       decision = await this.brain.decide(SYSTEM_PROMPT, userPrompt(full));
     } catch (e) {
+      const fallbackOrders = Object.values(input.legal.by_unit).flatMap((menu) => {
+        if (menu.length === 0) return [];
+        return [menu[Math.floor(Math.random() * menu.length)]!];
+      });
       decision = {
         reasoning: `fallback: ${e instanceof Error ? e.message : String(e)}`,
-        orders: [],
+        orders: fallbackOrders,
         messages: [],
         pledge: null,
         relationships: [],

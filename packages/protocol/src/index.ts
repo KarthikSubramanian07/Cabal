@@ -49,9 +49,13 @@ export const GameSettings = z.object({
   press: PressMode.default("full"),
   pacing: Pacing.default("async"),
   /** Movement phase length in seconds. */
-  movementSeconds: z.number().int().min(60).max(14 * 24 * 3600).default(24 * 3600),
+  movementSeconds: z.number().int().min(60).max(14 * 24 * 3600).default(48 * 3600),
   /** Retreat and adjustment phase length in seconds. */
-  shortPhaseSeconds: z.number().int().min(30).max(7 * 24 * 3600).default(12 * 3600),
+  shortPhaseSeconds: z.number().int().min(30).max(7 * 24 * 3600).default(24 * 3600),
+  /** Additional deadline grace, including the two-seat extension length. */
+  graceSeconds: z.number().int().min(0).max(3600).default(300),
+  /** Maximum private messages from one power per phase. */
+  whisperBudget: z.number().int().min(0).max(60).default(10),
   /** Advance as soon as every seat is ready. */
   readyAdvance: z.boolean().default(true),
   dias: z.boolean().default(true),
@@ -158,6 +162,7 @@ export const ClientMessage = z.discriminatedUnion("t", [
     id: z.string().optional(),
     p: z.object({ phase: PhaseName, ready: z.boolean() }),
   }),
+  z.object({ t: z.literal("extend"), id: z.string().optional(), p: z.object({ phase: PhaseName }) }),
   z.object({
     t: z.literal("press.send"),
     id: z.string().optional(),
@@ -182,7 +187,7 @@ export type ClientMessage = z.infer<typeof ClientMessage>;
 
 // ---------- server -> client ----------
 
-export const GameStatus = z.enum(["lobby", "active", "finished"]);
+export const GameStatus = z.enum(["lobby", "active", "paused", "finished", "abandoned"]);
 export type GameStatus = z.infer<typeof GameStatus>;
 
 export const ServerMessage = z.discriminatedUnion("t", [
@@ -193,6 +198,7 @@ export const ServerMessage = z.discriminatedUnion("t", [
       gameId: z.string(),
       settings: GameSettings,
       status: GameStatus,
+      pauseReason: z.string().nullable().optional(),
       power: PowerName.nullable(),
       phase: PhaseName,
       state: StateView,
@@ -235,6 +241,11 @@ export const ServerMessage = z.discriminatedUnion("t", [
   z.object({ t: z.literal("seats"), p: z.object({ seats: z.array(SeatView) }) }),
   z.object({ t: z.literal("deadline"), p: z.object({ phase: PhaseName, deadlineAt: z.number().int().nullable() }) }),
   z.object({
+    t: z.literal("extend.ack"),
+    id: z.string().optional(),
+    p: z.object({ phase: PhaseName, requests: z.number().int().min(1), extended: z.boolean() }),
+  }),
+  z.object({
     t: z.literal("finished"),
     p: z.object({
       result: z.enum(["solo", "draw"]),
@@ -242,6 +253,7 @@ export const ServerMessage = z.discriminatedUnion("t", [
       scores: z.record(z.string(), z.number()),
     }),
   }),
+  z.object({ t: z.literal("status"), p: z.object({ status: GameStatus, reason: z.string().nullable() }) }),
   z.object({ t: z.literal("error"), id: z.string().optional(), p: z.object({ code: z.string(), message: z.string() }) }),
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;
