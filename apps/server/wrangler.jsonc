@@ -16,11 +16,11 @@
     { "name": "JOIN_LIMITER", "namespace_id": "4802", "simple": { "limit": 30, "period": 60 } },
     { "name": "PRESS_LIMITER", "namespace_id": "4803", "simple": { "limit": 60, "period": 60 } }
   ],
-  // Create this D1 database and replace the placeholder ID before deployment.
+  // Production D1 game index.
   "d1_databases": [
-    { "binding": "DB", "database_name": "cabal-cross-game", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+    { "binding": "DB", "database_name": "cabal-cross-game", "database_id": "927af694-6467-4f43-9a4c-8bb3f7cf16d6", "migrations_dir": "migrations" }
   ],
-  // Create the queue with `wrangler queues create cabal-agent-turns` before deployment.
+  // Production AI turn queue.
   "queues": {
     "producers": [{ "binding": "AGENT_QUEUE", "queue": "cabal-agent-turns" }],
     "consumers": [{ "queue": "cabal-agent-turns", "max_batch_size": 1, "max_retries": 5 }]

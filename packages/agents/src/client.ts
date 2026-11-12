@@ -17,6 +17,8 @@ export interface AgentClientOptions {
   onDecision?: (phase: string, info: { orders: string[]; dropped: { text: string; reason: string }[] }) => void;
   /** WebSocket constructor; defaults to the global one. */
   WebSocketImpl?: typeof WebSocket;
+  /** Optional transport for runtimes that provide an established socket directly. */
+  connectWebSocket?: () => Promise<WebSocket>;
 }
 
 export class AgentClient {
@@ -32,7 +34,12 @@ export class AgentClient {
 
   constructor(private opts: AgentClientOptions) {}
 
-  connect(): Promise<void> {
+  async connect(): Promise<void> {
+    if (this.opts.connectWebSocket) {
+      this.ws = await this.opts.connectWebSocket();
+      this.listen(this.ws);
+      return;
+    }
     const url = `${this.opts.serverUrl.replace(/^http/, "ws")}/api/games/${this.opts.gameId}/ws?token=${this.opts.token}`;
     const WS = this.opts.WebSocketImpl ?? WebSocket;
     const ws = new WS(url);
@@ -40,8 +47,12 @@ export class AgentClient {
     return new Promise((resolve, reject) => {
       ws.addEventListener("open", () => resolve());
       ws.addEventListener("error", (e) => reject(e));
-      ws.addEventListener("message", (ev) => void this.onFrame(JSON.parse(String(ev.data)) as ServerMessage));
+      this.listen(ws);
     });
+  }
+
+  private listen(ws: WebSocket): void {
+    ws.addEventListener("message", (ev) => void this.onFrame(JSON.parse(String(ev.data)) as ServerMessage));
   }
 
   close(): void {

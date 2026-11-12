@@ -136,19 +136,25 @@ export default {
   async queue(batch: MessageBatch, env: Env): Promise<void> {
     for (const message of batch.messages) {
       const { gameId, power, token, serverUrl } = message.body as { gameId: string; power: string; token: string; serverUrl: string };
-      if (!serverUrl && !env.SERVER_URL) {
-        console.error(JSON.stringify({ event: "agent_server_url_missing", gameId, power }));
-        message.retry({ delaySeconds: 60 });
-        continue;
-      }
+      const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(gameId));
       const brain = env.ANTHROPIC_API_KEY ? new ClaudeBrain({ apiKey: env.ANTHROPIC_API_KEY }) : new FallbackBrain();
       if (!env.ANTHROPIC_API_KEY) console.warn(JSON.stringify({ event: "agent_fallback_brain", gameId, power }));
       const player = new Player(power, PERSONAS[power] ?? "A careful strategist.", brain);
       const client = new AgentClient({
-        serverUrl: serverUrl ?? env.SERVER_URL!,
+        serverUrl: serverUrl ?? env.SERVER_URL ?? "http://localhost",
         gameId,
         token,
         player,
+        connectWebSocket: async () => {
+          const response = await room.fetch(`https://room/ws?token=${encodeURIComponent(token)}`, {
+            headers: { upgrade: "websocket" },
+          });
+          if (response.status !== 101 || !response.webSocket) {
+            throw new Error(`Durable Object WebSocket handshake failed: ${response.status}`);
+          }
+          response.webSocket.accept();
+          return response.webSocket;
+        },
       });
       try {
         await client.connect();
