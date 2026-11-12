@@ -197,6 +197,40 @@ describe("GameRoom", () => {
     expect((await ledger.json() as { ledger: Record<string, { kept: number }> }).ledger[ann.power]!.kept).toBe(1);
   });
 
+  it("lets an authenticated Queue agent fetch its state and submit a validated turn through the room binding", async () => {
+    const ann = await create("Queue creator", { aiFill: true, readyAdvance: true });
+    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ann.token}` },
+    });
+    const room = serverEnv.GAME_ROOM.get(serverEnv.GAME_ROOM.idFromName(ann.gameId));
+    const agentToken = await runInDurableObject(room, (instance) => {
+      const db = instance as unknown as { sql: { exec<T>(query: string, ...bindings: unknown[]): { one(): T } } };
+      return db.sql.exec<{ token: string }>("SELECT token FROM agent_tokens LIMIT 1").one().token;
+    });
+
+    const unauthorized = await room.fetch("https://room/agent/state");
+    expect(unauthorized.status).toBe(403);
+    const state = await room.fetch("https://room/agent/state", { headers: { authorization: `Bearer ${agentToken}` } });
+    expect(state.status).toBe(200);
+    const welcome = await state.json() as { phase: string; power: string };
+    expect(welcome.phase).toBe("S1901M");
+
+    const action = await room.fetch("https://room/agent/act", {
+      method: "POST",
+      headers: { authorization: `Bearer ${agentToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ frames: [
+        { t: "orders.set", p: { phase: welcome.phase, orders: [] } },
+        { t: "ready", p: { phase: welcome.phase, ready: true } },
+      ] }),
+    });
+    expect(action.status).toBe(200);
+    const summary = await (await SELF.fetch(`http://cabal/api/games/${ann.gameId}`)).json() as {
+      seats: { power: string; ready: boolean }[];
+    };
+    expect(summary.seats.find((seat) => seat.power === welcome.power)?.ready).toBe(true);
+  });
+
   it("fires a deadline alarm and applies stored default movement orders", async () => {
     const moves: Record<string, string> = {
       AUSTRIA: "A VIE - GAL",

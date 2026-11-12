@@ -60,7 +60,6 @@ interface Meta {
   finished: { result: "solo" | "draw"; winners: PowerName[]; scores: Record<string, number> } | null;
   pauseReason?: string | null;
   noOrderPhases?: number;
-  serverUrl?: string;
 }
 
 interface SeatRow extends Record<string, SqlStorageValue> {
@@ -227,6 +226,8 @@ export class GameRoom extends DurableObject<Env> {
       if (!this.meta) return bad("no such game", 404);
       return json(this.summary());
     }
+    if (request.method === "GET" && path === "/agent/state") return this.agentState(request);
+    if (request.method === "POST" && path === "/agent/act") return this.agentAct(request);
     if (request.method === "GET" && path === "/ledger") {
       if (!this.meta) return bad("no such game", 404);
       return json(this.ledger());
@@ -244,7 +245,7 @@ export class GameRoom extends DurableObject<Env> {
   private async create(request: Request): Promise<Response> {
     if (this.meta) return bad("game exists", 409);
     this.sql.exec(SCHEMA);
-    const body = (await request.json()) as { id: string; name: string; settings?: unknown; serverUrl?: string };
+    const body = (await request.json()) as { id: string; name: string; settings?: unknown };
     const rawSettings = (body.settings ?? {}) as Partial<Settings>;
     const pacing = rawSettings.pacing ?? "async";
     const preset = pacing === "live" ? [600, 300] : pacing === "daily" ? [86400, 43200] : [172800, 86400];
@@ -264,7 +265,6 @@ export class GameRoom extends DurableObject<Env> {
       finished: null,
       pauseReason: null,
       noOrderPhases: 0,
-      ...(body.serverUrl ? { serverUrl: body.serverUrl } : {}),
     };
     this.game = new Game(settings.rulebook);
     for (const p of POWERS) {
@@ -279,6 +279,58 @@ export class GameRoom extends DurableObject<Env> {
     );
     await this.persist();
     return json({ gameId: body.id, token, power: creator });
+  }
+
+  /** Private Queue-to-room RPC. Agent state and actions stay on the DO binding. */
+  private async agentState(request: Request): Promise<Response> {
+    const power = await this.authorise(request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "");
+    if (!power || this.seat(power)?.kind !== "ai") return bad("AI seat authorization required", 403);
+    if (!this.meta || !this.game || this.meta.status !== "active") return bad("game is not active", 409);
+    return json(this.welcome(power));
+  }
+
+  /** Accept only the three frames an agent may emit, under its authenticated AI seat. */
+  private async agentAct(request: Request): Promise<Response> {
+    const declared = Number(request.headers.get("content-length") ?? "0");
+    if (declared > 4096) return bad("agent action too large", 413);
+    const power = await this.authorise(request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "");
+    if (!power || this.seat(power)?.kind !== "ai") return bad("AI seat authorization required", 403);
+    if (!this.meta || !this.game || this.meta.status !== "active") return bad("game is not active", 409);
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      return bad("invalid agent action", 400);
+    }
+    if (typeof raw !== "object" || raw === null || !("frames" in raw) || !Array.isArray(raw.frames) || raw.frames.length > 64) {
+      return bad("invalid agent action", 400);
+    }
+    const messages = [];
+    for (const rawFrame of raw.frames) {
+      const msg = parseClientMessage(rawFrame);
+      if (!msg || !["press.send", "orders.set", "ready"].includes(msg.t)) return bad("invalid agent frame", 400);
+      messages.push(msg);
+    }
+    const ws = {
+      send: () => undefined,
+      deserializeAttachment: () => ({ power, clientIp: `${this.meta!.id}:${power}` }),
+    } as unknown as WebSocket;
+    for (const msg of messages) {
+      switch (msg.t) {
+        case "press.send":
+          await this.press(ws, undefined, power, msg.p.to, msg.p.body, msg.p.pledge);
+          break;
+        case "orders.set":
+          this.setOrders(ws, undefined, power, msg.p.phase, msg.p.orders);
+          break;
+        case "ready":
+          await this.setReady(power, msg.p.phase, msg.p.ready);
+          break;
+        default:
+          return bad("invalid agent frame", 400);
+      }
+    }
+    return json({ ok: true });
   }
 
   private async join(request: Request): Promise<Response> {
@@ -345,17 +397,16 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private async enqueueAgents(): Promise<void> {
-    const serverUrl = this.meta?.serverUrl ?? this.env.SERVER_URL;
-    if (!this.meta || !this.env.AGENT_QUEUE || !serverUrl) {
+    if (!this.meta || !this.env.AGENT_QUEUE) {
       if (this.meta && this.seats().some((seat) => seat.kind === "ai")) {
-        console.error(JSON.stringify({ event: "agent_queue_unavailable", gameId: this.meta.id, hasQueue: !!this.env.AGENT_QUEUE, hasServerUrl: !!serverUrl }));
+        console.error(JSON.stringify({ event: "agent_queue_unavailable", gameId: this.meta.id, hasQueue: !!this.env.AGENT_QUEUE }));
       }
       return;
     }
     await this.ensureAgentTokens();
     for (const seat of this.seats().filter((row) => row.kind === "ai" && row.eliminated === 0)) {
       const token = this.sql.exec<{ token: string }>("SELECT token FROM agent_tokens WHERE power = ?", seat.power).one().token;
-      await this.env.AGENT_QUEUE.send({ gameId: this.meta.id, power: seat.power, token, serverUrl });
+      await this.env.AGENT_QUEUE.send({ gameId: this.meta.id, power: seat.power, token });
     }
   }
 

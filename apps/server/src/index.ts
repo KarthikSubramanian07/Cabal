@@ -10,7 +10,10 @@
  *   GET  /health
  */
 import { CreateGameRequest, JoinGameRequest } from "@cabal/protocol";
-import { AgentClient, ClaudeBrain, FallbackBrain, PERSONAS, Player } from "@cabal/agents";
+import { ClaudeBrain, FallbackBrain, PERSONAS, Player } from "@cabal/agents";
+import { Game, mapInfo } from "@cabal/engine";
+import type { PowerName, PressView, StateView } from "@cabal/protocol";
+import { engineReady } from "./engine.js";
 import type { Env } from "./env.js";
 import { gameCode } from "./tokens.js";
 
@@ -100,11 +103,9 @@ export default {
       const rawSettings = typeof rawBody === "object" && rawBody !== null && "settings" in rawBody ? rawBody.settings : {};
       const id = gameCode();
       const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id));
-      // `http://cabal` is the workerd test service host, not a routable agent endpoint.
-      const agentOrigin = url.hostname === "cabal" ? undefined : url.origin;
       const res = await stub.fetch("https://room/create", {
         method: "POST",
-        body: JSON.stringify({ id, name: body.data.name, settings: rawSettings, ...(agentOrigin ? { serverUrl: agentOrigin } : {}) }),
+        body: JSON.stringify({ id, name: body.data.name, settings: rawSettings }),
       });
       return withCors(res);
     }
@@ -134,35 +135,63 @@ export default {
     return withCors(json({ error: "not found" }, 404));
   },
   async queue(batch: MessageBatch, env: Env): Promise<void> {
+    await engineReady();
     for (const message of batch.messages) {
-      const { gameId, power, token, serverUrl } = message.body as { gameId: string; power: string; token: string; serverUrl: string };
+      const { gameId, power, token } = message.body as { gameId: string; power: PowerName; token: string };
       const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(gameId));
       const brain = env.ANTHROPIC_API_KEY ? new ClaudeBrain({ apiKey: env.ANTHROPIC_API_KEY }) : new FallbackBrain();
-      if (!env.ANTHROPIC_API_KEY) console.warn(JSON.stringify({ event: "agent_fallback_brain", gameId, power }));
       const player = new Player(power, PERSONAS[power] ?? "A careful strategist.", brain);
-      const client = new AgentClient({
-        serverUrl: serverUrl ?? env.SERVER_URL ?? "http://localhost",
-        gameId,
-        token,
-        player,
-        connectWebSocket: async () => {
-          const response = await room.fetch(`https://room/ws?token=${encodeURIComponent(token)}`, {
-            headers: { upgrade: "websocket" },
-          });
-          if (response.status !== 101 || !response.webSocket) {
-            throw new Error(`Durable Object WebSocket handshake failed: ${response.status}`);
-          }
-          response.webSocket.accept();
-          return response.webSocket;
-        },
-      });
       try {
-        await client.connect();
-        await client.awaitTurn();
-        client.close();
+        const authorization = { authorization: `Bearer ${token}` };
+        const stateResponse = await room.fetch("https://room/agent/state", { headers: authorization });
+        if (stateResponse.status === 409) {
+          message.ack();
+          continue;
+        }
+        if (!stateResponse.ok) throw new Error(`agent state failed: ${stateResponse.status}`);
+        const welcome = await stateResponse.json() as { phase: string; state: StateView; press: PressView[] };
+        const game = Game.fromState(welcome.state);
+        const { decision, validated } = await player.play({
+          phase: welcome.phase,
+          state: welcome.state,
+          map: mapInfo(),
+          legal: game.legal(power),
+          press: welcome.press.map((item) => ({ from: item.from, to: item.to, body: item.body, pledge: item.pledge?.orders ?? null })),
+          myPledges: welcome.press
+            .filter((item) => item.phase === welcome.phase && item.from === power && item.pledge?.orders)
+            .map((item) => item.pledge!.orders!),
+          trust: {},
+        });
+        const knownPowers = new Set<PowerName>(["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"]);
+        const frames: unknown[] = decision.messages
+          .filter((item) => item.to === "ALL" || knownPowers.has(item.to as PowerName))
+          .map((item) => {
+            const pledgedOrders = decision.pledge?.to === item.to
+              ? decision.pledge.orders.filter((order) => validated.orders.includes(order))
+              : [];
+            return {
+              t: "press.send",
+              p: {
+                to: item.to,
+                body: item.body,
+                ...(pledgedOrders.length > 0 && decision.pledge
+                  ? { pledge: { orders: pledgedOrders, sealed: decision.pledge.sealed } }
+                  : {}),
+              },
+            };
+          });
+        frames.push(
+          { t: "orders.set", p: { phase: welcome.phase, orders: validated.orders } },
+          { t: "ready", p: { phase: welcome.phase, ready: true } },
+        );
+        const actionResponse = await room.fetch("https://room/agent/act", {
+          method: "POST",
+          headers: { ...authorization, "content-type": "application/json" },
+          body: JSON.stringify({ frames }),
+        });
+        if (!actionResponse.ok) throw new Error(`agent action failed: ${actionResponse.status} ${await actionResponse.text()}`);
         message.ack();
       } catch (error) {
-        client.close();
         console.error(JSON.stringify({ event: "agent_turn_failed", gameId, power, error: String(error) }));
         message.retry({ delaySeconds: 30 });
       }
