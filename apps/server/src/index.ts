@@ -31,6 +31,35 @@ function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8" } });
 }
 
+class BodyTooLarge extends Error {}
+
+async function rateLimited(env: Env, request: Request, action: "create" | "join"): Promise<boolean> {
+  const ip = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for")?.split(",", 1)[0]?.trim() ?? "unknown";
+  const limit = action === "create" ? 10 : 30;
+  const id = env.GAME_ROOM.idFromName(`rate:${action}:${ip}`);
+  const response = await env.GAME_ROOM.get(id).fetch(`https://room/rate-limit?limit=${limit}`, { method: "POST" });
+  return response.status === 429;
+}
+
+async function readJson(request: Request): Promise<unknown> {
+  const length = Number(request.headers.get("content-length") ?? 0);
+  if (length > 4096) throw new BodyTooLarge("body exceeds 4 KB");
+  const text = await request.text();
+  if (new TextEncoder().encode(text).byteLength > 4096) throw new BodyTooLarge("body exceeds 4 KB");
+  return JSON.parse(text);
+}
+
+async function requestBody(request: Request): Promise<{ data: unknown } | { error: string; status: number }> {
+  try {
+    return { data: await readJson(request) };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "invalid JSON body",
+      status: error instanceof BodyTooLarge ? 413 : 400,
+    };
+  }
+}
+
 const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|replay|ws))?$/;
 
 export default {
@@ -41,7 +70,10 @@ export default {
     if (url.pathname === "/health") return withCors(json({ ok: true }));
 
     if (url.pathname === "/api/games" && request.method === "POST") {
-      const body = CreateGameRequest.safeParse(await request.json().catch(() => ({})));
+      if (await rateLimited(env, request, "create")) return withCors(json({ error: "rate limit exceeded" }, 429));
+      const parsed = await requestBody(request);
+      if ("error" in parsed) return withCors(json({ error: parsed.error }, parsed.status));
+      const body = CreateGameRequest.safeParse(parsed.data);
       if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
       const id = gameCode();
       const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id));
@@ -60,7 +92,10 @@ export default {
         return stub.fetch(`https://room/ws${url.search}`, request);
       }
       if (action === "join" && request.method === "POST") {
-        const body = JoinGameRequest.safeParse(await request.json().catch(() => ({})));
+        if (await rateLimited(env, request, "join")) return withCors(json({ error: "rate limit exceeded" }, 429));
+        const parsed = await requestBody(request);
+        if ("error" in parsed) return withCors(json({ error: parsed.error }, parsed.status));
+        const body = JoinGameRequest.safeParse(parsed.data);
         if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
         return withCors(await stub.fetch("https://room/join", { method: "POST", body: JSON.stringify(body.data) }));
       }

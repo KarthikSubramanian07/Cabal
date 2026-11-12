@@ -56,6 +56,8 @@ interface SeatRow extends Record<string, SqlStorageValue> {
 
 interface Attachment {
   power: PowerName | null;
+  tokens: number;
+  updatedAt: number;
 }
 
 const SCHEMA = `
@@ -116,6 +118,10 @@ CREATE TABLE IF NOT EXISTS events (
   audience TEXT NOT NULL,
   payload_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS request_limits (
+  window_start INTEGER NOT NULL,
+  count INTEGER NOT NULL
+);
 `;
 
 function json(data: unknown, status = 200): Response {
@@ -154,7 +160,8 @@ export class GameRoom extends DurableObject<Env> {
     if (request.method === "POST" && path === "/create") return this.create(request);
     if (request.method === "POST" && path === "/join") return this.join(request);
     if (request.method === "POST" && path === "/start") return this.start(request);
-    if (request.method === "GET" && path === "/summary") return json(this.summary());
+    if (request.method === "POST" && path === "/rate-limit") return this.rateLimit(request);
+    if (request.method === "GET" && path === "/summary") return this.meta ? json(this.summary()) : bad("no such game", 404);
     if (request.method === "GET" && path === "/replay") {
       if (!this.game || !this.meta) return bad("no such game", 404);
       return new Response(this.game.toSaved(this.meta.id), {
@@ -192,6 +199,21 @@ export class GameRoom extends DurableObject<Env> {
     );
     await this.persist();
     return json({ gameId: body.id, token, power: creator });
+  }
+
+  private async rateLimit(request: Request): Promise<Response> {
+    const limit = Number(new URL(request.url).searchParams.get("limit"));
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) return bad("invalid rate limit", 400);
+    const now = Date.now();
+    const window = this.sql.exec<{ window_start: number; count: number }>("SELECT window_start, count FROM request_limits LIMIT 1").toArray()[0];
+    if (!window || now - window.window_start >= 60_000) {
+      this.sql.exec("DELETE FROM request_limits");
+      this.sql.exec("INSERT INTO request_limits (window_start, count) VALUES (?, 1)", now);
+      return json({ allowed: true });
+    }
+    if (window.count >= limit) return json({ allowed: false }, 429);
+    this.sql.exec("UPDATE request_limits SET count = count + 1");
+    return json({ allowed: true });
   }
 
   private async join(request: Request): Promise<Response> {
@@ -289,8 +311,9 @@ export class GameRoom extends DurableObject<Env> {
     if (token && !power) return bad("bad token", 401);
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
+    if (!power && this.ctx.getWebSockets("spectator").length >= 200) return bad("spectator limit reached", 429);
     this.ctx.acceptWebSocket(server, [power ?? "spectator"]);
-    server.serializeAttachment({ power } satisfies Attachment);
+    server.serializeAttachment({ power, tokens: 60, updatedAt: Date.now() } satisfies Attachment);
     this.send(server, { t: "welcome", p: this.welcome(power) });
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -321,6 +344,10 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   override async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
+    const byteLength = typeof raw === "string" ? new TextEncoder().encode(raw).byteLength : raw.byteLength;
+    if (byteLength > 4096) {
+      return this.send(ws, { t: "error", p: { code: "too_large", message: "frame exceeds 4 KB" } });
+    }
     if (typeof raw !== "string") return;
     let data: unknown;
     try {
@@ -330,7 +357,22 @@ export class GameRoom extends DurableObject<Env> {
     }
     const msg = parseClientMessage(data);
     if (!msg) return this.send(ws, { t: "error", p: { code: "bad_frame", message: "frame did not validate" } });
-    const { power } = ws.deserializeAttachment() as Attachment;
+    const savedAttachment = ws.deserializeAttachment() as Partial<Attachment>;
+    const attachment: Attachment = {
+      power: savedAttachment.power ?? null,
+      tokens: typeof savedAttachment.tokens === "number" ? savedAttachment.tokens : 60,
+      updatedAt: typeof savedAttachment.updatedAt === "number" ? savedAttachment.updatedAt : Date.now(),
+    };
+    const elapsed = Math.max(0, (Date.now() - attachment.updatedAt) / 1000);
+    attachment.tokens = Math.min(60, attachment.tokens + elapsed);
+    attachment.updatedAt = Date.now();
+    if (attachment.tokens < 1) {
+      ws.serializeAttachment(attachment);
+      return this.send(ws, { t: "error", p: { code: "throttled", message: "message rate limit exceeded" } });
+    }
+    attachment.tokens -= 1;
+    ws.serializeAttachment(attachment);
+    const { power } = attachment;
     const id = "id" in msg ? msg.id : undefined;
     if (msg.t === "hello") return; // identity is bound at connect time
     if (msg.t === "sync") {
@@ -345,12 +387,26 @@ export class GameRoom extends DurableObject<Env> {
       case "orders.set":
         return this.setOrders(ws, id, power, msg.p.phase, msg.p.orders);
       case "orders.default":
-        this.sql.exec(
-          "INSERT INTO defaults (power, orders_json) VALUES (?, ?) ON CONFLICT(power) DO UPDATE SET orders_json = excluded.orders_json",
-          power,
-          JSON.stringify(msg.p.orders),
-        );
-        return;
+        if (this.phaseKind() !== "M") {
+          return this.send(ws, { t: "error", id, p: { code: "bad_default_phase", message: "default orders are only accepted for movement phases" } });
+        }
+        {
+          const accepted: string[] = [];
+          const rejected: { text: string; reason: string }[] = [];
+          for (const text of msg.p.orders) {
+            try { accepted.push(this.canonicalOwnOrder(text, "M", power)); }
+            catch (e) { rejected.push({ text, reason: e instanceof Error ? e.message : String(e) }); }
+          }
+          if (rejected.length) {
+            return this.send(ws, { t: "error", id, p: { code: "bad_default", message: `rejected ${rejected.length} invalid or out-of-power default order(s)` } });
+          }
+          this.sql.exec(
+            "INSERT INTO defaults (power, orders_json) VALUES (?, ?) ON CONFLICT(power) DO UPDATE SET orders_json = excluded.orders_json",
+            power,
+            JSON.stringify(accepted),
+          );
+          return;
+        }
       case "ready":
         return this.setReady(power, msg.p.phase, msg.p.ready);
       case "press.send":
@@ -393,9 +449,8 @@ export class GameRoom extends DurableObject<Env> {
 
   private eventsSince(since: number, power: PowerName | null): string[] {
     return this.sql
-      .exec<{ audience: string; payload_json: string }>("SELECT audience, payload_json FROM events WHERE seq > ? ORDER BY seq", since)
+      .exec<{ audience: string; payload_json: string }>("SELECT audience, payload_json FROM events WHERE seq > ? AND (audience = 'ALL' OR audience = ?) ORDER BY seq LIMIT 500", since, power)
       .toArray()
-      .filter((e) => e.audience === "ALL" || e.audience === power)
       .map((e) => e.payload_json);
   }
 
@@ -418,6 +473,14 @@ export class GameRoom extends DurableObject<Env> {
     return k === "R" ? "R" : k === "A" ? "A" : "M";
   }
 
+  /** Canonicalise an order and reject an explicit power prefix owned by someone else. */
+  private canonicalOwnOrder(text: string, kind: "M" | "R" | "A", power: PowerName): string {
+    const canonical = canonicalOrder(text, kind, power);
+    const prefix = /^([A-Z]+):/.exec(canonical)?.[1];
+    if (prefix && prefix !== power) throw new Error("order names another power");
+    return canonical;
+  }
+
   private setOrders(ws: WebSocket, id: string | undefined, power: PowerName, phase: string, orders: string[]): void {
     const game = this.game!;
     if (phase !== game.phase()) {
@@ -428,7 +491,7 @@ export class GameRoom extends DurableObject<Env> {
     const kind = this.phaseKind();
     for (const text of orders) {
       try {
-        accepted.push(canonicalOrder(text, kind, power));
+        accepted.push(this.canonicalOwnOrder(text, kind, power));
       } catch (e) {
         rejected.push({ text, reason: e instanceof Error ? e.message : String(e) });
       }
@@ -456,10 +519,11 @@ export class GameRoom extends DurableObject<Env> {
   private pressFor(power: PowerName | null): PressView[] {
     const rows = this.sql
       .exec<{ id: string; phase: string; sender: string; recipient: string; body: string; sent_at: number; pledge_id: string | null }>(
-        "SELECT * FROM press ORDER BY sent_at",
+        "SELECT * FROM press ORDER BY sent_at DESC LIMIT 500",
       )
       .toArray();
     return rows
+      .reverse()
       .filter((r) => r.recipient === "ALL" || r.sender === power || r.recipient === power)
       .map((r) => ({
         id: r.id,
@@ -502,11 +566,14 @@ export class GameRoom extends DurableObject<Env> {
     pledge: { orders: string[]; sealed: boolean; nonce?: string | undefined } | undefined,
   ): void {
     const mode = this.meta!.settings.press;
+    if (this.phaseKind() !== "M") return this.send(ws, { t: "error", id, p: { code: "no_press", message: "press is closed during retreats and builds" } });
     if (mode === "gunboat") return this.send(ws, { t: "error", id, p: { code: "no_press", message: "gunboat: no press" } });
     if (mode === "public" && to !== "ALL") {
       return this.send(ws, { t: "error", id, p: { code: "public_only", message: "public press only" } });
     }
     const phase = this.game!.phase();
+    const sent = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM press WHERE phase = ? AND sender = ?", phase, from).one().n;
+    if (sent >= 60) return this.send(ws, { t: "error", id, p: { code: "press_limit", message: "press limit reached for this phase" } });
     let pledgeId: string | null = null;
     if (pledge) {
       const kind = this.phaseKind();
@@ -574,7 +641,7 @@ export class GameRoom extends DurableObject<Env> {
     const yes = new Set(
       this.sql.exec<{ power: string }>("SELECT power FROM votes WHERE kind = 'draw' AND value = 1").toArray().map((r) => r.power),
     );
-    if (voters.every((s) => yes.has(s.power) || s.kind === "ai")) await this.finish("draw");
+    if (voters.every((s) => yes.has(s.power) || s.kind === "ai" || s.kind === "civil_disorder")) await this.finish("draw");
   }
 
   // ---------- deadlines and adjudication ----------
@@ -593,9 +660,23 @@ export class GameRoom extends DurableObject<Env> {
 
   private ordersFor(phase: string, power: PowerName): { orders: string[]; submitted: boolean } {
     const row = this.sql.exec<{ orders_json: string }>("SELECT orders_json FROM orders WHERE phase = ? AND power = ?", phase, power).toArray()[0];
-    if (row) return { orders: JSON.parse(row.orders_json) as string[], submitted: true };
+    if (row) {
+      try {
+        const parsed: unknown = JSON.parse(row.orders_json);
+        return { orders: Array.isArray(parsed) ? parsed.filter((o): o is string => typeof o === "string") : [], submitted: true };
+      } catch {
+        return { orders: [], submitted: true };
+      }
+    }
     const def = this.sql.exec<{ orders_json: string }>("SELECT orders_json FROM defaults WHERE power = ?", power).toArray()[0];
-    if (def) return { orders: JSON.parse(def.orders_json) as string[], submitted: false };
+    if (def) {
+      try {
+        const parsed: unknown = JSON.parse(def.orders_json);
+        return { orders: Array.isArray(parsed) ? parsed.filter((o): o is string => typeof o === "string") : [], submitted: false };
+      } catch {
+        return { orders: [], submitted: false };
+      }
+    }
     return { orders: [], submitted: false };
   }
 
@@ -603,18 +684,30 @@ export class GameRoom extends DurableObject<Env> {
     const game = this.game!;
     const phase = game.phase();
     const orders: Record<string, string[]> = {};
-    const submittedBy: Record<string, string[]> = {};
     for (const seat of this.seats()) {
-      const { orders: o, submitted } = this.ordersFor(phase, seat.power);
+      const { orders: o } = this.ordersFor(phase, seat.power);
       orders[seat.power] = o;
-      submittedBy[seat.power] = o;
-      if (seat.kind === "human" && seat.eliminated === 0 && this.phaseKind() === "M") {
-        const missed = submitted ? 0 : seat.missed + 1;
-        const kind = missed >= 2 ? "civil_disorder" : "human";
-        this.sql.exec("UPDATE seats SET missed = ?, kind = ? WHERE power = ?", missed, kind, seat.power);
+    }
+    // Defaults are untrusted persisted data: validate each independently and let the
+    // engine fill any missing units with holds if one was corrupted or stale.
+    for (const seat of this.seats()) {
+      const filtered: string[] = [];
+      for (const text of orders[seat.power] ?? []) {
+        try { filtered.push(this.canonicalOwnOrder(text, this.phaseKind(), seat.power)); } catch { /* omit invalid order */ }
       }
+      orders[seat.power] = filtered;
     }
     const outcome = game.process(game.normaliseOrders({ orders }));
+    // Count missed movement phases only after the phase has successfully resolved.
+    const resolvedKind = phase.at(-1);
+    if (resolvedKind === "M") {
+      for (const seat of this.seats()) {
+        if (seat.kind !== "human" || seat.eliminated !== 0) continue;
+        const wasSubmitted = this.sql.exec<{ submitted: number }>("SELECT COUNT(*) AS submitted FROM orders WHERE phase = ? AND power = ?", phase, seat.power).one().submitted > 0;
+        const missed = wasSubmitted ? 0 : seat.missed + 1;
+        this.sql.exec("UPDATE seats SET missed = ?, kind = ? WHERE power = ?", missed, missed >= 2 ? "civil_disorder" : "human", seat.power);
+      }
+    }
     this.sql.exec("INSERT INTO phases (name, results_json, adjudicated_at) VALUES (?, ?, ?)", phase, JSON.stringify(outcome), Date.now());
 
     // receipts for every pledge made in this phase
