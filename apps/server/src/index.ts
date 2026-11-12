@@ -41,8 +41,33 @@ const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|replay|ledger|ws
 async function readJson(request: Request): Promise<unknown> {
   const declared = Number(request.headers.get("content-length") ?? "0");
   if (declared > MAX_BODY_BYTES) return undefined;
-  const text = await request.text().catch(() => "");
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) return undefined;
+  const reader = request.body?.getReader();
+  if (!reader) return {};
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      byteLength += value.byteLength;
+      if (byteLength > MAX_BODY_BYTES) {
+        await reader.cancel();
+        return undefined;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return undefined;
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const text = new TextDecoder().decode(bytes);
   try {
     return JSON.parse(text || "{}");
   } catch {

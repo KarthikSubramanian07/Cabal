@@ -15,4 +15,4 @@ Each created game stores the request origin for its Queue agent client, so no ac
 
 ## Socket load probe
 
-After deploying, run `pnpm --filter @cabal/server load:sockets -- https://<worker-host> 200`. The script opens the requested spectator sockets, sends one public press message, and reports broadcast p50, p95 and maximum latency. It accepts up to 2,000 sockets for local probes; the server caps one room at 200 spectators.
+After deploying, run `pnpm --filter @cabal/server load:sockets -- https://<worker-host> 200`. The script opens the requested sockets, sends one public press message, and reports broadcast p50, p95 and maximum latency. It accepts up to 201 total sockets: the authenticated creator plus the room's 200 spectator limit.

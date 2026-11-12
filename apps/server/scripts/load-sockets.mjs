@@ -2,8 +2,8 @@
 /** Open N spectators plus the creator and measure an ALL-press broadcast. */
 const origin = process.argv[2];
 const socketCount = Number(process.argv[3] ?? 200);
-if (!origin || !Number.isInteger(socketCount) || socketCount < 1 || socketCount > 2000) {
-  console.error("usage: node scripts/load-sockets.mjs <http(s)://server> [socket-count<=2000]");
+if (!origin || !Number.isInteger(socketCount) || socketCount < 1 || socketCount > 201) {
+  console.error("usage: node scripts/load-sockets.mjs <http(s)://server> [socket-count<=201]");
   process.exit(2);
 }
 

@@ -572,6 +572,15 @@ describe("GameRoom", () => {
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
+  it("rejects HTTP bodies larger than 4 KB", async () => {
+    const res = await SELF.fetch("http://cabal/api/games", {
+      method: "POST",
+      headers: { "cf-connecting-ip": nextIp() },
+      body: JSON.stringify({ name: "Oversize", extra: "x".repeat(5000) }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("rejects bad tokens and lets spectators watch", async () => {
     const ann = await create("Ann");
     const bad = await SELF.fetch(`http://cabal/api/games/${ann.gameId}/ws?token=${ann.gameId}.FRANCE.${"0".repeat(48)}`, {

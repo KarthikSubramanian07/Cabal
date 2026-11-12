@@ -75,6 +75,7 @@ interface SeatRow extends Record<string, SqlStorageValue> {
 
 interface Attachment {
   power: PowerName | null;
+  clientIp?: string | null;
 }
 
 const SCHEMA = `
@@ -172,7 +173,16 @@ export class GameRoom extends DurableObject<Env> {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
       await engineReady();
-      this.meta = (await ctx.storage.get<Meta>("meta")) ?? null;
+      const storedMeta = await ctx.storage.get<Meta>("meta");
+      if (storedMeta) {
+        this.meta = { ...storedMeta, settings: GameSettings.parse(storedMeta.settings) };
+        // Fill settings added after this game was created, while preserving its saved pacing values.
+        if (JSON.stringify(this.meta.settings) !== JSON.stringify(storedMeta.settings)) {
+          await ctx.storage.put("meta", this.meta);
+        }
+      } else {
+        this.meta = null;
+      }
       // Looking up a code that names no game must not write storage; create() lays the schema down.
       if (this.meta) this.sql.exec(SCHEMA);
       const saved = await ctx.storage.get<string>("saved");
@@ -416,7 +426,7 @@ export class GameRoom extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(server, [power ?? "spectator"]);
-    server.serializeAttachment({ power } satisfies Attachment);
+    server.serializeAttachment({ power, clientIp: request.headers.get("cf-connecting-ip") } satisfies Attachment);
     if (power && this.meta.status === "paused" && this.meta.pauseReason === "humans_absent") {
       this.meta.status = "active";
       this.meta.pauseReason = null;
@@ -787,7 +797,8 @@ export class GameRoom extends DurableObject<Env> {
       }
     }
     if (this.env.PRESS_LIMITER) {
-      const { success } = await this.env.PRESS_LIMITER.limit({ key: `${this.meta!.id}:${from}` });
+      const { clientIp } = ws.deserializeAttachment() as Attachment;
+      const { success } = await this.env.PRESS_LIMITER.limit({ key: clientIp ?? `${this.meta!.id}:${from}` });
       if (!success) return this.send(ws, { t: "error", id, p: { code: "press_rate_limited", message: "too many press messages, try again later" } });
     }
     let pledgeId: string | null = null;
