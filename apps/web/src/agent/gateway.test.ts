@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { handleAgentRequest, type AssetEnv } from "./gateway.js";
+import { SECURITY_HEADERS, handleAgentRequest, type AssetEnv } from "./gateway.js";
 
 function mockEnv(files: Record<string, { body: string; type: string }>): AssetEnv {
   return {
@@ -34,6 +34,15 @@ const files = {
 
 describe("handleAgentRequest", () => {
   const env = mockEnv(files);
+
+  it("sets the security headers on pages, assets and 404s alike", async () => {
+    for (const path of ["/", "/assets/app.js", "/missing-page"]) {
+      const res = await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, { headers: { Accept: "text/html" } }), env);
+      for (const [name, value] of Object.entries(SECURITY_HEADERS)) expect(res.headers.get(name)).toBe(value);
+    }
+    expect(SECURITY_HEADERS["Content-Security-Policy"]).toContain("'wasm-unsafe-eval'");
+    expect(SECURITY_HEADERS["Content-Security-Policy"]).toContain("frame-ancestors 'none'");
+  });
 
   it("serves markdown for Accept: text/markdown on the homepage", async () => {
     const res = await handleAgentRequest(

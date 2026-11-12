@@ -14,7 +14,7 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::geo::{Map, Power, ProvinceId, Region, UnitKind};
-use crate::order::{Command, Order, Unit, normalise};
+use crate::order::{Command, Order, Unit, check, fleet_seas};
 use crate::outcome::{
     ConvoyOutcome, HoldOutcome, Illegal, MoveOutcome, OrderOutcome, SupportOutcome,
 };
@@ -224,118 +224,20 @@ impl<'a> Resolver<'a> {
             e.command = o.command;
         }
 
-        let fleet_seas: BTreeSet<ProvinceId> = units
-            .iter()
-            .filter(|u| u.kind == UnitKind::Fleet && map.is_sea(u.province()))
-            .map(|u| u.province())
-            .collect();
-
-        // validate each command (DATC section 3 / 4.E.1)
-        for i in 0..entries.len() {
-            let e = &entries[i];
-            if e.illegal.is_some() {
-                continue;
-            }
-            let unit = e.unit;
-
+        // validate each command (DATC section 3 / 4.E.1); `check` is `normalise`, so the
+        // resolver adjudicates exactly the canonical order a host would have submitted
+        let fleet_seas = fleet_seas(map, position);
+        for e in entries.iter_mut().filter(|e| e.illegal.is_none()) {
             let order = Order {
-                power: unit.power,
-                unit: unit.province(),
+                power: e.unit.power,
+                unit: e.province(),
                 command: e.command,
             };
-
-            match normalise(map, position, order) {
-                Ok(order) => entries[i].command = order.command,
-                Err(reason) => {
-                    let e = &mut entries[i];
-                    e.illegal = Some(reason);
-                    e.command = Command::Hold;
-                    continue;
-                }
-            }
-            let e = &entries[i];
-
-            let verdict: Result<(Option<Region>, bool), Illegal> = match e.command {
-                Command::Hold => Ok((None, false)),
-                Command::Move {
-                    dest,
-                    coast,
-                    via_convoy,
-                } => {
-                    if dest == unit.province() {
-                        Err(Illegal::MoveToSelf)
-                    } else {
-                        match unit.kind {
-                            UnitKind::Army => {
-                                if map.adjacent_province(unit.region, UnitKind::Army, dest) {
-                                    Ok((Some(Region::land(dest)), via_convoy))
-                                } else if convoy_possible(map, &fleet_seas, unit.province(), dest) {
-                                    Ok((Some(Region::land(dest)), true))
-                                } else {
-                                    Err(Illegal::Unreachable)
-                                }
-                            }
-                            UnitKind::Fleet => {
-                                match map.fleet_destination(unit.region, dest, coast) {
-                                    Ok(r) => Ok((Some(r), false)),
-                                    Err(crate::geo::CoastError::Ambiguous) => {
-                                        Err(Illegal::AmbiguousCoast)
-                                    }
-                                    Err(crate::geo::CoastError::Unreachable) => {
-                                        Err(Illegal::Unreachable)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Command::SupportHold { target } => {
-                    if target == unit.province() {
-                        Err(Illegal::SupportSelf)
-                    } else if !at.contains_key(&target) {
-                        Err(Illegal::SupportNoUnit)
-                    } else if !map.adjacent_province(unit.region, unit.kind, target) {
-                        Err(Illegal::SupportUnreachable)
-                    } else {
-                        Ok((None, false))
-                    }
-                }
-                Command::SupportMove { target, dest, .. } => {
-                    if target == unit.province() {
-                        Err(Illegal::SupportSelf)
-                    } else if dest == unit.province() {
-                        Err(Illegal::Unreachable)
-                    } else if !at.contains_key(&target) {
-                        Err(Illegal::SupportNoUnit)
-                    } else if !map.adjacent_province(unit.region, unit.kind, dest) {
-                        Err(Illegal::SupportUnreachable)
-                    } else {
-                        Ok((None, false))
-                    }
-                }
-                Command::Convoy { army, dest } => {
-                    if unit.kind != UnitKind::Fleet || !map.is_sea(unit.province()) {
-                        Err(Illegal::ConvoyNotAtSea)
-                    } else if !at
-                        .get(&army)
-                        .map(|&j| entries[j].unit.kind == UnitKind::Army)
-                        .unwrap_or(false)
-                    {
-                        Err(Illegal::ConvoyNotArmy)
-                    } else if !map.is_coastal(army) || !map.is_coastal(dest) || army == dest {
-                        Err(Illegal::Unreachable)
-                    } else if !on_convoy_route(map, &fleet_seas, army, dest, unit.province()) {
-                        Err(Illegal::ConvoyNoRoute)
-                    } else {
-                        Ok((None, false))
-                    }
-                }
-            };
-            let e = &mut entries[i];
-            match verdict {
-                Ok((dest_region, by_convoy)) => {
-                    e.dest_region = dest_region;
-                    e.by_convoy = by_convoy;
+            match check(map, position, &fleet_seas, order) {
+                Ok(checked) => {
+                    e.command = checked.order.command;
+                    e.dest_region = checked.dest_region;
+                    e.by_convoy = checked.by_convoy;
                 }
                 Err(reason) => {
                     e.illegal = Some(reason);
@@ -972,13 +874,6 @@ impl<'a> Resolver<'a> {
     }
 }
 
-/// Fleet adjacency between two provinces, considering every coast region of `a`.
-fn fleet_adjacent(map: &Map, a: ProvinceId, b: ProvinceId) -> bool {
-    map.regions_of(a)
-        .into_iter()
-        .any(|r| map.adjacent_province(r, UnitKind::Fleet, b))
-}
-
 /// Is there any chain of fleet-occupied sea provinces from `origin` to `dest`?
 pub(crate) fn convoy_possible(
     map: &Map,
@@ -1010,7 +905,7 @@ pub(crate) fn on_convoy_route(
     fleet: ProvinceId,
 ) -> bool {
     let seas: Vec<ProvinceId> = fleet_seas.iter().copied().collect();
-    let adj = |a: ProvinceId, b: ProvinceId| fleet_adjacent(map, a, b);
+    let adj = |a: ProvinceId, b: ProvinceId| map.fleet_adjacent(a, b);
     let mut chain = Vec::new();
     chordless_dfs(&seas, &mut chain, origin, dest, fleet, &adj)
 }
@@ -1061,7 +956,7 @@ fn reachable_seas(map: &Map, seas: &[ProvinceId], start: ProvinceId) -> BTreeSet
     let mut queue: VecDeque<ProvinceId> = seas
         .iter()
         .copied()
-        .filter(|&s| fleet_adjacent(map, s, start))
+        .filter(|&s| map.fleet_adjacent(s, start))
         .collect();
     while let Some(s) = queue.pop_front() {
         if !seen.insert(s) {
@@ -1083,5 +978,80 @@ fn sea_path_exists(map: &Map, seas: &[ProvinceId], origin: ProvinceId, dest: Pro
     }
     reachable_seas(map, seas, origin)
         .iter()
-        .any(|&s| fleet_adjacent(map, s, dest))
+        .any(|&s| map.fleet_adjacent(s, dest))
+}
+
+/// [`convoy_possible`] from `origin` to every province at once, indexed by province id.
+/// The sea search runs once and is shared by every destination.
+pub(crate) fn convoy_destinations(
+    map: &Map,
+    fleet_seas: &BTreeSet<ProvinceId>,
+    origin: ProvinceId,
+) -> Vec<bool> {
+    let mut out = vec![false; map.provinces().len()];
+    if !map.is_coastal(origin) || fleet_seas.is_empty() {
+        return out;
+    }
+    let seas: Vec<ProvinceId> = fleet_seas.iter().copied().collect();
+    let reach = reachable_seas(map, &seas, origin);
+    for p in map.province_ids() {
+        out[p.0 as usize] =
+            p != origin && map.is_coastal(p) && reach.iter().any(|&s| map.fleet_adjacent(s, p));
+    }
+    out
+}
+
+/// [`on_convoy_route`] from `origin` for every destination and fleet at once, row-major
+/// `[dest * len + fleet]`. The chordless chains leaving `origin` do not depend on the
+/// destination or the fleet asked about, so one walk over them answers every query.
+pub(crate) fn convoy_route_fleets(
+    map: &Map,
+    fleet_seas: &BTreeSet<ProvinceId>,
+    origin: ProvinceId,
+) -> Vec<bool> {
+    let n = map.provinces().len();
+    let mut out = vec![false; n * n];
+    let seas: Vec<ProvinceId> = fleet_seas.iter().copied().collect();
+    let mut chain = Vec::new();
+    route_walk(map, &seas, &mut chain, origin, &mut out);
+    out
+}
+
+/// The walk of [`chordless_dfs`] without a target: at every chain, record each destination
+/// it is a non-detour route to, against every fleet on it.
+fn route_walk(
+    map: &Map,
+    seas: &[ProvinceId],
+    chain: &mut Vec<ProvinceId>,
+    origin: ProvinceId,
+    out: &mut [bool],
+) {
+    let n = map.provinces().len();
+    let last = *chain.last().unwrap_or(&origin);
+    if let Some((_, before)) = chain.split_last() {
+        for dest in map.province_ids() {
+            if map.fleet_adjacent(last, dest)
+                && !before.iter().any(|&e| map.fleet_adjacent(e, dest))
+            {
+                let row = dest.0 as usize * n;
+                for &f in chain.iter() {
+                    out[row + f.0 as usize] = true;
+                }
+            }
+        }
+    }
+    for &s in seas {
+        if chain.contains(&s)
+            || !map.fleet_adjacent(last, s)
+            || (!chain.is_empty()
+                && std::iter::once(&origin)
+                    .chain(&chain[..chain.len() - 1])
+                    .any(|&e| map.fleet_adjacent(e, s)))
+        {
+            continue;
+        }
+        chain.push(s);
+        route_walk(map, seas, chain, origin, out);
+        chain.pop();
+    }
 }

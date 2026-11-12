@@ -1,5 +1,5 @@
 import type { State } from "@cabal/engine";
-import { type CSSProperties, type PointerEvent, type WheelEvent, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { type ParsedOrder, parseOrder, parseUnit } from "../game/notation.js";
 import { type Board as BoardData, type Point, regionPoint } from "./boardData.js";
 
@@ -190,7 +190,7 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
   }, [state]);
 
   const pieces = useMemo(() => {
-    const list: { power: string; kind: "A" | "F"; at: Point; dislodged: boolean; key: string }[] = [];
+    const list: { power: string; kind: "A" | "F"; at: Point; dislodged: boolean; key: string; label: string }[] = [];
     for (const [power, units] of Object.entries(state.units)) {
       for (const u of units) {
         const ref = parseUnit(u);
@@ -203,6 +203,7 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
           at: dislodged ? [p[0] + 11, p[1] - 11] : p,
           dislodged,
           key: `${power}-${u}`,
+          label: `${power.charAt(0)}${power.slice(1).toLowerCase()}: ${ref.unit}${dislodged ? " (dislodged)" : ""}`,
         });
       }
     }
@@ -230,17 +231,30 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
     });
   };
 
+  /** Move the zoomed view by a share of its size: the button alternative to dragging. */
+  const pan = (fx: number, fy: number) => setView((v) => clamp({ ...v, x: v.x + v.w * fx, y: v.y + v.h * fy }));
+
   const toBoard = (clientX: number, clientY: number, v: Box) => {
     const rect = svgRef.current!.getBoundingClientRect();
     return { x: v.x + ((clientX - rect.left) / rect.width) * v.w, y: v.y + ((clientY - rect.top) / rect.height) * v.h };
   };
 
-  const onWheel = (e: WheelEvent<SVGSVGElement>) => {
+  // React registers wheel listeners as passive, so preventDefault there is ignored and a
+  // ctrl+wheel (or trackpad pinch) would zoom the whole page too. Listen natively instead.
+  const wheel = useRef<(e: globalThis.WheelEvent) => void>(() => {});
+  wheel.current = (e) => {
     if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
     const p = toBoard(e.clientX, e.clientY, view);
     zoomAt(Math.exp(-e.deltaY * 0.01), p.x, p.y);
   };
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const listener = (e: globalThis.WheelEvent) => wheel.current(e);
+    svg.addEventListener("wheel", listener, { passive: false });
+    return () => svg.removeEventListener("wheel", listener);
+  }, []);
 
   const onPointerDown = (e: PointerEvent<SVGSVGElement>) => {
     const g = gesture.current;
@@ -311,9 +325,8 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
         className="board"
         viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
         role="img"
-        aria-label="Diplomacy board"
+        aria-label="Diplomacy board. The same positions are listed under Board as text, and orders can be given with the choices under the map."
         style={{ aspectRatio: `${full.w} / ${full.h}`, touchAction: zoomed ? "none" : "pan-y" }}
-        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -403,6 +416,7 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
             className={`unit${u.dislodged ? " dislodged" : ""}`}
             style={{ "--power": POWER_COLOR[u.power] } as CSSProperties}
           >
+            <title>{u.label}</title>
             <UnitShape kind={u.kind} at={u.at} />
           </g>
         ))}
@@ -421,6 +435,22 @@ export function Board({ board, state, orders, selected, targets, standoffs, onPr
         <button type="button" onClick={() => setView(full)} aria-label="Show the whole board" disabled={!zoomed}>
           ⤢
         </button>
+        {zoomed ? (
+          <>
+            <button type="button" onClick={() => pan(0, -0.25)} aria-label="Pan up">
+              ↑
+            </button>
+            <button type="button" onClick={() => pan(-0.25, 0)} aria-label="Pan left">
+              ←
+            </button>
+            <button type="button" onClick={() => pan(0.25, 0)} aria-label="Pan right">
+              →
+            </button>
+            <button type="button" onClick={() => pan(0, 0.25)} aria-label="Pan down">
+              ↓
+            </button>
+          </>
+        ) : null}
       </div>
     </div>
   );

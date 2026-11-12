@@ -110,8 +110,11 @@ trace of the equations queried, so short-circuited branches need not appear.
 `MovementDependencies::to_dot(map, position)` renders labelled Graphviz DOT.
 `cabal explain --graph "FRA: A PAR - BUR" "FRA: A MAR S A PAR - BUR"`
 prints a standalone graph suitable for piping to `dot -Tsvg`. The original
-`resolve_movement` API and result schema are unchanged. WASM phase outcomes add
-`dependencies` (edges indexing `results`) and `dependency_dot` for UI explanations.
+`resolve_movement` API and result schema are unchanged. Over WASM the trace is
+computed only on demand: `Game.explain(index)` re-runs the movement phase at
+that history index with tracing and returns `{ edges, dot }`, where edges index
+the phase outcome's `results`. Phase outcomes themselves carry no trace, so
+processing, previews and history lookups never pay for it.
 
 `order::normalise(map, position, order)` validates against the actual board unit
 and canonicalises destination coasts. The additive WASM `Game.normaliseOrders`
@@ -126,7 +129,7 @@ Pre-processing decides statically whether an adjacent move uses a convoy (editio
 - No I/O, no randomness in adjudication. Civil disorder tie breaks are alphabetical by province name.
 - DATC v3.0 corpus (171 cases, Main, Retreat, Build, editions) drives `tests/datc.rs`. The independent `oracle_godip.json` corpus asserts full units, dislodgements, and owners for 18 godip production cases plus two official DATC cases. Provenance, phase-boundary adapters and the DATC 6.K note are in [ENGINE_VERIFICATION.md](ENGINE_VERIFICATION.md).
 - Property tests (`proptest`): random legal order sets never panic, resolution is independent of order submission sequence, relabelling powers relabels outcomes.
-- Snapshot tests (`insta`) on explanations for the DipMath figures.
+- Explanation tests (`tests/dependencies.rs`) assert the dependency edges traced for supported attacks, cycles, convoys and illegal orders; the DATC corpus run also checks that tracing never changes a result and that the trace and its DOT are identical when orders are submitted in reverse.
 - `criterion` benches: full board adjudication, legal order enumeration. The CI `bench` job runs the opening adjudication bench on the base commit and on the change, back to back on one runner, and `tools/check-bench-regression.py` fails the build on a slowdown over 30 percent (`benches/baseline.json` is the fallback for local runs).
 - `cargo fuzz` targets on the text parser and legal movement order sets live in `fuzz/`; the nightly Stress workflow runs each for 600 seconds and retains crash artifacts. See `fuzz/README.md`.
 

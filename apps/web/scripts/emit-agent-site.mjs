@@ -98,7 +98,7 @@ function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHr
       :root { color-scheme: light; --ink:#121110; --ink-3:#5f5a53; --bone:#f4f0e6; --paper:#fbf9f4; --rule:#d3cab5; --brass-deep:#94731f; --font-ui: "Inter Tight", system-ui, sans-serif; --font-display: "Archivo Black", "Arial Black", sans-serif; }
       * { box-sizing: border-box; }
       body { margin:0; background:var(--bone); color:var(--ink); font-family:var(--font-ui); font-size:16px; line-height:1.55; }
-      a { color: inherit; }
+      a { color: inherit; overflow-wrap: anywhere; }
       .wrap { max-width: 42rem; margin: 0 auto; padding: 1.25rem 1.25rem 3rem; }
       header.site { display:flex; justify-content:space-between; gap:1rem; align-items:baseline; padding: 0.85rem 0 1.25rem; border-bottom:1px solid var(--rule); margin-bottom:1.5rem; }
       header.site a.brand { font-family:var(--font-display); letter-spacing:0.04em; text-decoration:none; font-size:1.1rem; }

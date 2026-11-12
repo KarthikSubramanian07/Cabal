@@ -1,4 +1,5 @@
-//! Criterion benches: full-board adjudication, legal order enumeration, a convoy paradox.
+//! Criterion benches: full-board adjudication, legal order enumeration (opening and a
+//! fleet-heavy midgame), a convoy paradox.
 
 use cabal_engine::adjudicate::movement::resolve_movement;
 use cabal_engine::geo::Map;
@@ -104,5 +105,85 @@ fn bench_legal(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_opening, bench_paradox, bench_legal);
+/// A crowded midgame: 34 units, 18 of them fleets at sea, most armies on the coast.
+/// Every sea fleet can convoy and almost every army can be convoyed somewhere, which is
+/// the worst case for legal order enumeration (the 1901 bench has no fleet at sea).
+fn midgame_position(map: &Map) -> Position {
+    let units = [
+        "ENG: F NAO",
+        "ENG: F NWG",
+        "ENG: F NTH",
+        "ENG: F IRI",
+        "ENG: A NWY",
+        "ENG: A LON",
+        "FRA: F ENG",
+        "FRA: F MAO",
+        "FRA: F WES",
+        "FRA: A BRE",
+        "FRA: A SPA",
+        "GER: F HEL",
+        "GER: F SKA",
+        "GER: F BAL",
+        "GER: A DEN",
+        "GER: A KIE",
+        "RUS: F BOT",
+        "RUS: F BLA",
+        "RUS: A STP",
+        "RUS: A SEV",
+        "ITA: F LYO",
+        "ITA: F TYS",
+        "ITA: F ION",
+        "ITA: A NAP",
+        "ITA: A TUN",
+        "TUR: F AEG",
+        "TUR: F EAS",
+        "TUR: A SMY",
+        "TUR: A BUL",
+        "TUR: A GRE",
+        "AUS: F ADR",
+        "AUS: A TRI",
+        "AUS: A ALB",
+        "AUS: A SER",
+    ];
+    let mut pos = Position::default();
+    for line in units {
+        let p = parse(map, &format!("{line} H")).unwrap();
+        let region = p.region.unwrap();
+        let kind = p.kind.unwrap();
+        pos.add_unit(cabal_engine::Unit {
+            power: p.power.unwrap(),
+            kind,
+            region: if kind == cabal_engine::UnitKind::Army {
+                cabal_engine::Region::land(region.province)
+            } else {
+                region
+            },
+        });
+    }
+    assert_eq!(pos.units.len(), 34);
+    pos
+}
+
+fn bench_legal_midgame(c: &mut Criterion) {
+    let map = Map::standard();
+    let pos = midgame_position(map);
+    let mut group = c.benchmark_group("midgame");
+    group.sample_size(10);
+    group.bench_function("legal orders, all powers, midgame", |b| {
+        b.iter(|| {
+            for p in map.power_ids() {
+                black_box(legal_movement(map, black_box(&pos), p));
+            }
+        })
+    });
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_opening,
+    bench_paradox,
+    bench_legal,
+    bench_legal_midgame
+);
 criterion_main!(benches);

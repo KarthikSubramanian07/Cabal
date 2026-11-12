@@ -1,6 +1,17 @@
 import { useEffect, useRef } from "react";
 
-export function HowToPlay({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function HowToPlay({
+  open,
+  onClose,
+  shortcuts,
+  onShortcuts,
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** Whether the single-key shortcuts (M, S, C, H, D) are on. */
+  shortcuts: boolean;
+  onShortcuts: (on: boolean) => void;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -76,6 +87,15 @@ export function HowToPlay({ open, onClose }: { open: boolean; onClose: () => voi
             Only legal orders are offered. Units without an order hold. On a phone, use the buttons under the map
             instead of the keys, and pinch to zoom.
           </p>
+          <p className="fine">
+            Without a mouse, use the choices under the map: pick a unit, then where it goes. The same orders are
+            offered there as on the map, and the board is also listed as text under Board as text.
+          </p>
+          <label className="setting">
+            <input type="checkbox" checked={shortcuts} onChange={(e) => onShortcuts(e.target.checked)} />
+            Single-key shortcuts (<kbd>M</kbd> <kbd>S</kbd> <kbd>C</kbd> <kbd>H</kbd> <kbd>D</kbd>). Turn them off if
+            you use speech input or they get in your way.
+          </label>
         </section>
         <section>
           <h3>How a turn resolves</h3>
