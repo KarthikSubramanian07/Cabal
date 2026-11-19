@@ -1,17 +1,18 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App.jsx";
+import { listenForInstall } from "./pwa/InstallButton.jsx";
+import { registerServiceWorker } from "./pwa/register.js";
 import "./styles/index.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
 const mount = root;
 
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
-  });
-}
+// The offline copy and the update prompt (production builds only), and the install prompt,
+// which the browser may offer before React has drawn anything.
+registerServiceWorker();
+listenForInstall();
 
 function start(): void {
   createRoot(mount).render(
