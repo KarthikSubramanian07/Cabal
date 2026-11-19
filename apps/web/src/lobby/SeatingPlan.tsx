@@ -2,6 +2,7 @@
  * The seating plan: seven place cards, one per power, in the board's own colours. In the lobby an
  * open card is the seat picker; once the game runs the cards say who is here and who has moved.
  */
+import { Link } from "../app/router.jsx";
 import type { PowerName, SeatView } from "@cabal/protocol";
 import type { CSSProperties } from "react";
 import { powerLabel } from "./terms.js";
@@ -52,7 +53,14 @@ export function SeatingPlan({
         const body = (
           <>
             <span className="place-power">{powerLabel(seat.power)}</span>
-            <span className="place-who">{occupant(seat)}</span>
+            {/* A signed-in player's name leads to their record (not inside a seat button, which is one control). */}
+            {seat.handle && !(picking && seat.kind === "open") ? (
+              <Link className="place-who" href={`/u/${encodeURIComponent(seat.handle)}`}>
+                {occupant(seat)}
+              </Link>
+            ) : (
+              <span className="place-who">{occupant(seat)}</span>
+            )}
             {status ? <span className={`place-state${seat.present || seat.kind === "ai" ? " here" : ""}`}>{status}</span> : null}
             <span className="place-marks">{marks}</span>
           </>
