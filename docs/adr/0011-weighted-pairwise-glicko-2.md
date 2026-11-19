@@ -25,7 +25,7 @@ Skill (`apps/server/src/ratings.ts`, pure functions):
 Conduct, shown beside skill and never folded into it:
 
 - Reliability: `(onTime + 0.5 * late + 9) / (due + 10 + 4 * walkedOut)`. A phase is due when the seat had something to order; late means ordered only in the grace period; a game is walked out of when the seat went to a substitute or was in civil disorder at the end. A newcomer starts at 0.9.
-- Trust: `(kept + 5) / (kept + broken + 10)`, a newcomer at 0.5; void receipts are shown and do not count. Only a pledge made to another person counts: to a power another signed-in player held when it was made, or to the whole table when at least two signed-in players sat at it.
+- Trust: `(kept + 5) / (kept + broken + 10)`, a newcomer at 0.5; void receipts are shown and do not count. Only a pledge made to another person counts: to a power another signed-in player held when it was made, or to the whole table when at least two signed-in players sat at it. Only games that meet the rated bar feed it, and a promise counts once per audience per phase (broken over kept over void), because a ledger fed by unlisted or one-phase games could be filled by two accounts with promises they arranged to keep.
 
 ## Consequences
 
