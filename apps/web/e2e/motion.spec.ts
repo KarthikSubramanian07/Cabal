@@ -82,12 +82,13 @@ test.describe("phase results are inked in", () => {
       ),
     );
     expect(new Set(properties.map((p) => (p === "transform" ? "transform" : p)))).not.toContain("strokeDashoffset");
-    // A transform may be listed, but never changes: the pieces stay put while they fade.
+    // A transform may be listed, but a piece only changes place while it is invisible.
     const travels = await page.evaluate(() =>
       document.getAnimations().some((a) => {
         const frames = (a.effect as KeyframeEffect | null)?.getKeyframes() ?? [];
-        const moves = new Set(frames.map((k) => String(k.transform ?? "")));
-        return frames.some((k, i) => i > 0 && k.transform !== frames[i - 1]!.transform && frames[i - 1]!.opacity !== 0 && k.opacity !== 0) && moves.size > 1;
+        return frames.some(
+          (k, i) => i > 0 && String(k.transform) !== String(frames[i - 1]!.transform) && Number(frames[i - 1]!.opacity) > 0 && Number(k.opacity) > 0,
+        );
       }),
     );
     expect(travels).toBe(false);

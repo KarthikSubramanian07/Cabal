@@ -298,8 +298,8 @@ test.describe("phone layout", () => {
     const toggle = page.getByRole("button", { name: "Move the map with buttons" });
     await expect(arrows).toBeHidden();
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
-    // Four controls over the map, not seven.
-    expect(await page.locator(".board-frame button:visible").count()).toBe(4);
+    // Five controls over the map (zoom in, out, whole board, the pan toggle, sound), not eight.
+    expect(await page.locator(".board-frame button:visible").count()).toBe(5);
 
     const view = () => page.locator("svg.board").getAttribute("viewBox");
     const before = await view();

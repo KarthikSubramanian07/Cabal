@@ -252,7 +252,7 @@ export function Results({
                     aria-controls={panelId}
                     onClick={() => onOpen?.(isOpen ? null : key)}
                   >
-                    {isOpen ? "Close" : "Why?"}
+                    Why?
                     <span className="sr-only"> {r.order}</span>
                   </button>
                 ) : null}
