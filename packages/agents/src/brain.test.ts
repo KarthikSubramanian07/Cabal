@@ -270,6 +270,24 @@ describe("ClaudeBrain", () => {
     expect(reply.usage).toEqual({ inputTokens: 900, outputTokens: 300, cacheReadTokens: 2500, cacheWriteTokens: 0 });
   });
 
+  it("reads cache counts the API reports as null as zero, and prices the reply from them", async () => {
+    // The SDK types both cache counts as nullable; a null must neither become NaN nor drop the call's cost.
+    const noCache = claude(() => ({
+      json: message(JSON.stringify(good), { usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: 7 } }),
+    }));
+    const read = await noCache.brain.decide(request);
+    expect(read.usage).toEqual({ inputTokens: 10, outputTokens: 5, cacheReadTokens: 7, cacheWriteTokens: 0 });
+    // 10 x $4 + 5 x $20 + 7 x $0.20 per million tokens = 141.4 micro-dollars, rounded up.
+    expect(costMicros("claude-opus-5-5", read.usage!)).toBe(142);
+    const firstWrite = claude(() => ({
+      json: message(JSON.stringify(good), { usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 4000, cache_read_input_tokens: null } }),
+    }));
+    const wrote = await firstWrite.brain.decide(request);
+    expect(wrote.usage).toEqual({ inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 4000 });
+    // The cache write is billed at 1.25 x the input price: 4000 x $5 per million = 20,000 micro-dollars.
+    expect(costMicros("claude-opus-5-5", wrote.usage!)).toBe(40 + 100 + 20_000);
+  });
+
   it("spends less effort and a smaller allowance on talks, retreats and builds", async () => {
     const { brain, requests } = claude(() => ({ json: message(JSON.stringify(good)) }));
     await brain.decide({ ...request, step: "negotiate" });
