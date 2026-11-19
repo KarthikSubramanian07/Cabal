@@ -1,3 +1,4 @@
+import { matchRoute } from "../app/routes.js";
 import {
   appendVaryAccept,
   markdownPath,
@@ -5,8 +6,17 @@ import {
   preferredType,
 } from "./negotiate.js";
 
+interface Fetcher {
+  fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+
 export interface AssetEnv {
-  ASSETS: { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
+  ASSETS: Fetcher;
+  /**
+   * Service binding to the `cabal-server` Worker (see wrangler.jsonc). `/api/*` is handed to
+   * it so the browser only ever talks to this origin and the CSP can stay `connect-src 'self'`.
+   */
+  SERVER?: Fetcher;
 }
 
 /** Paths that have authored HTML + Markdown content (not the SPA shell alone). */
@@ -19,9 +29,22 @@ export function isStaticAsset(pathname: string): boolean {
   return STATIC_EXT.test(pathname);
 }
 
+/** `/api` and everything under it belongs to the game server. */
+export function isApiPath(pathname: string): boolean {
+  return pathname === "/api" || pathname.startsWith("/api/");
+}
+
+/**
+ * Client routes that are not authored content: the edge answers them with the app shell and
+ * the browser router draws the page. `/sandbox` is the board, the same document as `/`.
+ */
+export function isAppRoute(pathname: string): boolean {
+  return !CONTENT_ROUTES.has(pathname) && matchRoute(pathname) !== null;
+}
+
 function htmlAssetPath(pathname: string): string {
   const path = normalizePath(pathname);
-  if (path === "/") return "/index.html";
+  if (path === "/" || isAppRoute(path)) return "/index.html";
   return `${path}/index.html`;
 }
 
@@ -102,7 +125,32 @@ export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 };
 
+/** Headers that still make sense on a JSON API response. */
+const API_HEADERS = ["Strict-Transport-Security", "X-Content-Type-Options", "Referrer-Policy"] as const;
+
+/**
+ * Hand an `/api` request to the game server untouched: method, headers, body and, for the
+ * game socket, the WebSocket upgrade. A `101 Switching Protocols` response carries the
+ * socket and must be returned as it is, so only ordinary responses get headers added.
+ */
+async function proxyApi(request: Request, env: AssetEnv): Promise<Response> {
+  if (!env.SERVER) {
+    return new Response(JSON.stringify({ error: "game server unavailable" }), {
+      status: 503,
+      headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  }
+  const res = await env.SERVER.fetch(request);
+  if (res.status === 101) return res;
+  const out = new Response(res.body, res);
+  for (const name of API_HEADERS) out.headers.set(name, SECURITY_HEADERS[name]!);
+  // Same origin now: the server's permissive CORS grant is not needed and should not leak out.
+  out.headers.delete("Access-Control-Allow-Origin");
+  return out;
+}
+
 export async function handleAgentRequest(request: Request, env: AssetEnv): Promise<Response> {
+  if (isApiPath(new URL(request.url).pathname)) return proxyApi(request, env);
   const res = await route(request, env);
   const out = new Response(res.body, res);
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) out.headers.set(name, value);
@@ -141,14 +189,31 @@ async function route(request: Request, env: AssetEnv): Promise<Response> {
     return res;
   }
 
-  const wantsMarkdown = chosen === "text/markdown";
   const isContent = CONTENT_ROUTES.has(path);
+  const isApp = isAppRoute(path);
+
+  if (isApp) {
+    // The shell is HTML only. `/sandbox` shares the home page's Markdown; the reserved
+    // routes have no content to describe yet, so an agent asking for Markdown gets a 404.
+    if (chosen === "text/markdown" && path !== "/sandbox") return notFound(env, url, request, true);
+    if (chosen !== "text/markdown") {
+      const shell = await fetchAsset(env, url, "/index.html", request);
+      if (shell.status !== 200) return notFound(env, url, request, false);
+      const res = withNegotiationHeaders(shell);
+      // Only the home page is canonical; keep the shell's other addresses out of indexes.
+      if (path !== "/sandbox") res.headers.set("X-Robots-Tag", "noindex");
+      return res;
+    }
+  }
+
+  const wantsMarkdown = chosen === "text/markdown";
+  const contentPath = path === "/sandbox" ? "/" : path;
 
   if (wantsMarkdown) {
-    if (!isContent) {
+    if (!isContent && !isApp) {
       return notFound(env, url, request, true);
     }
-    const mdRes = await fetchAsset(env, url, markdownPath(path), request);
+    const mdRes = await fetchAsset(env, url, markdownPath(contentPath), request);
     if (mdRes.status === 200) {
       return withNegotiationHeaders(mdRes, "text/markdown; charset=utf-8");
     }
@@ -162,7 +227,7 @@ async function route(request: Request, env: AssetEnv): Promise<Response> {
     }
   }
 
-  if (!isContent) {
+  if (!isContent && !isApp) {
     return notFound(env, url, request, false);
   }
 
@@ -172,7 +237,7 @@ async function route(request: Request, env: AssetEnv): Promise<Response> {
   }
 
   const res = withNegotiationHeaders(htmlRes);
-  const linkMd = `<${markdownPath(path)}>; rel="alternate"; type="text/markdown"`;
+  const linkMd = `<${markdownPath(contentPath)}>; rel="alternate"; type="text/markdown"`;
   const linkLlms = `</llms.txt>; rel="describedby"`;
   const existing = res.headers.get("link");
   res.headers.set("Link", existing ? `${existing}, ${linkMd}, ${linkLlms}` : `${linkMd}, ${linkLlms}`);

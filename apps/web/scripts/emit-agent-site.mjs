@@ -5,7 +5,7 @@
  */
 import { mkdirSync, readFileSync, writeFileSync, copyFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -77,11 +77,35 @@ function mdToHtmlBody(markdown) {
   return out.join("\n");
 }
 
-function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHref }) {
+/** The app's stylesheet, as Vite named it: the trust pages share its tokens, fonts and top bar. */
+function appStylesheet() {
+  const html = readFileSync(join(dist, "index.html"), "utf8");
+  // The app shell inlines its stylesheet (vite.config.ts) and records where the file is.
+  const href = html.match(/<style data-href="([^"]+\.css)"/)?.[1] ?? html.match(/<link rel="stylesheet"[^>]*href="([^"]+\.css)"/)?.[1];
+  if (!href) throw new Error("dist/index.html names no stylesheet; cannot style the trust pages");
+  return href;
+}
+
+/** The wordmark as inline SVG, from the same paths the app's <Wordmark> draws. */
+function wordmarkSvg(height = 22) {
+  const mark = JSON.parse(readFileSync(join(root, "src/brand/wordmark.json"), "utf8"));
+  const [, , w, h] = mark.viewBox.split(" ").map(Number);
+  const width = Math.round(((height * w) / h) * 100) / 100;
+  return `<svg class="wordmark" viewBox="${mark.viewBox}" width="${width}" height="${height}" role="img" aria-label="Cabal"><path fill-rule="evenodd" fill="var(--bone)" d="${mark.letters}"/><path fill-rule="evenodd" fill="var(--vermilion, #d94f30)" d="${mark.turnedA}"/></svg>`;
+}
+
+/**
+ * A static page in the app's frame: the same ink top bar, wordmark and links as
+ * src/app/Shell.tsx, and the same footer. There is no script here, so How to play is a link
+ * to the board (which opens the dialog) and on a phone the links sit in a row under the bar
+ * instead of behind a menu button.
+ */
+function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHref, robots, stylesheet }) {
   const ld = jsonLd ? `<script type="application/ld+json">\n${JSON.stringify(jsonLd, null, 2)}\n    </script>` : "";
   const mdHref =
     markdownHref ??
     (canonical.endsWith("/") ? "/index.md" : `${canonical.replace(SITE, "")}/index.md`);
+  const current = (path) => (canonical === `${SITE}${path}` ? ' aria-current="page"' : "");
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -91,48 +115,40 @@ function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHr
     <meta name="description" content="${description}" />
     <link rel="canonical" href="${canonical}" />
     <link rel="describedby" href="/llms.txt" />
-    <link rel="alternate" type="text/markdown" href="${mdHref}" />
+    <link rel="alternate" type="text/markdown" href="${mdHref}" />${robots ? `\n    <meta name="robots" content="${robots}" />` : ""}
     <meta name="theme-color" content="#121110" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <style>
-      :root { color-scheme: light; --ink:#121110; --ink-3:#5f5a53; --bone:#f4f0e6; --paper:#fbf9f4; --rule:#d3cab5; --brass-deep:#94731f; --font-ui: "Inter Tight", system-ui, sans-serif; --font-display: "Archivo Black", "Arial Black", sans-serif; }
-      * { box-sizing: border-box; }
-      body { margin:0; background:var(--bone); color:var(--ink); font-family:var(--font-ui); font-size:16px; line-height:1.55; }
-      a { color: inherit; overflow-wrap: anywhere; }
-      .wrap { max-width: 42rem; margin: 0 auto; padding: 1.25rem 1.25rem 3rem; }
-      header.site { display:flex; justify-content:space-between; gap:1rem; align-items:baseline; padding: 0.85rem 0 1.25rem; border-bottom:1px solid var(--rule); margin-bottom:1.5rem; }
-      header.site a.brand { font-family:var(--font-display); letter-spacing:0.04em; text-decoration:none; font-size:1.1rem; }
-      nav { display:flex; flex-wrap:wrap; gap:0.85rem; font-size:0.92rem; color:var(--ink-3); }
-      nav a[aria-current="page"] { color:var(--ink); text-decoration:underline; text-underline-offset:3px; }
-      h1 { font-family:var(--font-display); font-size:clamp(1.8rem, 4vw, 2.4rem); line-height:1.1; text-wrap:balance; margin:0 0 0.75rem; }
-      h2 { font-size:1.15rem; margin:1.75rem 0 0.5rem; }
-      p, li { color:var(--ink); }
-      blockquote { margin:0 0 1rem; padding:0.75rem 1rem; background:var(--paper); border:1px solid var(--rule); }
-      blockquote p { margin:0; color:var(--ink-3); }
-      ul, ol { padding-left: 1.2rem; }
-      footer { margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--rule); color:var(--ink-3); font-size:0.9rem; display:flex; flex-wrap:wrap; gap:0.75rem; }
-    </style>
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="stylesheet" href="${stylesheet ?? appStylesheet()}" />
     ${ld}
   </head>
   <body>
-    <div class="wrap">
-      <header class="site">
-        <a class="brand" href="/">CABAL</a>
-        <nav>
-          <a href="/">Sandbox</a>
-          <a href="/about"${canonical.includes("/about") ? ' aria-current="page"' : ""}>About</a>
-          <a href="/contact"${canonical.includes("/contact") ? ' aria-current="page"' : ""}>Contact</a>
-          <a href="/privacy"${canonical.includes("/privacy") ? ' aria-current="page"' : ""}>Privacy</a>
+    <div class="app" data-route="page">
+      <a class="skip-link" href="#main">Skip to the page</a>
+      <header class="topbar static">
+        <a class="brand" href="/" aria-label="Cabal home">${wordmarkSvg()}</a>
+        <nav aria-label="Site">
+          <a href="/sandbox">Sandbox</a>
+          <a href="/sandbox#how-to-play">How to play</a>
+          <a href="/about"${current("/about")}>About</a>
+          <a href="/contact"${current("/contact")}>Contact</a>
+          <a class="nav-end" href="https://github.com/KarthikSubramanian07/Cabal">GitHub</a>
         </nav>
       </header>
-      <main>
+      <main class="prose" id="main" tabindex="-1">
 ${bodyHtml}
       </main>
-      <footer>
+      <footer class="footer">
         <span>Diplomacy with receipts.</span>
-        <a href="/llms.txt">llms.txt</a>
-        <a href="https://github.com/KarthikSubramanian07/Cabal">GitHub</a>
-        <a href="https://github.com/KarthikSubramanian07/Cabal/issues">Contact</a>
+        <span>Adjudicated in your browser by a Rust engine that passes all 171 DATC cases.</span>
+        <span>Board drawn from Natural Earth.</span>
+        <span class="footer-links">
+          <a href="/about">About</a>
+          <a href="/contact">Contact</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/llms.txt">llms.txt</a>
+          <a href="https://github.com/KarthikSubramanian07/Cabal">Source</a>
+        </span>
       </footer>
     </div>
   </body>
@@ -142,6 +158,40 @@ ${bodyHtml}
 
 function ensureDir(path) {
   mkdirSync(path, { recursive: true });
+}
+
+/** The authored pages: route, Markdown source, title and description. */
+const PAGES = [
+  ["/", "home.md", "Cabal — Diplomacy browser game with receipts", "Play classic Diplomacy in the browser with explainable adjudication."],
+  ["/about", "about.md", "About Cabal — Diplomacy with receipts", "Cabal is an open-source Diplomacy browser game with a DATC-complete adjudicator."],
+  ["/contact", "contact.md", "Contact Cabal", "Email and GitHub contact paths for the Cabal Diplomacy project."],
+  ["/privacy", "privacy.md", "Privacy — Cabal", "How the Cabal Diplomacy sandbox handles information in your browser."],
+];
+
+function notFoundPage(stylesheet) {
+  return pageShell({
+    title: "Not found — Cabal",
+    description: "That path does not exist on Cabal.",
+    canonical: `${SITE}/404`,
+    bodyHtml: mdToHtmlBody(md("404.md")),
+    jsonLd: null,
+    markdownHref: "/404.md",
+    robots: "noindex",
+    stylesheet,
+  });
+}
+
+/**
+ * One trust page as HTML (`/about`, `/contact`, `/privacy`, or `/404.html`), or null for any
+ * other path. The build writes these into `dist`; `vite dev` has no `dist`, so it calls this
+ * with the stylesheet's source path and serves the same pages (see vite.config.ts).
+ */
+export function renderTrustPage(route, stylesheet) {
+  if (route === "/404.html") return notFoundPage(stylesheet);
+  const page = PAGES.find(([path]) => path === route && path !== "/");
+  if (!page) return null;
+  const [path, file, title, description] = page;
+  return pageShell({ title, description, canonical: `${SITE}${path}`, bodyHtml: mdToHtmlBody(md(file)), jsonLd: null, stylesheet });
 }
 
 function writePage(route, markdownFile, title, description) {
@@ -244,6 +294,33 @@ function enrichIndexHtml() {
     );
   }
 
+  // What a visitor sees before the app's script has run: the top bar and the loading screen,
+  // word for word and box for box what src/app/Shell.tsx and PageLoading.tsx draw, so React
+  // taking over changes nothing on screen. The page's text follows below the fold, and is
+  // all there is for readers without script (see base.css).
+  const loading = JSON.parse(readFileSync(join(root, "src/app/loading.json"), "utf8"));
+  const escape = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const shell = `<div class="app prerender" data-route="sandbox">
+        <header class="topbar">
+          <a class="brand" href="/" aria-label="Cabal home">${wordmarkSvg()}</a>
+          <button type="button" class="nav-toggle" aria-expanded="false">Menu</button>
+          <nav aria-label="Site" data-open="false">
+            <a href="/sandbox" aria-current="page">Sandbox</a>
+            <button type="button">How to play</button>
+            <a href="/about">About</a>
+            <a href="/contact">Contact</a>
+            <a class="nav-end" href="https://github.com/KarthikSubramanian07/Cabal">GitHub</a>
+          </nav>
+        </header>
+        <main class="loading-body">
+          <div class="loading-card">
+            <p class="loading-title" role="status">${escape(loading.title)}</p>
+            <p class="loading-line">${escape(loading.line)}</p>
+            <p class="loading-note">${escape(loading.note)}</p>
+          </div>
+        </main>
+      </div>`;
+
   const article = `<article class="agent-static" data-agent-content="true">
         ${homeBody}
         <p><a href="/about">About</a> · <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a> · <a href="/llms.txt">llms.txt</a></p>
@@ -256,11 +333,11 @@ function enrichIndexHtml() {
 
   // Always replace #root contents with the full home.md article for no-JS crawlers.
   if (html.includes('<div id="root"></div>')) {
-    html = html.replace('<div id="root"></div>', `<div id="root">\n      ${article}\n    </div>`);
+    html = html.replace('<div id="root"></div>', () => `<div id="root">\n      ${shell}\n      ${article}\n    </div>`);
   } else {
     html = html.replace(
       /<div id="root">[\s\S]*?<\/div>\s*(?=<script|<\/body>)/,
-      `<div id="root">\n      ${article}\n    </div>\n    `,
+      () => `<div id="root">\n      ${shell}\n      ${article}\n    </div>\n    `,
     );
   }
 
@@ -277,17 +354,8 @@ function assertMinPlainText(label, text, min) {
 }
 
 function write404() {
-  const markdown = md("404.md");
-  writeFileSync(join(dist, "404.md"), markdown);
-  const html = pageShell({
-    title: "Not found — Cabal",
-    description: "That path does not exist on Cabal.",
-    canonical: `${SITE}/404`,
-    bodyHtml: mdToHtmlBody(markdown),
-    jsonLd: null,
-    markdownHref: "/404.md",
-  });
-  writeFileSync(join(dist, "404.html"), html);
+  writeFileSync(join(dist, "404.md"), md("404.md"));
+  writeFileSync(join(dist, "404.html"), notFoundPage());
 }
 
 function writeLlms() {
@@ -353,25 +421,7 @@ async function main() {
     throw new Error("dist/index.html missing; run vite build first");
   }
 
-  writePage("/", "home.md", "Cabal — Diplomacy browser game with receipts", "Play classic Diplomacy in the browser with explainable adjudication.");
-  writePage(
-    "/about",
-    "about.md",
-    "About Cabal — Diplomacy with receipts",
-    "Cabal is an open-source Diplomacy browser game with a DATC-complete adjudicator.",
-  );
-  writePage(
-    "/contact",
-    "contact.md",
-    "Contact Cabal",
-    "Email and GitHub contact paths for the Cabal Diplomacy project.",
-  );
-  writePage(
-    "/privacy",
-    "privacy.md",
-    "Privacy — Cabal",
-    "How the Cabal Diplomacy sandbox handles information in your browser.",
-  );
+  for (const [route, file, title, description] of PAGES) writePage(route, file, title, description);
   write404();
   writeLlms();
   writeSitemap();
@@ -380,7 +430,10 @@ async function main() {
   console.log("emit-agent-site: wrote trust pages, markdown siblings, llms.txt, _worker.js");
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Run as a script (the build); imported for `renderTrustPage` by the dev server.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
