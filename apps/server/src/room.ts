@@ -2758,6 +2758,7 @@ export class GameRoom extends DurableObject<Env> {
           dislodged: outcome.dislodged,
           standoffs: outcome.standoffs,
           civil_disorder: outcome.civil_disorder,
+          rejected: outcome.rejected ?? [],
           summary,
           seq,
         },
