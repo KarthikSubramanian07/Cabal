@@ -25,7 +25,7 @@ import { describePhase, parseOrder, parseUnit, provinceOf, titleCase } from "./g
 import { useSandbox } from "./game/useSandbox.js";
 import { Board, type DrawnOrder } from "./map/Board.jsx";
 
-const SHORTCUTS_KEY = "cabal.shortcuts";
+function hasConvoyChoice(legal: string[]): boolean { const viaDestinations = new Set(legal.flatMap((text) => { const order = parseOrder(text); return order?.type === "move" && order.via ? [provinceOf(order.dest)] : []; })); return legal.some((text) => { const order = parseOrder(text); return order?.type === "move" && !order.via && viaDestinations.has(provinceOf(order.dest)); }); } const SHORTCUTS_KEY = "cabal.shortcuts";
 
 function readShortcuts(): boolean {
   try {
@@ -201,7 +201,7 @@ export function App() {
       if (key === "s") return mode("support");
       if (key === "c") return mode("convoy");
       if (key === "m") return mode("move");
-      if (key === "h") return apply(holdSelected(ctx, draft));
+      if (key === "v") return mode("via-convoy"); if (key === "h") return apply(holdSelected(ctx, draft));
       if (key === "d") return apply(disbandSelected(ctx, draft));
     };
     window.addEventListener("keydown", onKey);
@@ -273,7 +273,7 @@ export function App() {
   const selectedProvince = draft.step === "idle" ? null : parseUnit(draft.unit)?.province ?? null;
   const { season, year } = describePhase(sb.phase);
   const activeSummary = sb.powers.find((p) => p.power === active);
-  const orderableUnits = Object.keys(sb.legal[active] ?? {}).filter((u) => u !== "");
+  const orderableUnits = Object.keys(sb.legal[active] ?? {}).filter((u) => u !== ""); const selectedHasConvoyChoice = draft.step === "unit" && hasConvoyChoice(sb.legal[draft.power]?.[draft.unit] ?? []);
   const choices =
     !record && sb.status === "active" && ctx
       ? choicesFor(ctx, draft, active, orderableUnits, targets, sb.board.provinces)
@@ -407,7 +407,7 @@ export function App() {
           <div className="toolbar" role="group" aria-label="Order tools">
             {sb.kind === "M" && !record ? (
               <>
-                <button type="button" className="tool" aria-pressed={draft.step === "unit"} onClick={() => mode("move")}>
+                {selectedHasConvoyChoice && !draft.via ? <button type="button" className="tool" onClick={() => mode("via-convoy")}>Via convoy <kbd>V</kbd></button> : null} <button type="button" className="tool" aria-pressed={draft.step === "unit"} onClick={() => mode("move")}>
                   Move <kbd>M</kbd>
                 </button>
                 <button
