@@ -432,6 +432,17 @@
     padding: 0 12px;
   }
 
+  /* 16px type keeps a phone from zooming the page into the field. */
+  .order-entry-field input,
+  .order-entry-field .btn {
+    min-height: var(--hit);
+    font-size: 16px;
+  }
+
+  .order-entry-list li {
+    min-height: var(--hit);
+  }
+
   .zoom button,
   .pan button {
     width: var(--hit);
