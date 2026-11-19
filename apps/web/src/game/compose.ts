@@ -8,11 +8,11 @@
  */
 import { type PhaseKind, parseOrder, parseUnit, provinceOf } from "./notation.js";
 
-export type Mode = "move" | "support" | "convoy";
+export type Mode = "move" | "via-convoy" | "support" | "convoy";
 
 export type Draft =
   | { step: "idle" }
-  | { step: "unit"; power: string; unit: string }
+  | { step: "unit"; power: string; unit: string; via?: boolean }
   | { step: "support"; power: string; unit: string; target?: string }
   | { step: "convoy"; power: string; unit: string; army?: string };
 
@@ -100,8 +100,8 @@ export function click(ctx: ComposeContext, draft: Draft, province: string): Step
         return say(draft, `${unit} cannot ${wanted === "move" ? "move" : "retreat"} to ${province}.`);
       }
       if (wanted === "move") {
-        const direct = options.filter((o) => !o.endsWith(" VIA"));
-        if (direct.length > 0) options = direct;
+        if (draft.via) options = options.filter((o) => o.endsWith(" VIA"));
+        else { const direct = options.filter((o) => !o.endsWith(" VIA")); if (direct.length > 0) options = direct; }
       }
       if (options.length === 1) return orderStep(power, unit, options[0]!);
       return {
@@ -139,13 +139,13 @@ export function click(ctx: ComposeContext, draft: Draft, province: string): Step
   }
 }
 
-/** Switch the selected unit into support or convoy mode (S and C keys). */
+/** Switch the selected unit into an order mode. */
 export function setMode(ctx: ComposeContext, draft: Draft, mode: Mode): Step {
   if (draft.step === "idle") return say(draft, "Select one of your units first.");
   const { power, unit } = draft;
   if (mode === "move") return none({ step: "unit", power, unit });
   if (ctx.phase !== "M") return say(draft, "Supports and convoys are only ordered in movement phases.");
-  if (mode === "support") {
+  if (mode === "via-convoy") return legalFor(ctx, power, unit).some((o) => o.endsWith(" VIA")) ? none({ step: "unit", power, unit, via: true }) : say(draft, `${unit} has no legal convoy move.`); if (mode === "support") {
     const canSupport = legalFor(ctx, power, unit).some((o) => o.startsWith(`${unit} S `));
     return canSupport ? none({ step: "support", power, unit }) : say(draft, `${unit} has nothing to support.`);
   }
