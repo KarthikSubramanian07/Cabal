@@ -181,4 +181,16 @@ describe("rating finished games", () => {
     // Too few pledges to be ranked.
     expect(board.entries.some((e) => e.player.id === other.player.id)).toBe(false);
   });
+
+  it("answers a page, never a 500, for an offset D1 cannot bind", async () => {
+    for (const q of ["offset=Infinity", "offset=1e300", "offset=-5", "offset=NaN", "offset=2.5", "offset=99999999999"]) {
+      for (const path of ["/api/leaderboard", "/api/ledger"]) {
+        const res = await call(`${path}?${q}`, null);
+        expect(res.status, `${path}?${q}`).toBe(200);
+        const body = (await res.json()) as { offset: number };
+        expect(body.offset, `${path}?${q}`).toBeGreaterThanOrEqual(0);
+        expect(body.offset, `${path}?${q}`).toBeLessThanOrEqual(10_000);
+      }
+    }
+  });
 });

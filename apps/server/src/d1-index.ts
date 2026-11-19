@@ -183,6 +183,13 @@ function toListing(row: LiveRow): GameListing {
 }
 
 const clampLimit = (limit: number | undefined, max = 100, fallback = 25) => Math.max(1, Math.min(max, Math.floor(Number.isFinite(limit) ? limit! : fallback)));
+/** Pages start no further in than this: deeper than any board needs, and always a bindable integer. */
+export const MAX_OFFSET = 10_000;
+/** A paging offset D1 can bind: a whole number from 0 to `MAX_OFFSET`, else 0 (NaN, Infinity, 1e300, -3). */
+export const clampOffset = (offset: number | undefined) => {
+  const n = Math.floor(offset ?? 0);
+  return Number.isSafeInteger(n) && n >= 0 ? Math.min(n, MAX_OFFSET) : 0;
+};
 const placeholders = (n: number) => Array.from({ length: n }, () => "?").join(", ");
 const summaryOf = (row: Pick<PlayerRow, "id" | "handle" | "created_at">): PlayerSummary => ({ id: row.id, handle: row.handle, createdAt: row.created_at });
 const isConstraint = (error: unknown, what: string) => String(error instanceof Error ? error.message : error).includes(what);
@@ -770,7 +777,7 @@ export class D1Index implements GameIndex, PlayerStore {
 
   async leaderboard(page: { offset: number; limit: number; now: number }): Promise<LeaderboardResponse> {
     const limit = clampLimit(page.limit);
-    const offset = Math.max(0, Math.floor(page.offset) || 0);
+    const offset = clampOffset(page.offset);
     const rows = (
       await this.db
         .prepare(
@@ -800,7 +807,7 @@ export class D1Index implements GameIndex, PlayerStore {
 
   async trustBoard(page: { offset: number; limit: number }): Promise<TrustLeaderboardResponse> {
     const limit = clampLimit(page.limit);
-    const offset = Math.max(0, Math.floor(page.offset) || 0);
+    const offset = clampOffset(page.offset);
     const rows = (
       await this.db
         .prepare(
