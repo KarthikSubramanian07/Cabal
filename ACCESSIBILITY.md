@@ -59,6 +59,13 @@ part of `pnpm test:e2e` (`apps/web/e2e`):
   a game in play and the games room. Table talk is a named log region, so new messages are read
   out; every form error is an alert tied to its field; the seat picker's open seats are toggle
   buttons that say which seat is chosen.
+- The live game room, by two players on two devices and a spectator (`e2e-live/game.spec.ts`):
+  axe over the order desk, press with a sealed pledge, the results, the spectator's view and the
+  final scores. Each press thread is a named log region and each thread button says its unread
+  count; every seat in the seat strip carries its whole state as text, not only a colour and a
+  word; the phase clock is said out loud at five minutes and at one; a private dispatch that
+  arrives while the press is closed is announced; and a seal's receipt is stamped as an image
+  with a text name ("Receipt: Kept") with the device's own check written out beneath it.
 
 ## Manual pass (2026-11-10)
 
