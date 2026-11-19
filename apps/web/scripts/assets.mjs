@@ -1,10 +1,11 @@
-// Generates public/og.png, public/apple-touch-icon.png, public/icon-512.png and the README
-// screenshots from a running build: pnpm build && pnpm preview, then node scripts/assets.mjs
+// Generates public/og.png, the app icons (apple-touch-icon.png, icon-192.png, icon-512.png and
+// the full-bleed icon-maskable-512.png) and the README screenshots from a running build:
+// pnpm build && pnpm preview, then node scripts/assets.mjs. `--icons` writes only the icons.
 import { chromium, devices } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const base = process.argv[2] ?? "http://localhost:4173";
+const base = process.argv.slice(2).find((a) => !a.startsWith("--")) ?? "http://localhost:4173";
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
 const docs = here("../../../docs/images/");
 const favicon = readFileSync(here("../public/favicon.svg"), "utf8");
@@ -15,12 +16,32 @@ const browser = await chromium.launch();
 // icons
 for (const [size, file] of [
   [180, "apple-touch-icon.png"],
+  [192, "icon-192.png"],
   [512, "icon-512.png"],
 ]) {
   const page = await browser.newPage({ viewport: { width: size, height: size } });
   await page.setContent(`<body style="margin:0">${favicon.replace("<svg ", `<svg width="${size}" height="${size}" `)}</body>`);
   await page.screenshot({ path: here(`../public/${file}`), omitBackground: true });
   await page.close();
+}
+
+// The maskable icon: launchers crop it to a circle or a squircle, so the ink fills the whole
+// square and the turned A sits inside the central safe zone (a circle of 80 percent).
+{
+  const maskable = favicon
+    .replace(/ rx="\d+"/, "")
+    .replace("scale(0.78)", "scale(0.56)")
+    .replace("<svg ", '<svg width="512" height="512" ');
+  const page = await browser.newPage({ viewport: { width: 512, height: 512 } });
+  await page.setContent(`<body style="margin:0">${maskable}</body>`);
+  await page.screenshot({ path: here("../public/icon-maskable-512.png") });
+  await page.close();
+}
+
+if (process.argv.includes("--icons")) {
+  await browser.close();
+  console.log("icons written");
+  process.exit(0);
 }
 
 // board crop for the social card
