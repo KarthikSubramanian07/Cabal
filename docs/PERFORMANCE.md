@@ -143,7 +143,7 @@ with the parser that is already in the binary.
 
 The engine is most of the Worker's upload, so its growth moved the Worker
 bundle from 642,074 to 755,828 bytes gzip and past the 655,360 budget that job
-had; the budget is now 786,432. No optimisation level brings the bundle back
+had; the budget became 786,432 (and later 851,968, below). No optimisation level brings the bundle back
 under the old figure (`"z"` saves about 72 KB of the 87 KB needed and costs the
 most speed), so this is a real cost of the new API, paid in isolate start-up,
 and the first thing to revisit if issue #61's workerd measurements say start-up
