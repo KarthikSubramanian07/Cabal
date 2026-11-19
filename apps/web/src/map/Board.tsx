@@ -73,6 +73,9 @@ export interface BoardProps {
   onProvince?: ((province: string, client: { x: number; y: number }) => void) | undefined;
 }
 
+/** The map is drawn in this many passes after the first (see Board). */
+const LAST_PASS = 4;
+
 /** How close, in CSS pixels, a touch must land to a province it can act on to count for it. */
 const TOUCH_REACH_PX = 26;
 /** The same reach in board units is capped, so on a far-out overview a tap cannot jump provinces away. */
@@ -195,15 +198,9 @@ function UnitShape({ kind, r, ghost = false }: { kind: "A" | "F"; r: number; gho
 }
 
 /** Sea, lakes, impassable land and coastline: never changes, so it never re-renders. */
-const Geography = memo(function Geography({ board, layer }: { board: BoardData; layer: "under" | "over" }) {
-  if (layer === "over") {
-    return (
-      <>
-        <path className="coastline" d={board.coast} />
-        <path className="sea-lines" d={board.seaLines} />
-      </>
-    );
-  }
+const Geography = memo(function Geography({ board, layer }: { board: BoardData; layer: "under" | "coast" | "lines" }) {
+  if (layer === "coast") return <path className="coastline" d={board.coast} />;
+  if (layer === "lines") return <path className="sea-lines" d={board.seaLines} />;
   return (
     <>
       <defs>
@@ -240,7 +237,8 @@ const Territory = memo(function Territory({
   board: BoardData;
   control: Record<string, string>;
   centerOwner: Record<string, string>;
-  layer: "land" | "centres";
+  /** The land is drawn as two halves so neither is too much to lay out in one go. */
+  layer: "land-a" | "land-b" | "centres";
 }) {
   const provinces = Object.entries(board.provinces);
   if (layer === "centres") {
@@ -265,6 +263,7 @@ const Territory = memo(function Territory({
     <>
       {provinces
         .filter(([, p]) => p.kind !== "sea")
+        .filter((_, i) => (i % 2 === 0) === (layer === "land-a"))
         .map(([code, p]) => {
           const owner = control[code];
           const style = owner ? ({ "--power": POWER_COLOR[owner] } as CSSProperties) : undefined;
@@ -397,11 +396,13 @@ export function Board({
   }, [full]);
 
   // The map is 380 KB of outlines. Handing it to the browser in one piece freezes a phone for
-  // a moment, so it is drawn in three passes: the land and sea, then coastline and pieces,
-  // then the province codes.
+  // a moment, so it is drawn in passes, a frame apart: sea and half the land, the rest of
+  // the land, the coastline, then sea lanes, centres and pieces, then the province codes.
   const [pass, setPass] = useState(0);
   useEffect(() => {
-    if (measuredFrame && pass < 2) startTransition(() => setPass((p) => Math.min(2, p + 1)));
+    if (!measuredFrame || pass >= LAST_PASS) return;
+    const frameId = requestAnimationFrame(() => startTransition(() => setPass((p) => Math.min(LAST_PASS, p + 1))));
+    return () => cancelAnimationFrame(frameId);
   }, [measuredFrame, pass]);
 
   // The player chose another power: bring its theatre into view (small frames only).
@@ -603,8 +604,12 @@ export function Board({
         onLostPointerCapture={endGesture}
       >
         <Geography board={board} layer="under" />
-        <Territory board={board} control={control} centerOwner={centerOwner} layer="land" />
-        {pass >= 1 ? <Geography board={board} layer="over" /> : null}
+        <g className="land">
+          <Territory board={board} control={control} centerOwner={centerOwner} layer="land-a" />
+          {pass >= 1 ? <Territory board={board} control={control} centerOwner={centerOwner} layer="land-b" /> : null}
+        </g>
+        {pass >= 2 ? <Geography board={board} layer="coast" /> : null}
+        {pass >= 3 ? <Geography board={board} layer="lines" /> : null}
         <rect className="sheet-edge" x={0} y={0} width={full.w} height={full.h} />
 
         {standoffs?.map((code) => {
@@ -619,11 +624,11 @@ export function Board({
           : null}
         {selected && board.provinces[selected] ? <path className="selected" d={board.provinces[selected]!.d} /> : null}
 
-        {pass >= 1 ? <Territory board={board} control={control} centerOwner={centerOwner} layer="centres" /> : null}
-        {pass >= 2 ? <Labels board={board} size={size} r={r} /> : <g className="labels" />}
+        {pass >= 3 ? <Territory board={board} control={control} centerOwner={centerOwner} layer="centres" /> : null}
+        {pass >= LAST_PASS ? <Labels board={board} size={size} r={r} /> : <g className="labels" />}
 
-        <g className="units" data-ready={pass >= 1}>
-          {(pass >= 1 ? pieces : []).map((u) => (
+        <g className="units">
+          {(pass >= 3 ? pieces : []).map((u) => (
             <g
               key={u.key}
               className={`unit${u.dislodged ? " dislodged" : ""}`}
