@@ -12,7 +12,7 @@ function headline(finished: NonNullable<GameSummary["finished"]>): string {
   const names = finished.winners.map(powerLabel);
   const list = names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
   if (finished.result === "solo") return `${list} takes Europe.`;
-  if (finished.result === "draw") return `A draw, shared by ${list}.`;
+  if (finished.result === "draw") return names.length === 7 ? "A draw among all seven powers." : `A draw, shared by ${list}.`;
   return "The game was abandoned.";
 }
 

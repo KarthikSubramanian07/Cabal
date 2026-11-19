@@ -134,7 +134,7 @@ test.describe("the game room, live", () => {
     for (const p of [ada, bea, eve]) {
       await expect(primary(p)).toHaveText("See the final scores", { timeout: 20_000 });
       await primary(p).click();
-      await expect(p.getByRole("heading", { name: /^A draw, shared by/ })).toBeVisible();
+      await expect(p.getByRole("heading", { name: /^A draw/ })).toBeVisible();
       await expect(p.getByRole("table", { name: "Final scores" })).toBeVisible();
     }
     // The Ledger lists the seal, kept, and it opens on this device too.

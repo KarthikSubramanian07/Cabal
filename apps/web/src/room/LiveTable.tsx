@@ -494,7 +494,7 @@ function Floor({
     const parts: string[] = [];
     if (record) parts.push("Results");
     else if (running && msLeft !== null) parts.push(view.status === "paused" ? "Paused" : `${clockFace(msLeft)} left`);
-    else if (over) parts.push("Game over");
+    else if (over) parts.push(view.finished?.result === "solo" ? `${powerLabel(view.finished.winners[0] ?? "")} won` : view.finished?.result === "draw" ? "Drawn" : "Abandoned");
     if (!record && me && canOrder && due > 0) parts.push(`${Math.min(givenCount, due)} of ${due} ${kind === "A" ? (desk.allowance > 0 ? "builds" : "disbands") : "orders"}`);
     if (!record && isReady) parts.push("ready");
     if (unread > 0) parts.push(`${unread} unread`);
