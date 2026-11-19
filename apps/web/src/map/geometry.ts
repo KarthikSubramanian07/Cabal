@@ -244,8 +244,36 @@ export interface HelperArrow {
 export function supportMoveArrow(from: Point, move: Quad, r: number): HelperArrow {
   const s = markSizes(r);
   const aim = quadPoint(move, 0.5);
-  const q = trim(bowed(from, aim, HELPER_BEND), s.leave, s.knot);
+  const q = clearOfHead(from, aim, move.b, s);
   return { d: quadPath(q), knot: { at: aim, r: s.knot }, failAt: quadPoint(q, 0.5) };
+}
+
+/** The least distance from a curve to a point, sampled finely enough for a mark. */
+function distanceTo(q: Quad, p: Point): number {
+  let best = Infinity;
+  for (let i = 0; i <= 32; i++) best = Math.min(best, dist(quadPoint(q, i / 32), p));
+  return best;
+}
+
+/**
+ * A helper's line from `from` to `aim`, trimmed. A supporter beyond the destination would run
+ * its line straight back over the move's arrowhead; then the line swings wide of the head, on
+ * the side away from it, just far enough to leave it clear.
+ */
+function clearOfHead(from: Point, aim: Point, head: Point, s: ReturnType<typeof markSizes>): Quad {
+  const plain = trim(bowed(from, aim, HELPER_BEND), s.leave, s.knot);
+  const room = s.head * 1.5;
+  if (distanceTo(plain, head) >= room) return plain;
+  const len = dist(from, aim) || 1;
+  const n: Point = [-(aim[1] - from[1]) / len, (aim[0] - from[0]) / len];
+  const side = (head[0] - from[0]) * n[0] + (head[1] - from[1]) * n[1] >= 0 ? -1 : 1;
+  const m = lerp(from, aim, 0.5);
+  let out = plain;
+  for (let bow = s.head; bow <= Math.max(len, s.head) * 1.5; bow += s.head * 0.5) {
+    out = trim({ a: from, c: [m[0] + n[0] * bow * side, m[1] + n[1] * bow * side], b: aim }, s.leave, s.knot);
+    if (distanceTo(out, head) >= room) break;
+  }
+  return out;
 }
 
 /** A support for a unit holding: a line to the ring round the unit it holds up. */

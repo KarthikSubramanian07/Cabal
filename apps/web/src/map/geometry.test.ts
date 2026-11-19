@@ -78,6 +78,20 @@ describe("support arrows", () => {
     close(s.knot.at, quadPoint(move.drawn, 0.5));
   });
 
+  it("swing wide of the move's arrowhead when the supporter stands beyond the destination", () => {
+    // A MUN S A PAR - BUR: Munich lies past Burgundy, so a straight line to the middle of the
+    // move would run back over its head.
+    const move = moveArrow([0, 0], [100, 0], 9);
+    const s = supportMoveArrow([190, -8], move.drawn, 9);
+    const pts = (s.d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
+    const q = { a: [pts[0]!, pts[1]!] as Point, c: [pts[2]!, pts[3]!] as Point, b: [pts[4]!, pts[5]!] as Point };
+    let nearest = Infinity;
+    for (let i = 0; i <= 50; i++) nearest = Math.min(nearest, dist(quadPoint(q, i / 50), move.drawn.b));
+    expect(nearest).toBeGreaterThan(markSizes(9).head);
+    // Still ending in its knot on the move.
+    expect(s.knot.at).toEqual(quadPoint(move.drawn, 0.5));
+  });
+
   it("stop at the ring round a unit they hold up", () => {
     const s = supportHoldArrow([0, 0], [100, 0], 9);
     expect(dist(s.knot.at, [100, 0])).toBeCloseTo(markSizes(9).ring, 0);
