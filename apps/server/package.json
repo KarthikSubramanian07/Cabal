@@ -10,7 +10,7 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src test",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "load:sockets": "node scripts/load-sockets.mjs",
     "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types",

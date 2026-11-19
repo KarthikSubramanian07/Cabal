@@ -31,7 +31,8 @@
   ],
   // Claude turns for games that opt into `aiBrain: "claude"`. The built-in bot never uses the queue.
   // One message is one model call: small batches, bounded concurrency (two full tables of six seats
-  // can think at once; spend is bounded per game by the room, not here), and a dead-letter queue so
+  // can think at once; spend is bounded per game by the room and for the whole deployment by the
+  // Registry's daily budget, not here), and a dead-letter queue so
   // a turn that cannot be delivered is visible instead of silently dropped.
   "queues": {
     "producers": [{ "binding": "AGENT_QUEUE", "queue": "cabal-agent-turns" }],

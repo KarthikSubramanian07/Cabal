@@ -67,11 +67,17 @@ export function buildId(env: Env): string {
   return env.BUILD_ID || env.CF_VERSION_METADATA?.id || "dev";
 }
 
+/** `/health` asks the index at most this often per isolate; in between it answers from memory. */
+const HEALTH_CACHE_MS = 5000;
+let probed: { at: number; schema: number | null; registry: unknown } | null = null;
+
 async function health(env: Env): Promise<HealthResponse> {
   await engineReady();
   const index = gameIndex(env);
   let schema: number | null = null;
-  if (index) {
+  const fresh = probed !== null && probed.registry === env.REGISTRY && Date.now() - probed.at < HEALTH_CACHE_MS;
+  if (fresh) schema = probed!.schema;
+  if (index && !fresh) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       schema = await Promise.race([
@@ -85,6 +91,7 @@ async function health(env: Env): Promise<HealthResponse> {
     } finally {
       clearTimeout(timer);
     }
+    probed = { at: Date.now(), schema, registry: env.REGISTRY };
   }
   return {
     ok: true,
@@ -147,7 +154,11 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   const url = new URL(request.url);
 
-  if (url.pathname === "/health") return withCors(json(await health(env)));
+  if (url.pathname === "/health") {
+    // Unauthenticated and it reaches the one index object, so it is limited like any other read.
+    if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
+    return withCors(json(await health(env)));
+  }
 
   if (url.pathname === "/api/games" && request.method === "POST") {
     if (await limited(env.CREATE_LIMITER, request, "create")) return tooMany();
