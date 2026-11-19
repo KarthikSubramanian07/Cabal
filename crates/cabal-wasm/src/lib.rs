@@ -623,6 +623,49 @@ mod wasm_tests {
     }
 
     #[wasm_bindgen_test]
+    fn outcome_of_a_past_phase_describes_what_followed_it() {
+        let no_orders =
+            || Ts::new_unchecked(serde_wasm_bindgen::to_value(&OrdersByPower::default()).unwrap());
+        let read = |outcome: Ts<PhaseOutcome>| -> PhaseOutcome {
+            serde_wasm_bindgen::from_value(outcome.js_value()).unwrap()
+        };
+        let mut game = Game::new(None).unwrap();
+        game.process(no_orders()).unwrap();
+        game.process(no_orders()).unwrap();
+        game.declare_draw(None).unwrap();
+
+        // the first phase led to Fall 1901 and an active game, whatever came later
+        let first = read(game.outcome(0).unwrap());
+        assert_eq!(first.phase, "S1901M");
+        assert_eq!(first.next.name, "F1901M");
+        assert_eq!(first.status, "active");
+        let last = read(game.outcome(1).unwrap());
+        assert_eq!(last.next.name, "S1902M");
+        assert_eq!(last.status, "draw");
+        assert!(game.outcome(2).is_err());
+    }
+
+    #[wasm_bindgen_test]
+    fn a_resumed_game_keeps_its_history_without_replaying_it() {
+        let no_orders =
+            || Ts::new_unchecked(serde_wasm_bindgen::to_value(&OrdersByPower::default()).unwrap());
+        let mut game = Game::new(Some("1971".to_string())).unwrap();
+        game.process(no_orders()).unwrap();
+        let saved = game.to_saved("g").unwrap();
+
+        let resumed = Game::resume(&saved, None).unwrap();
+        assert_eq!(resumed.history_length(), 1);
+        assert_eq!(resumed.rulebook(), "1971");
+        assert_eq!(resumed.to_saved("g").unwrap(), saved);
+        let restored = Game::from_snapshot(&game.snapshot().unwrap(), Some(saved.clone())).unwrap();
+        assert_eq!(restored.to_saved("g").unwrap(), saved);
+        let report: ReplayReport =
+            serde_wasm_bindgen::from_value(verify_saved(&saved, None).unwrap().js_value()).unwrap();
+        assert!(report.divergences.is_empty());
+        assert_eq!(report.phases, 1);
+    }
+
+    #[wasm_bindgen_test]
     fn explain_traces_past_movement_phases_only() {
         let mut game = Game::new(None).unwrap();
         let mut orders = OrdersByPower::default();
