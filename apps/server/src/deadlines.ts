@@ -42,6 +42,15 @@ export const OUTBOX_BASE_MS = 5_000;
 export const OUTBOX_CAP_MS = 3_600_000;
 export const OUTBOX_MAX_ATTEMPTS = 40;
 
+/** An alarm handler that throws is run again after 2 s, doubling to a one minute ceiling. */
+export const ALARM_BACKOFF_BASE_MS = 2_000;
+export const ALARM_BACKOFF_CAP_MS = 60_000;
+
+/** Delay before the alarm runs again after `failures` failures in a row (1 based). */
+export function alarmBackoff(failures: number): number {
+  return Math.min(ALARM_BACKOFF_CAP_MS, ALARM_BACKOFF_BASE_MS * 2 ** Math.min(Math.max(failures, 1) - 1, 10));
+}
+
 /** Delay before retry number `attempt` (1 based), or null once the retries are spent. */
 export function adjudicationRetryDelay(attempt: number): number | null {
   return ADJUDICATION_RETRY_MS[attempt - 1] ?? null;
