@@ -244,14 +244,19 @@ function enrichIndexHtml() {
   };
 
   const software = {
-    "@type": "SoftwareApplication",
+    "@type": ["VideoGame", "SoftwareApplication"],
     "@id": `${SITE}/#app`,
     name: "Cabal",
     applicationCategory: "GameApplication",
     operatingSystem: "Web browser",
     url: `${SITE}/`,
     description:
-      "Cabal is a Diplomacy browser game with receipts: classic 1901 board, simultaneous orders, and a DATC-complete Rust/WebAssembly adjudicator.",
+      "Cabal is Diplomacy in the browser: the classic 1901 board against six bots or with friends, orders resolved at once by a DATC-complete Rust/WebAssembly adjudicator, promises sealed in wax, and a public Ledger of who kept their word.",
+    genre: ["Strategy", "Board game"],
+    gamePlatform: "Web browser",
+    playMode: ["MultiPlayer", "SinglePlayer"],
+    image: `${SITE}/og.png`,
+    screenshot: `${SITE}/og.png`,
     offers: {
       "@type": "Offer",
       price: "0",
@@ -260,9 +265,19 @@ function enrichIndexHtml() {
     author: { "@id": `${SITE}/#organization` },
   };
 
+  const website = {
+    "@type": "WebSite",
+    "@id": `${SITE}/#website`,
+    name: "Cabal",
+    url: `${SITE}/`,
+    description: "Play Diplomacy in your browser against bots or friends, seal your promises, and see who keeps their word on the Ledger.",
+    inLanguage: "en",
+    publisher: { "@id": `${SITE}/#organization` },
+  };
+
   const jsonLd = {
     "@context": "https://schema.org",
-    "@graph": [organization, software],
+    "@graph": [website, organization, software],
   };
 
   // Replace legacy VideoGame-only JSON-LD if present; else inject before </head>.
@@ -276,19 +291,8 @@ function enrichIndexHtml() {
     html = html.replace("</head>", `${ldTag}\n  </head>`);
   }
 
-  // Brand-forward title for discoverability (Diplomacy + Cabal).
-  html = html.replace(
-    /<title>[^<]*<\/title>/,
-    "<title>Cabal — Diplomacy browser game with receipts</title>",
-  );
-  html = html.replace(
-    /property="og:title" content="[^"]*"/,
-    'property="og:title" content="Cabal — Diplomacy browser game with receipts"',
-  );
-  html = html.replace(
-    /name="twitter:title" content="[^"]*"/,
-    'name="twitter:title" content="Cabal — Diplomacy browser game with receipts"',
-  );
+  // Title, description, canonical link and share card: the front door's by default; the Pages
+  // worker writes each address's own over them as the page goes out (src/app/meta.ts).
 
   if (!html.includes('rel="describedby"')) {
     html = html.replace(
@@ -366,19 +370,20 @@ function writeLlms() {
   writeFileSync(join(dist, "llms.txt"), md("llms.txt"));
 }
 
+/** The pages a search index may keep; tables and replays are reached by their code, not listed. */
+export const SITEMAP = [
+  ["/", "daily", "1.0"],
+  ["/sandbox", "monthly", "0.9"],
+  ["/games", "hourly", "0.8"],
+  ["/ledger", "daily", "0.8"],
+  ["/about", "monthly", "0.6"],
+  ["/contact", "yearly", "0.4"],
+  ["/privacy", "yearly", "0.4"],
+];
+
 function writeSitemap() {
-  writeFileSync(
-    join(dist, "sitemap.xml"),
-    `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>${SITE}/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
-  <url><loc>${SITE}/about</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>${SITE}/contact</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>${SITE}/privacy</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>${SITE}/llms.txt</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
-</urlset>
-`,
-  );
+  const urls = SITEMAP.map(([path, freq, priority]) => `  <url><loc>${SITE}${path}</loc><changefreq>${freq}</changefreq><priority>${priority}</priority></url>`);
+  writeFileSync(join(dist, "sitemap.xml"), `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`);
 }
 
 function loadEsbuild() {
