@@ -11,6 +11,7 @@
 //! - [`game`]: phase progression, supply centre bookkeeping, victory.
 //! - [`json`]: MILA / Cicero compatible saved game format.
 //! - [`snapshot`]: lossless restore without adjudicating the past.
+//! - [`validate`]: board-aware verdicts on submitted order text.
 //! - [`verify`]: replay a recorded game and report every divergence.
 //! - [`pledge`]: seals (commitments) and receipts.
 //!
@@ -30,6 +31,7 @@ pub mod rulebook;
 pub mod snapshot;
 pub mod state;
 pub mod text;
+pub mod validate;
 pub mod verify;
 
 pub use adjudicate::{
