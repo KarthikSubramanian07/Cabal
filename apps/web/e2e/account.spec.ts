@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
-import { SECRET, accountRoutes, fakeServer, signedIn } from "./api.js";
+import { SECRET, accountRoutes, fakeServer, fixture, signedIn } from "./api.js";
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
@@ -180,6 +180,30 @@ test.describe("the player's account", () => {
     const card = page.getByRole("dialog", { name: "Your account" });
     await expect(card.getByRole("button", { name: "Make a recovery code" })).toBeFocused();
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem("cabal.player")!).id)).toBe("pl_test_ada");
+  });
+
+  test("Play now with a secret the server no longer knows asks for a handle and plays", async ({ page }) => {
+    const server = await fakeServer(page);
+    accountRoutes(server);
+    const secrets: (string | undefined)[] = [];
+    server.on("POST", /^\/api\/games$/, (request) => {
+      const auth = request.headers()["authorization"];
+      secrets.push(auth);
+      if (auth === "Bearer ps_dead") return { status: 401, body: { error: "that player secret is not valid; sign in again or play without it", code: "signed_out" } };
+      return { status: 201, body: { gameId: "K7Q2XZ", token: "K7Q2XZ.tok", power: "ITALY" } };
+    });
+    server.on("POST", /^\/api\/games\/K7Q2XZ\/start$/, () => ({ body: { ...fixture<Record<string, unknown>>("summary-Z2BSVX"), id: "K7Q2XZ", status: "active", finished: null } }));
+    await page.addInitScript(() => localStorage.setItem("cabal.player", JSON.stringify({ id: "pl_gone", handle: "gone_one", secret: "ps_dead", savedAt: 1 })));
+    await page.goto("/");
+    await page.getByRole("button", { name: /Play now/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Choose your handle" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText("This device is no longer signed in to its account.")).toBeVisible();
+    await dialog.getByLabel("Handle").fill("fresh_start");
+    await dialog.getByRole("button", { name: "Take this handle" }).click();
+    await expect(page).toHaveURL(/\/g\/K7Q2XZ$/);
+    expect(secrets).toEqual(["Bearer ps_dead", `Bearer ${SECRET}`]);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("cabal.player")!).handle)).toBe("fresh_start");
   });
 
   test("a secret the server no longer knows signs the device out instead of acting as nobody", async ({ page }) => {

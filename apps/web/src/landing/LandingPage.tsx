@@ -95,19 +95,21 @@ function Theatre() {
 }
 
 function PlayNow({ onCreate }: { onCreate: () => void }) {
-  const { ensurePlayer } = useIdentity();
+  const { asPlayer } = useIdentity();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function play() {
     if (busy) return;
     setError(null);
-    const me = await ensurePlayer("You are about to sit down against six bots. The table, the Ledger and your record will know you by this name.");
-    if (!me) return;
-    setBusy(true);
     try {
-      const { startQuickGame } = await import("../lobby/quickGame.js");
-      navigate(`/g/${await startQuickGame(me)}`);
+      const code = await asPlayer("You are about to sit down against six bots. The table, the Ledger and your record will know you by this name.", async (me) => {
+        setBusy(true);
+        const { startQuickGame } = await import("../lobby/quickGame.js");
+        return startQuickGame(me);
+      });
+      if (code) navigate(`/g/${code}`);
+      else setBusy(false);
     } catch (err) {
       setError(failureText(err));
       setBusy(false);

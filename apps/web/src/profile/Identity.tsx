@@ -7,7 +7,8 @@
  * mounted here too, so the player menu and any page can open them.
  */
 import { type FormEvent, type ReactNode, Suspense, createContext, lazy, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
-import { type StoredPlayer, readPlayer } from "../net/player.js";
+import { failureCode } from "../net/failure.js";
+import { type StoredPlayer, forgetPlayer, readPlayer } from "../net/player.js";
 import type { AccountSection } from "./AccountDialog.jsx";
 import { accountFailure, handleProblem } from "./handles.js";
 import { useAccount } from "./usePlayer.js";
@@ -19,6 +20,13 @@ export interface Identity {
    * handle dialog opens with. Resolves with null when the person closes the dialog.
    */
   ensurePlayer: (reason?: string) => Promise<StoredPlayer | null>;
+  /**
+   * Do something as the player on this device (sit down, set a table), making one first if there
+   * is none. When the server no longer knows this device's secret (signed out elsewhere, or the
+   * account was removed) the device lets go of it, asks again, and tries once more. Resolves with
+   * null when the person closes the dialog.
+   */
+  asPlayer: <T>(reason: string, work: (player: StoredPlayer) => Promise<T>) => Promise<T | null>;
   /** Open the account dialog, at one of its sections. */
   openAccount: (section?: AccountSection) => void;
   /** Open the dialog that restores an account from its recovery code. */
@@ -287,6 +295,8 @@ function HandleDialog({
 }
 
 const DEFAULT_REASON = "The table, the Ledger and your record will know you by this name.";
+const EXPIRED_REASON =
+  "This device is no longer signed in to its account. Choose a handle to play on, or restore your account from its recovery code.";
 
 export function IdentityProvider({ children }: { children: ReactNode }) {
   const { player } = useAccount();
@@ -303,6 +313,23 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const asPlayer = useCallback(
+    async <T,>(reason: string, work: (player: StoredPlayer) => Promise<T>): Promise<T | null> => {
+      const me = await ensurePlayer(reason);
+      if (!me) return null;
+      try {
+        return await work(me);
+      } catch (error) {
+        if (failureCode(error) !== "signed_out") throw error;
+        // A dead secret: keep it and every later try fails the same way. Let it go and ask again.
+        forgetPlayer();
+        const again = await ensurePlayer(EXPIRED_REASON);
+        return again ? await work(again) : null;
+      }
+    },
+    [ensurePlayer],
+  );
+
   const openRestore = useCallback(() => {
     setAsk({ reason: DEFAULT_REASON, mode: "restore", resolve: () => undefined });
   }, []);
@@ -314,8 +341,8 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
 
   const closeAccount = useCallback(() => setAccount(null), []);
   const value = useMemo<Identity>(
-    () => ({ player, ensurePlayer, openAccount: (section = "handle") => setAccount(section), openRestore }),
-    [player, ensurePlayer, openRestore],
+    () => ({ player, ensurePlayer, asPlayer, openAccount: (section = "handle") => setAccount(section), openRestore }),
+    [player, ensurePlayer, asPlayer, openRestore],
   );
 
   return (

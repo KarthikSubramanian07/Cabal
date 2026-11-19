@@ -75,7 +75,7 @@ export function CreateGameDialog({ open, onClose }: { open: boolean; onClose: ()
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const errorId = useId();
-  const { player, ensurePlayer } = useIdentity();
+  const { player, asPlayer } = useIdentity();
   const [pacing, setPacing] = useState<Pacing>(DEFAULTS.pacing);
   const [press, setPress] = useState<PressMode>(DEFAULTS.press);
   const [rulebook, setRulebook] = useState<Rulebook>(DEFAULTS.rulebook);
@@ -101,16 +101,18 @@ export function CreateGameDialog({ open, onClose }: { open: boolean; onClose: ()
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (busy) return;
-    const me = await ensurePlayer("You are about to set a table. The other players, the Ledger and your record will know you by this name.");
-    if (!me) return;
     const settings: GameSettingsInput = { pacing, press, rulebook, dias, scoring, aiFill, aiBrain, visibility };
-    setBusy(true);
     setError(null);
     try {
-      const res = await api.createGame({ settings }, me.secret);
-      keepCreatedSeat({ gameId: res.gameId, power: res.power, token: res.token, name: me.handle, userId: me.id });
+      const made = await asPlayer("You are about to set a table. The other players, the Ledger and your record will know you by this name.", async (me) => {
+        setBusy(true);
+        const res = await api.createGame({ settings }, me.secret);
+        keepCreatedSeat({ gameId: res.gameId, power: res.power, token: res.token, name: me.handle, userId: me.id });
+        return res.gameId;
+      });
+      if (!made) return;
       onClose();
-      navigate(`/g/${res.gameId}`);
+      navigate(`/g/${made}`);
     } catch (err) {
       setError(failureText(err));
     } finally {
