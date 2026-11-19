@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type { PhaseRecord, PowerSummary } from "../game/useSandbox.js";
 import { type PhaseKind, describePhase, parseOrder, titleCase } from "../game/notation.js";
 import { receiptFor } from "../game/receipts.js";
@@ -248,13 +248,34 @@ export function PhaseStepper({
   livePhase: string;
   onView: (index: number | null) => void;
 }) {
-  if (history.length === 0) return null;
+  
+  const [playing, setPlaying] = useState(false);
   const index = viewing ?? history.length;
+  useEffect(() => {
+    if (!playing) return;
+    if (index >= history.length) {
+      setPlaying(false);
+      return;
+    }
+    const timer = window.setTimeout(() => onView(index + 1 < history.length ? index + 1 : null), 1200);
+    return () => window.clearTimeout(timer);
+  }, [playing, index, history.length, onView]);
+  if (history.length === 0) return null;
   const go = (i: number) => onView(i >= history.length ? null : Math.max(0, i));
   return (
     <nav className="stepper" aria-label="Phase history">
       <button type="button" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Previous phase">
         ‹
+      </button>
+      <button type="button" className="replay" onClick={() => {
+        if (playing) {
+          setPlaying(false);
+        } else {
+          if (index >= history.length) onView(0);
+          setPlaying(true);
+        }
+    }} aria-label={playing ? "Pause replay" : "Play replay"} aria-pressed={playing}>
+        {playing ? "Ⅱ" : "▶"}
       </button>
       <select
         value={index}
