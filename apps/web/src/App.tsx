@@ -48,7 +48,7 @@ const IDLE: Draft = { step: "idle" };
 
 export function App() {
   const sb = useSandbox();
-  const [draft, setDraft] = useState<Draft>(IDLE);
+  const [draft, setDraft] = useState<Draft>(IDLE); const [manualOrder, setManualOrder] = useState("");
   const [active, setActive] = useState("FRANCE");
   const [message, setMessage] = useState<string | null>(null);
   const [picker, setPicker] = useState<Picker | null>(null);
@@ -441,7 +441,7 @@ export function App() {
                 Cancel <kbd>Esc</kbd>
               </button>
             ) : null}
-            <p className={`hint${message ? " alert" : ""}`} role="status" aria-live="polite">
+            {!record && sb.status === "active" ? <form className="order-entry" aria-label="Enter orders in MILA notation" onSubmit={(e) => { e.preventDefault(); const wanted = manualOrder.trim().toUpperCase(); const found = Object.entries(sb.legal[active] ?? {}).flatMap(([key, orders]) => orders.map((text) => ({ key, text }))).find(({ text }) => text.toUpperCase() === wanted); if (!found) { setMessage("Enter an order from the legal suggestions."); return; } sb.setOrder(active, found.key, found.text); setManualOrder(""); setMessage(null); announce(describeOrder(found.text)); }}><input className="tool" aria-label="Order in MILA notation" placeholder="MILA order" list="legal-order-suggestions" value={manualOrder} onChange={(e) => setManualOrder(e.currentTarget.value)} /><datalist id="legal-order-suggestions">{Object.values(sb.legal[active] ?? {}).flatMap((orders) => orders).map((text) => <option key={text} value={text} />)}</datalist><button type="submit" className="tool">Enter order</button></form> : null} <p className={`hint${message ? " alert" : ""}`} role="status" aria-live="polite">
               {hint}
             </p>
           </div>
