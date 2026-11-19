@@ -78,7 +78,6 @@ flowchart LR
     DO -->|game over| REG
     DO --> Q
   end
-  Pages --> UI
   UI <-->|HTTPS and WebSocket, one origin| Pages
   Q -->|opt-in| Claude[(Anthropic API)]
 ```

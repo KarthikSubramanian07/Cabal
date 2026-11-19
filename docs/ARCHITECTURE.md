@@ -25,7 +25,7 @@ flowchart TB
       WS --> SM --> EngineS --> SQL
       Alarm --> SM
     end
-    Registry[(Durable Object: Registry\nsingleton, SQLite: games index,\nplayers, ratings, trust ledger)]
+    Registry[(Durable Object: Registry\none instance, SQLite\ngames, players, ratings, trust)]
     Queue[[Queue: cabal-agent-turns\nopt-in Claude seats]]
   end
 
@@ -33,7 +33,7 @@ flowchart TB
   Pages -->|service binding SERVER| API
   API --> DO
   API --> Registry
-  DO -->|game over summary, RPC| Registry
+  DO -->|game over| Registry
   SM --> Queue --> Anthropic[(Anthropic API)]
 ```
 

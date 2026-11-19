@@ -63,8 +63,7 @@ flowchart LR
     UI[React 19 UI] --> WASM[cabal-engine.wasm]
   end
   subgraph Cloudflare
-    Pages[Pages: playcabal.pages.dev] --> UI
-    Pages -->|/api via service binding| API[Worker: cabal-server]
+    Pages[Pages: playcabal.pages.dev] -->|/api via service binding| API[Worker: cabal-server]
     API --> DO[(Durable Object: GameRoom)]
     DO --> SQL[(DO SQLite)]
     DO --> WASM2[cabal-engine.wasm + heuristic bot]
