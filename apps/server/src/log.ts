@@ -55,9 +55,15 @@ export function currentRequestId(): string | undefined {
   return context.getStore()?.requestId;
 }
 
+/**
+ * Write one line. `fields` add to the context's fields and may refine them, but never replace
+ * `ts`, `level`, `event`, `service` or `requestId`: filtering on those must always work.
+ */
 export function log(event: string, fields: Record<string, unknown> = {}, level: "info" | "error" = "info"): void {
   const ctx = context.getStore();
-  const line = JSON.stringify({ ts: new Date().toISOString(), level, event, ...ctx, ...fields });
+  const pinned = { ts: new Date().toISOString(), level, event, ...(ctx ? { service: ctx.service, requestId: ctx.requestId } : {}) };
+  // `pinned` first for the order of the keys, last so nothing overrides it.
+  const line = JSON.stringify({ ...pinned, ...ctx, ...fields, ...pinned });
   if (level === "error") console.error(line);
   else console.info(line);
 }

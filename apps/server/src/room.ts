@@ -81,7 +81,7 @@ import {
   timedFirst,
 } from "./engine.js";
 import { gameIndex } from "./game-index.js";
-import { REQUEST_ID_HEADER, log, requestIdFrom, withLogContext } from "./log.js";
+import { REQUEST_ID_HEADER, log, newRequestId, requestIdFrom, withLogContext } from "./log.js";
 import { type Notice, deliver, notices, pushEnabled, reminderMinutes } from "./notify.js";
 import { hashToken, mintToken, parseToken, randomId, sameHash } from "./tokens.js";
 import { ledgerTally } from "./ratings.js";
@@ -501,7 +501,8 @@ export class GameRoom extends DurableObject<Env> {
     super(ctx, env);
     // Keepalives are answered by the runtime without waking the room.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
-    ctx.blockConcurrencyWhile(async () => {
+    // Waking is work too: its lines (the engine's cold start among them) say they are the room's.
+    ctx.blockConcurrencyWhile(() => withLogContext({ service: "room", requestId: newRequestId("wake") }, async () => {
       await engineReady();
       const stored = this.kv.get<Partial<Meta> & Pick<Meta, "id" | "status" | "createdAt" | "creator">>("meta");
       // Looking up a code that names no game must not write storage; create() lays the schema down.
@@ -558,7 +559,7 @@ export class GameRoom extends DurableObject<Env> {
       if (want === null && have !== null) await ctx.storage.deleteAlarm();
       else if (want !== null && have !== want) await ctx.storage.setAlarm(want);
       this.armedAt = want;
-    });
+    }));
   }
 
   /** Create the tables, then bring rooms from older deployments up to the current shape. */

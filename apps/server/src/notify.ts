@@ -163,10 +163,10 @@ async function sendOne(notice: Notice, target: Recipient, keys: VapidKeys, now: 
     await res.body?.cancel().catch(() => undefined);
     if (res.status === 404 || res.status === 410) return "gone";
     if (res.status >= 200 && res.status < 300) return "delivered";
-    log("push_rejected", { kind: notice.kind, gameId: notice.gameId, status: res.status, service: new URL(target.endpoint).hostname }, "error");
+    log("push_rejected", { kind: notice.kind, gameId: notice.gameId, status: res.status, pushService: new URL(target.endpoint).hostname }, "error");
     return "failed";
   } catch (error) {
-    log("push_failed", { kind: notice.kind, gameId: notice.gameId, service: new URL(target.endpoint).hostname, ...describeError(error) }, "error");
+    log("push_failed", { kind: notice.kind, gameId: notice.gameId, pushService: new URL(target.endpoint).hostname, ...describeError(error) }, "error");
     return "failed";
   }
 }
