@@ -219,37 +219,50 @@ fn own_meta_or_none<'de, D>(deserializer: D) -> Result<Option<CabalMeta>, D::Err
 where
     D: serde::Deserializer<'de>,
 {
-    use serde_json::Value;
-    let Value::Object(mut block) = Value::deserialize(deserializer)? else {
+    use serde_json::value::RawValue;
+
+    // The block is kept as text and each part is read on its own, so one part
+    // in an unexpected shape decides only its own fate.
+    #[derive(Deserialize)]
+    struct Parts<'a> {
+        #[serde(borrow)]
+        engine: Option<&'a RawValue>,
+        #[serde(borrow)]
+        rulebook: Option<&'a RawValue>,
+        #[serde(borrow)]
+        outcome: Option<&'a RawValue>,
+        #[serde(borrow)]
+        pledges: Option<&'a RawValue>,
+        #[serde(borrow)]
+        rejected: Option<&'a RawValue>,
+    }
+    fn read<'a, T: Deserialize<'a>>(raw: Option<&'a RawValue>) -> Option<T> {
+        serde_json::from_str(raw?.get()).ok()
+    }
+
+    let block = Box::<RawValue>::deserialize(deserializer)?;
+    let Ok(parts) = serde_json::from_str::<Parts>(block.get()) else {
+        return Ok(None); // not an object
+    };
+    let (Some(engine), Some(rulebook)) = (read::<String>(parts.engine), read(parts.rulebook))
+    else {
         return Ok(None);
     };
-    let Some(Value::String(engine)) = block.remove("engine") else {
-        return Ok(None);
-    };
-    let Some(Ok(rulebook)) = block.remove("rulebook").map(Rulebook::deserialize) else {
-        return Ok(None);
-    };
-    let outcome = match block.remove("outcome") {
+    let outcome = match parts.outcome {
         None => SavedOutcome::default(),
-        Some(value) => SavedOutcome::deserialize(value).unwrap_or(SavedOutcome::Unknown),
+        some => read(some).unwrap_or(SavedOutcome::Unknown),
     };
-    let pledges = match block.remove("pledges") {
-        Some(Value::Array(list)) => list
-            .into_iter()
-            .filter_map(|p| SavedPledge::deserialize(p).ok())
-            .collect(),
-        _ => Vec::new(),
-    };
-    let rejected = block
-        .remove("rejected")
-        .and_then(|value| BTreeMap::deserialize(value).ok())
-        .unwrap_or_default();
+    let pledges = read::<Vec<&RawValue>>(parts.pledges)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|p| read(Some(p)))
+        .collect();
     Ok(Some(CabalMeta {
         engine,
         rulebook,
         outcome,
         pledges,
-        rejected,
+        rejected: read(parts.rejected).unwrap_or_default(),
     }))
 }
 
