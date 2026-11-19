@@ -1,6 +1,10 @@
 <div align="center">
 
-<img src="docs/brand/wordmark.svg" alt="CABAL" width="360" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/wordmark-dark.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="docs/brand/wordmark.svg" />
+  <img src="docs/brand/wordmark.svg" alt="CABAL" width="360" />
+</picture>
 
 **Diplomacy with receipts.** Seven powers. One board. Every promise can be sealed, verified, and held against you.
 
