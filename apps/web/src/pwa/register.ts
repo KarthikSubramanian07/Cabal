@@ -98,26 +98,49 @@ export function pageUpdater(): Updater | null {
 /** How often an open tab asks whether a new build has been deployed. */
 const CHECK_MS = 30 * 60_000;
 
+/** What `connect` needs from the page, so it can be tested without one. */
+export interface ConnectDeps {
+  container: ContainerLike;
+  updater: Updater;
+  /** Run `check` every `ms` milliseconds. */
+  every: (check: () => void, ms: number) => void;
+  /** Run `check` whenever the page comes back into view. */
+  onVisible: (check: () => void) => void;
+  warn: (message: string, error?: unknown) => void;
+}
+
+/** Register the worker and watch it for updates. */
+export async function connect({ container, updater, every, onVisible, warn }: ConnectDeps): Promise<void> {
+  let registration: RegistrationLike;
+  try {
+    registration = await container.register("/sw.js", { scope: "/", updateViaCache: "none" });
+  } catch (error) {
+    // The site works without it; say why offline play is missing for whoever is looking.
+    warn("Cabal: the offline copy could not be set up.", error);
+    return;
+  }
+  updater.watch(registration);
+  const check = () => void registration.update().catch(() => undefined);
+  every(check, CHECK_MS);
+  onVisible(check);
+}
+
 export function registerServiceWorker(): void {
   if (!import.meta.env.PROD || typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
   const container = navigator.serviceWorker as unknown as ContainerLike;
-  updater = createUpdater(container, () => window.location.reload());
-  const start = () => {
-    container.register("/sw.js", { scope: "/", updateViaCache: "none" }).then(
-      (registration) => {
-        updater?.watch(registration);
-        const check = () => void registration.update().catch(() => undefined);
-        window.setInterval(check, CHECK_MS);
+  const current = createUpdater(container, () => window.location.reload());
+  updater = current;
+  const start = () =>
+    void connect({
+      container,
+      updater: current,
+      every: (check, ms) => window.setInterval(check, ms),
+      onVisible: (check) =>
         document.addEventListener("visibilitychange", () => {
           if (document.visibilityState === "visible") check();
-        });
-      },
-      (error: unknown) => {
-        // The site works without it; say why offline play is missing for whoever is looking.
-        console.warn("Cabal: the offline copy could not be set up.", error);
-      },
-    );
-  };
+        }),
+      warn: (message, error) => console.warn(message, ...(error === undefined ? [] : [error])),
+    });
   if (document.readyState === "complete") start();
   else window.addEventListener("load", start, { once: true });
 }
