@@ -153,7 +153,9 @@ function Recent({ profile }: { profile: PlayerProfile }) {
     return (
       <section className="file-recent" aria-labelledby="recent-title">
         <h2 id="recent-title">Recent games</h2>
-        <p className="file-empty">No finished games yet.</p>
+        <p className="file-empty">
+          No finished games yet. <Link href="/games">Find a table</Link>, or play against six bots from the <Link href="/">front door</Link>.
+        </p>
       </section>
     );
   }

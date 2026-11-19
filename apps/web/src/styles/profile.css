@@ -235,6 +235,7 @@ dialog.account .how-body section {
 
 .recovery-slip {
   position: relative;
+  margin-top: 20px;
   padding: 22px 16px 16px;
   border: 1px dashed var(--ink-3);
   background: var(--bone);
