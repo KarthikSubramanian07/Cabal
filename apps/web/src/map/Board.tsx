@@ -465,7 +465,9 @@ export function Board({
     }
     // A stable order keeps React from reshuffling nodes when the engine lists units differently.
     // (Plain comparison: `localeCompare` spends tens of milliseconds waking the collator.)
-    return list.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    // Dislodged pieces go last, so they are drawn over the unit that pushed them out: in a
+    // retreat phase they are the pieces that matter.
+    return list.sort((a, b) => Number(a.dislodged) - Number(b.dislodged) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   }, [board, state, ids]);
 
   const candidates = useMemo<TapCandidate[]>(() => {
