@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
   Game,
   POWERS,
+  botOrders,
   canonicalOrder,
   mapInfo,
   pledgeCommit,
@@ -185,5 +186,122 @@ describe("orders and seals", () => {
 
   it("knows the seven powers", () => {
     expect(POWERS).toHaveLength(7);
+  });
+});
+
+describe("botOrders", () => {
+  const playAll = (game: Game, seed: string, level: "easy" | "standard" | "hard") => {
+    const orders: Record<string, string[]> = {};
+    for (const power of POWERS) {
+      orders[power] = botOrders(game, power, { seed, level }).orders;
+    }
+    return orders;
+  };
+
+  it("returns one legal order per unit with an intent summary", () => {
+    const game = new Game();
+    const decision = botOrders(game, "FRANCE", { seed: "g1" });
+    expect(decision.power).toBe("FRANCE");
+    expect(decision.phase).toBe("S1901M");
+    expect(decision.level).toBe("standard");
+    expect(decision.orders).toHaveLength(3);
+    const legal = game.legal("FRANCE");
+    for (const order of decision.orders) {
+      const unit = order.split(" ").slice(0, 2).join(" ");
+      expect(legal.by_unit[unit]).toContain(order);
+    }
+    expect(decision.intent.candidates).toBeGreaterThan(0);
+    expect(decision.intent.adjudications).toBeGreaterThan(0);
+    expect(Array.isArray(decision.intent.targets)).toBe(true);
+    expect(Array.isArray(decision.intent.fears)).toBe(true);
+  });
+
+  it("is deterministic for a seed and accepts numeric seeds", () => {
+    const game = new Game();
+    for (const level of ["easy", "standard", "hard"] as const) {
+      const a = botOrders(game, "RUSSIA", { seed: "same", level });
+      const b = botOrders(game, "RUSSIA", { seed: "same", level });
+      expect(b).toEqual(a);
+    }
+    expect(botOrders(game, "ITALY", { seed: 7 })).toEqual(
+      botOrders(game, "ITALY", { seed: "7" }),
+    );
+  });
+
+  it("plays whole games for all seven powers without one illegal order", () => {
+    for (const level of ["easy", "standard"] as const) {
+      const game = new Game();
+      const kinds = new Set<string>();
+      let orders = 0;
+      while (game.status() === "active" && !game.phase().startsWith("S1907")) {
+        kinds.add(game.phase().slice(-1));
+        const outcome = game.process({ orders: playAll(game, `ts-${level}`, level) });
+        orders += outcome.results.length;
+        for (const result of outcome.results) {
+          expect(result.code, `${outcome.phase} ${result.order}`).not.toBe("illegal");
+        }
+      }
+      expect(orders).toBeGreaterThan(300);
+      expect([...kinds].sort()).toEqual(["A", "M", "R"]);
+    }
+  });
+
+  it("fills builds to the allowance and retreats dislodged units", () => {
+    const state = new Game().state();
+    state.name = "W1901A";
+    state.units = { FRANCE: ["A BEL", "A SPA", "F POR"] };
+    state.centers = { FRANCE: ["PAR", "BRE", "MAR", "BEL", "SPA", "POR"] };
+    const winter = Game.fromState(state);
+    const builds = botOrders(winter, "FRANCE", { seed: 1, level: "hard" });
+    expect(builds.orders).toHaveLength(3);
+    expect(builds.orders.every((o) => o.endsWith(" B"))).toBe(true);
+    const done = winter.process({ orders: { FRANCE: builds.orders } });
+    expect(done.results.every((r) => r.ok)).toBe(true);
+    expect(done.next.units["FRANCE"]).toHaveLength(6);
+
+    const board = new Game().state();
+    board.units = { FRANCE: ["A BUR"], GERMANY: ["A MUN", "A RUH"] };
+    const game = Game.fromState(board);
+    game.process({ orders: { GERMANY: ["A MUN - BUR", "A RUH S A MUN - BUR"] } });
+    expect(game.phase()).toBe("S1901R");
+    const retreat = botOrders(game, "FRANCE", { seed: 1 });
+    expect(retreat.orders).toHaveLength(1);
+    expect(retreat.orders[0]).toMatch(/^A BUR R [A-Z]{3}$/);
+    expect(retreat.orders[0]).not.toBe("A BUR R MUN");
+    const after = game.process({ orders: { FRANCE: retreat.orders } });
+    expect(after.results[0]?.ok).toBe(true);
+  });
+
+  it("decides well inside the 30 ms budget at the default level", () => {
+    const game = new Game();
+    while (game.status() === "active" && !game.phase().startsWith("S1905")) {
+      game.process({ orders: playAll(game, "timing", "standard") });
+    }
+    playAll(game, "warm-up", "standard");
+    // The search is budgeted in adjudications, not time, so the count is exact
+    // and the same on every machine.
+    const times: number[] = [];
+    for (let round = 0; round < 6; round++) {
+      for (const power of POWERS) {
+        const started = performance.now();
+        const decision = botOrders(game, power, { seed: `timing-${round}` });
+        times.push(performance.now() - started);
+        expect(decision.intent.adjudications).toBeLessThanOrEqual(200);
+      }
+    }
+    // The median, so that one descheduled sample on a busy runner cannot fail the build.
+    times.sort((a, b) => a - b);
+    const median = times[Math.floor(times.length / 2)] ?? Infinity;
+    expect(median).toBeLessThan(30);
+  });
+
+  it("rejects unknown powers, unknown levels and finished games", () => {
+    const game = new Game();
+    expect(() => botOrders(game, "ATLANTIS", { seed: 1 })).toThrow(/unknown power/);
+    expect(() =>
+      botOrders(game, "FRANCE", { seed: 1, level: "godlike" as never }),
+    ).toThrow(/unknown bot level/);
+    game.declareDraw();
+    expect(() => botOrders(game, "FRANCE", { seed: 1 })).toThrow(/finished/);
   });
 });
