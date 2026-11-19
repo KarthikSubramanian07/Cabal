@@ -1,3 +1,8 @@
+import { existsSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import react from "@vitejs/plugin-react";
 import { type HtmlTagDescriptor, type Plugin, defineConfig } from "vite";
 
@@ -61,28 +66,97 @@ function firstLoad(): Plugin {
   };
 }
 
+/** What the edge compresses on the way out. Fonts and images are already packed. */
+const COMPRESSIBLE = /^(?:text\/|application\/(?:javascript|json|wasm|xml|manifest\+json)|image\/svg\+xml)/;
+
+const TYPES: Record<string, string> = {
+  html: "text/html; charset=utf-8",
+  css: "text/css; charset=utf-8",
+  js: "text/javascript; charset=utf-8",
+  json: "application/json; charset=utf-8",
+  md: "text/markdown; charset=utf-8",
+  txt: "text/plain; charset=utf-8",
+  xml: "application/xml; charset=utf-8",
+  svg: "image/svg+xml",
+  png: "image/png",
+  ico: "image/x-icon",
+  woff2: "font/woff2",
+  wasm: "application/wasm",
+  webmanifest: "application/manifest+json",
+};
+
 /**
- * `vite preview` falls back to the app shell for any path without a file. In production the
- * Pages worker serves the static trust pages at their clean URLs, so do the same here: the
- * end-to-end suite then meets the pages a visitor would.
+ * `vite preview` on its own serves the app shell for every path and sends the engine
+ * uncompressed, neither of which the real site does. This puts the Pages worker itself
+ * (`dist/_worker.js`, built from src/agent/gateway.ts) in front of `dist`: the same routing,
+ * the same 404s, the same security headers, and Brotli or gzip on everything Cloudflare
+ * compresses. The end-to-end suite and Lighthouse then meet the site a visitor would.
+ * `/api` is left to the proxy above.
  */
-function trustPages(): Plugin {
+function edge(): Plugin {
   return {
-    name: "cabal:trust-pages",
+    name: "cabal:edge",
     configurePreviewServer(server) {
-      server.middlewares.use((req, _res, next) => {
-        const [path, query] = (req.url ?? "").split("?");
-        if (/^\/(about|contact|privacy)\/?$/.test(path ?? "")) {
-          req.url = `${path!.replace(/\/$/, "")}/index.html${query ? `?${query}` : ""}`;
-        }
-        next();
+      const dist = resolve(server.config.root, server.config.build.outDir);
+      const packed = new Map<string, Buffer>();
+      let worker: Promise<{ fetch: (request: Request, env: unknown) => Promise<Response> }> | undefined;
+
+      /** The `ASSETS` binding: files from `dist` by their exact path, nothing clever. */
+      const assets = {
+        async fetch(input: RequestInfo | URL): Promise<Response> {
+          const { pathname } = new URL(input instanceof Request ? input.url : String(input));
+          const file = resolve(dist, `.${decodeURIComponent(pathname)}`);
+          if (!file.startsWith(dist) || !existsSync(file) || !statSync(file).isFile()) return new Response("Not found", { status: 404 });
+          const headers = new Headers({ "Content-Type": TYPES[file.split(".").pop() ?? ""] ?? "application/octet-stream" });
+          // public/_headers, which Pages applies to assets.
+          headers.set("Cache-Control", pathname.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache");
+          return new Response(new Uint8Array(await readFile(file)), { headers });
+        },
+      };
+
+      server.middlewares.use((req, res, next) => {
+        const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+        if ((req.method !== "GET" && req.method !== "HEAD") || url.pathname === "/api" || url.pathname.startsWith("/api/")) return next();
+        void (async () => {
+          worker ??= import(/* @vite-ignore */ pathToFileURL(resolve(dist, "_worker.js")).href).then((m) => m.default);
+          const headers = new Headers();
+          for (const [name, value] of Object.entries(req.headers)) if (typeof value === "string") headers.set(name, value);
+          const response = await (await worker).fetch(new Request(url, { method: req.method ?? "GET", headers }), { ASSETS: assets });
+          let body: Buffer = Buffer.from(await response.arrayBuffer());
+          const out = new Headers(response.headers);
+          // Plain http on localhost: do not ask the browser to upgrade the page's own requests.
+          const csp = out.get("Content-Security-Policy");
+          if (csp) out.set("Content-Security-Policy", csp.replace(/;\s*upgrade-insecure-requests/, ""));
+          out.delete("Strict-Transport-Security");
+
+          const accepts = String(req.headers["accept-encoding"] ?? "");
+          const encoding = /\bbr\b/.test(accepts) ? "br" : /\bgzip\b/.test(accepts) ? "gzip" : null;
+          if (encoding && body.length > 1024 && COMPRESSIBLE.test(out.get("Content-Type") ?? "")) {
+            const key = `${encoding} ${response.status} ${url.pathname}`;
+            let small = packed.get(key);
+            if (!small) {
+              small =
+                encoding === "br"
+                  ? brotliCompressSync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 5 } })
+                  : gzipSync(body);
+              packed.set(key, small);
+            }
+            body = small;
+            out.set("Content-Encoding", encoding);
+            out.append("Vary", "Accept-Encoding");
+          }
+          out.set("Content-Length", String(body.length));
+          res.statusCode = response.status;
+          out.forEach((value, name) => res.setHeader(name, value));
+          res.end(req.method === "HEAD" ? undefined : body);
+        })().catch(next);
       });
     },
   };
 }
 
 export default defineConfig({
-  plugins: [react(), firstLoad(), trustPages()],
+  plugins: [react(), firstLoad(), edge()],
   build: { target: "esnext" },
   server: { port: 5173, strictPort: true, proxy: api },
   preview: { proxy: api },
