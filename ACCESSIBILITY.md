@@ -54,6 +54,11 @@ part of `pnpm test:e2e` (`apps/web/e2e`):
   disband, build, waive) by touch as well as by mouse.
 - The keyboard path: the choices under the map, the coast menu, focus after adjudicating, and
   the arrow keys stepping through results only when focus is on the board.
+- The games room and a table's lobby, against a local game server (`pnpm test:e2e:live`,
+  `apps/web/e2e-live`): axe over the create dialog, the lobby as host and while choosing a seat,
+  a game in play and the games room. Table talk is a named log region, so new messages are read
+  out; every form error is an alert tied to its field; the seat picker's open seats are toggle
+  buttons that say which seat is chosen.
 
 ## Manual pass (2026-11-10)
 
