@@ -7,6 +7,8 @@
  * - The page asks to be "ambient" audio where the browser lets it (Safari's Audio Session API),
  *   so the phone's silent switch silences it and it never stops the player's music.
  * - Nothing plays in a hidden tab; the context is suspended there and resumed on return.
+ * - With sound on from an earlier visit, the context is made on the player's first tap or key
+ *   press, so Safari, which only starts audio from a gesture, plays the first phase too.
  * - A burst of the same sound within a few milliseconds plays once.
  */
 import { useCallback, useSyncExternalStore } from "react";
@@ -55,7 +57,16 @@ export interface DeckOptions {
   now?: () => number;
   /** Suspend the context while the tab is hidden (browser only). */
   watchVisibility?: boolean;
+  /**
+   * Where to listen for the player's taps and key presses. With sound already on from an
+   * earlier visit, the first sound of a page would otherwise make the context from a timer,
+   * which Safari leaves suspended (silent) until a gesture; making or resuming it on the first
+   * gesture instead means the first phase is heard.
+   */
+  unlockOn?: EventTarget;
 }
+
+const GESTURES = ["pointerdown", "keydown"] as const;
 
 export function createDeck(options: DeckOptions): Deck {
   const listeners = new Set<() => void>();
@@ -99,6 +110,16 @@ export function createDeck(options: DeckOptions): Deck {
     if (ctx.state === "suspended") void ctx.resume().catch(() => {});
     return ctx;
   };
+
+  if (options.unlockOn) {
+    const target = options.unlockOn;
+    const unlock = () => {
+      if (!read()) return;
+      const c = context();
+      if (!c || c.state === "running") for (const t of GESTURES) target.removeEventListener(t, unlock, true);
+    };
+    for (const t of GESTURES) target.addEventListener(t, unlock, true);
+  }
 
   const voice = (sound: SoundName, delayMs: number, weight: number) => {
     if (!read() || !audible()) return;
@@ -191,6 +212,7 @@ export const deck: Deck = createDeck({
   },
   audible: () => typeof document === "undefined" || document.visibilityState !== "hidden",
   watchVisibility: true,
+  ...(typeof window !== "undefined" ? { unlockOn: window } : {}),
 });
 
 /** Whether sound is on, and the switch. */

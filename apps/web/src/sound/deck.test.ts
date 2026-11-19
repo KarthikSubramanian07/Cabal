@@ -161,6 +161,24 @@ describe("the deck", () => {
     expect(fake.started.length).toBeGreaterThan(0);
   });
 
+  it("with sound already on, makes the context on the first tap, not from a timer", () => {
+    const target = new EventTarget();
+    const ctx = fakeContext();
+    const makeContext = vi.fn(() => ctx.ctx);
+    createDeck({ makeContext, store: { get: () => "on", set: () => {} }, unlockOn: target });
+    expect(makeContext).not.toHaveBeenCalled();
+    target.dispatchEvent(new Event("pointerdown"));
+    expect(makeContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("with sound off, a tap makes no audio context", () => {
+    const target = new EventTarget();
+    const makeContext = vi.fn(() => fakeContext().ctx);
+    createDeck({ makeContext, store: { get: () => null, set: () => {} }, unlockOn: target });
+    target.dispatchEvent(new Event("keydown"));
+    expect(makeContext).not.toHaveBeenCalled();
+  });
+
   it("drops a repeat of the same sound in the same instant", () => {
     const { deck, fake } = make("on");
     deck.play("thud");
