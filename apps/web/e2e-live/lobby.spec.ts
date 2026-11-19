@@ -100,21 +100,28 @@ test.describe("the lobby, live", () => {
     await expect(page.getByLabel("Message the table")).toHaveValue("");
     await expect(page.getByLabel("Message the table")).toBeFocused();
 
-    // The host starts; the bot takes the five empty seats; both see the game in play.
+    // The host starts; the bot takes the five empty seats; the table becomes the game room for both.
     await page.getByRole("button", { name: "Start the game" }).click();
     for (const p of [page, guest]) {
-      await expect(p.getByText("In play", { exact: true })).toBeVisible();
-      await expect(p.getByText(/Spring 1901, movement\. \d+ min left to order\./)).toBeVisible();
+      await expect(p.getByRole("heading", { level: 1 })).toContainText("Spring 1901, movement", { timeout: 30_000 });
       await expect(p.locator("svg.board")).toBeVisible({ timeout: 30_000 });
-      await expect(p.getByRole("list", { name: "Seats" }).getByText("Played by the bot")).toHaveCount(5);
+      await expect(p.getByRole("list", { name: "Seats this phase" }).getByText(/played by the bot/)).toHaveCount(5);
     }
     // Lobby talk stays readable once the game runs, and the players can still write: the game's
     // own status frame must not be taken for the connection dropping.
-    await expect(guest.getByRole("log", { name: "Table talk" })).toContainText("I come in peace, mostly.");
-    await expect(guest.getByText("Reconnecting. You can write again in a moment.")).toHaveCount(0);
+    for (const p of [page, guest]) {
+      const bar = p.locator(".sheet-bar");
+      if ((await bar.isVisible()) && (await bar.getAttribute("aria-expanded")) === "false") await bar.click();
+      await p.getByRole("tab", { name: /^Press/ }).click();
+      await p.getByRole("button", { name: /^The table/ }).click();
+    }
+    const guestTable = guest.getByRole("log", { name: /The table/ });
+    await expect(guestTable).toContainText("I come in peace, mostly.");
+    await expect(guestTable).toContainText("Before the game");
+    await expect(guest.locator(".wire-down")).toHaveCount(0);
     await guest.getByLabel("Message the table").fill("Good luck, everyone.");
-    await guest.getByRole("button", { name: "Send" }).click();
-    await expect(page.getByRole("log", { name: "Table talk" })).toContainText("Good luck, everyone.");
+    await guest.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.getByRole("log", { name: /The table/ })).toContainText("Good luck, everyone.");
     await scan(guest, "game in play");
 
     // It now shows in the games room as a game in play, not an open table.
