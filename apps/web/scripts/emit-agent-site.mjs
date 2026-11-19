@@ -463,6 +463,53 @@ async function bundleServiceWorker(esbuild) {
   return { version, files: precache.length };
 }
 
+/**
+ * The front door, prerendered: the app's own markup for `/` (src/landing/prerender.tsx) written into
+ * a copy of the shell at dist/landing/index.html, which the Pages worker serves for `/`. The
+ * board's preloads are dropped from this copy: the front door has no board, and the engine
+ * (a megabyte) must not compete with the headline.
+ */
+async function writeLanding(esbuild) {
+  const out = join(root, "node_modules/.cache/cabal-prerender/landing.mjs");
+  await esbuild.build({
+    entryPoints: [join(root, "src/landing/prerender.tsx")],
+    outfile: out,
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    target: "node20",
+    jsx: "automatic",
+    // React's server renderer reaches for Node built-ins with require().
+    banner: { js: 'import { createRequire as __cabalRequire } from "node:module"; const require = __cabalRequire(import.meta.url);' },
+    loader: { ".css": "empty" },
+    // Pages behind the front door are bundled too (their dynamic imports), never run: their
+    // asset URLs (the engine's WebAssembly) need only exist.
+    plugins: [
+      {
+        name: "asset-urls",
+        setup(build) {
+          build.onResolve({ filter: /\?url$/ }, (args) => ({ path: args.path, namespace: "asset-url" }));
+          build.onLoad({ filter: /.*/, namespace: "asset-url" }, () => ({ contents: 'export default "";', loader: "js" }));
+        },
+      },
+    ],
+    define: { "import.meta.env.PROD": "true", "import.meta.env.DEV": "false", "process.env.NODE_ENV": '"production"' },
+    logLevel: "warning",
+  });
+  const { renderLanding } = await import(`${pathToFileURL(out).href}?v=${Date.now()}`);
+  const markup = renderLanding();
+  let html = readFileSync(join(dist, "index.html"), "utf8");
+  html = html.replace(/\s*<link rel="modulepreload"[^>]*(?:SandboxPage|board)-[^>]*>/g, "");
+  html = html.replace(/\s*<link rel="preload" as="fetch"[^>]*cabal_engine_bg-[^>]*>/g, "");
+  const start = html.indexOf('<div id="root">');
+  const end = html.lastIndexOf("</div>", html.indexOf("</body>"));
+  if (start < 0 || end < start) throw new Error("emit-agent-site: no #root in dist/index.html");
+  html = `${html.slice(0, start)}<div id="root" data-prerendered="home">${markup}${html.slice(end)}`;
+  assertMinPlainText("front door", markup.replace(/<[^>]+>/g, " "), 1500);
+  ensureDir(join(dist, "landing"));
+  writeFileSync(join(dist, "landing/index.html"), html);
+}
+
 async function main() {
   if (!existsSync(join(dist, "index.html"))) {
     throw new Error("dist/index.html missing; run vite build first");
@@ -474,6 +521,7 @@ async function main() {
   writeSitemap();
   enrichIndexHtml();
   const esbuild = loadEsbuild();
+  await writeLanding(esbuild);
   await bundleWorker(esbuild);
   const sw = await bundleServiceWorker(esbuild);
   console.log(`emit-agent-site: wrote trust pages, markdown siblings, llms.txt, _worker.js, sw.js (build ${sw.version}, ${sw.files} files precached)`);

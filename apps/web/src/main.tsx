@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
 import { App } from "./app/App.jsx";
 import { listenForInstall } from "./pwa/InstallButton.jsx";
 import { registerServiceWorker } from "./pwa/register.js";
@@ -15,11 +15,15 @@ registerServiceWorker();
 listenForInstall();
 
 function start(): void {
-  createRoot(mount).render(
+  const app = (
     <StrictMode>
       <App />
-    </StrictMode>,
+    </StrictMode>
   );
+  // The front door arrives already drawn (src/landing/prerender.tsx): take it over in place, so
+  // its one moment of motion is not started twice. Any other page draws from the loading screen.
+  if (mount.dataset["prerendered"] === "home" && window.location.pathname === "/") hydrateRoot(mount, app);
+  else createRoot(mount).render(app);
 }
 
 // #root arrives holding the loading screen and the page's own text, written in by the build
