@@ -79,7 +79,8 @@ check normalisation idempotence. Resolver validation consumes the canonical orde
 
 The additive WASM `Game.normaliseOrders` method is called by server adjudication
 and browser sandbox adjudication/replay before `Game.process`. It retains illegal
-and duplicate orders so resolver diagnostics remain available. Direct WASM
+and duplicate orders so resolver diagnostics remain available, and leaves lines
+it cannot read untouched for `process` to report. Direct WASM
 processing also normalises typed movement orders. Explicit power prefixes are
 preserved. Existing exports and Rust parse/legal/resolver signatures remain.
 
@@ -87,12 +88,46 @@ preserved. Existing exports and Rust parse/legal/resolver signatures remain.
 cached queries and cycles. Sorted nodes and edges produce deterministic Graphviz
 DOT through `MovementDependencies::to_dot`. CLI `cabal explain --graph` emits a
 standalone graph. WASM `Game.explain(index)` returns the trace for the movement
-phase at that history index as `{ edges, dot }`: edges index that phase
-outcome's `results`, and `dot` is the labelled graph. It throws for retreat and
+phase at that history index: `edges` index that phase outcome's `results`,
+`dot` is the labelled graph, and `orders` and `cycles` hold the explanation
+described below. It throws for retreat and
 adjustment phases and for an index past the history. Rust corpus tests check
 traced/untraced equivalence and permutation invariance; TypeScript tests
 exercise normalisation, diagnostics, edges, DOT and JSON transport through the
 real compiled WASM module.
+
+### Verdicts, tolerant processing and explanations
+
+`validate::validate_orders` gives one verdict per submitted line for the current
+phase: canonical text, `legal`, a machine code and a sentence. It asks the
+question the resolvers ask (the movement check is `order::normalise` itself;
+retreats and adjustments are run through their resolver), so a line is legal
+exactly when adjudication would not throw it out. TypeScript tests hold that
+equivalence against the compiled module: every order from `Game.legal` is
+judged legal, and every order judged illegal comes back from adjudication as
+`illegal` with the same reason code.
+
+`Game.process` does not reject a phase over one order. A line that cannot be
+read, names another power, is the wrong kind for the phase or is for a unit the
+power does not have is returned in `rejected`; the rest are adjudicated. An
+order for another power's unit is dropped before duplicates are counted
+(DATC 6.A.6). Before that was pinned by `tests/foreign_orders.rs`, a second
+order for a rival's unit made the rival's own order a duplicate and the unit
+held, so any power could cancel any move.
+
+`explain_movement` returns, next to the trace, the numbers of DATC 5.B for
+every order (attack strength, the hold or defend strength it met, the prevent
+strength of each rival move), which supports counted and which units cut the
+others, the fleets of a convoy and what broke it, and the cycle a backup rule
+settled. `text::explain_sentence` turns that into one sentence with units named
+in full. `tests/explain.rs` covers each failure code (`bounce`, `repelled`,
+`head_to_head`, `own_unit`, `no_path`, `cut`, `void`, `dislodged`, `paradox`,
+`illegal`), asserts that explaining never changes a ruling, and checks the
+sentences word for word. WASM `Game.explain(index)` carries all of it per
+result; `Game.explainPreview(orders)` and `explainPreview(state, orders)` do the
+same for orders nobody has submitted, without touching the game.
+
+Measured costs are in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Fuzzing and checks
 
