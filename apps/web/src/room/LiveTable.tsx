@@ -445,6 +445,7 @@ function Floor({
     for (const [p, list] of Object.entries(view.state?.centers ?? {})) out[p] = list.length;
     return out;
   }, [view.state]);
+  const finalScores = over && view.finished?.result !== "abandoned" ? view.finished?.scores : undefined;
   const names = useMemo(() => Object.fromEntries(view.seats.map((s) => [s.power, s.name])) as Partial<Record<PowerName, string | null>>, [view.seats]);
 
   // Say the clock once a minute in the last five, for people who cannot glance at it.
@@ -548,6 +549,7 @@ function Floor({
         </h1>
         <div className="board-wrap" ref={boardWrap}>
           <div className="stage">
+            <SeatBar seats={view.seats} me={me} running={running} centres={centres} scores={finalScores} place="stage" />
             <Board
               board={desk.board}
               state={mapState}
@@ -681,7 +683,7 @@ function Floor({
                 </p>
               ) : null}
             </header>
-            <SeatBar seats={view.seats} me={me} running={running} centres={centres} scores={over && view.finished?.result !== "abandoned" ? view.finished?.scores : undefined} />
+            <SeatBar seats={view.seats} me={me} running={running} centres={centres} scores={finalScores} />
             <PhaseStepper
               history={history}
               viewing={viewing}
@@ -716,7 +718,7 @@ function Floor({
                   {id === "press" && unread > 0 ? (
                     <span className="unread">
                       {unread}
-                      <span className="sr-only"> unread</span>
+                      <span className="sr-only">&nbsp;unread</span>
                     </span>
                   ) : null}
                 </button>
@@ -844,7 +846,19 @@ function Floor({
               <button type="button" className={`btn primary${isReady ? " is-ready" : ""}`} aria-pressed={isReady} onClick={toggleReady} disabled={inDisorder || room.connection !== "open"}>
                 {isReady ? "Ready. Take it back" : `Ready for ${phaseLine(view.phase)}`}
               </button>
-            ) : null}
+            ) : over ? (
+              <button type="button" className="btn primary" onClick={() => { setTab("table"); setSheet(true); }}>
+                See the final scores
+              </button>
+            ) : !me ? (
+              <button type="button" className="btn primary" onClick={() => { setTab("press"); setSheet(true); }}>
+                Read the table talk
+              </button>
+            ) : (
+              <button type="button" className="btn primary" disabled>
+                Nothing to order this phase
+              </button>
+            )}
             {!record && me && canOrder && seat?.canAct ? (
               <p className={`sync-line${desk.sync === "failed" ? " alert" : ""}`} role="status">
                 {syncLine}
