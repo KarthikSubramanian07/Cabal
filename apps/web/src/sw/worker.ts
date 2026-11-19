@@ -5,7 +5,7 @@
  * it; the page then offers a reload (src/pwa/register.ts). It never takes over on its own.
  */
 import { createWorker } from "./handlers.js";
-import { notificationFor, pickClient } from "./push.js";
+import { fallbackNotification, notificationFor, pickClient } from "./push.js";
 
 declare const __CABAL_SW__: { version: string; precache: string[] };
 
@@ -86,8 +86,8 @@ scope.addEventListener("push", (event) => {
   } catch {
     data = null;
   }
-  const shown = notificationFor(data, scope.location.origin);
-  if (shown) event.waitUntil(scope.registration.showNotification(shown.title, shown.options));
+  const shown = notificationFor(data, scope.location.origin) ?? fallbackNotification();
+  event.waitUntil(scope.registration.showNotification(shown.title, shown.options));
 });
 
 scope.addEventListener("notificationclick", (event) => {
@@ -97,7 +97,14 @@ scope.addEventListener("notificationclick", (event) => {
     scope.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (clients) => {
       const pick = pickClient(clients, path, scope.location.origin);
       if (!pick) return scope.clients.openWindow(path);
-      if (pick.navigate) await pick.client.navigate(path);
+      if (pick.navigate) {
+        // A window this worker does not control refuses to be navigated: open the page instead.
+        try {
+          await pick.client.navigate(path);
+        } catch {
+          return scope.clients.openWindow(path);
+        }
+      }
       return pick.client.focus();
     }),
   );

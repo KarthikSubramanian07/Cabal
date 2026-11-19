@@ -42,6 +42,26 @@ export function notificationFor(data: unknown, origin: string): ShownNotificatio
   };
 }
 
+/**
+ * What to show for a message this worker cannot read (an older server, a damaged payload). The
+ * browser requires every push to show something; without this it shows its own "this site has
+ * been updated in the background" notice, which says nothing useful.
+ */
+export function fallbackNotification(): ShownNotification {
+  return {
+    title: "Something happened at your table",
+    options: {
+      body: "Open Cabal to see what changed.",
+      tag: "cabal-unknown",
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      data: { url: "/games" },
+      renotify: true,
+      timestamp: Date.now(),
+    },
+  };
+}
+
 /** The window to bring forward for a click: one already on that page, else any of this site's. */
 export function pickClient<T extends { url: string }>(clients: readonly T[], path: string, origin: string): { client: T; navigate: boolean } | null {
   const exact = clients.find((c) => clickTarget(c.url, origin) === path);
