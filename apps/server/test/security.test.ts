@@ -64,6 +64,36 @@ describe("privacy", () => {
   });
 });
 
+describe("pledges", () => {
+  it("only accepts a pledge about the pledger's own units and orders they can really be given", async () => {
+    const ann = await create("Ann", { aiFill: true, readyAdvance: true });
+    const bob = await join(ann.gameId, "Bob");
+    await start(ann);
+    const a = await Client.connect(ann.gameId, ann.token);
+    const b = await Client.connect(ann.gameId, bob.token);
+    const mine = (await a.next("welcome")).p.state.units[ann.power]!;
+    const theirs = (await b.next("welcome")).p.state.units[bob.power]!;
+    // A promise about somebody else's unit could never be broken, so it would farm a clean ledger.
+    a.send({ t: "press.send", id: "foreign", p: { to: "ALL", body: "I hold.", pledge: { orders: [`${theirs[0]} H`], sealed: false } } });
+    expect(await a.next("error", (m) => m.id === "foreign")).toMatchObject({ p: { code: "bad_pledge" } });
+    // Naming it under the pledger's own power does not help.
+    a.send({ t: "press.send", id: "prefixed", p: { to: "ALL", body: "I hold.", pledge: { orders: [`${ann.power}: ${theirs[0]} H`], sealed: false } } });
+    expect(await a.next("error", (m) => m.id === "prefixed")).toMatchObject({ p: { code: "bad_pledge" } });
+    // Nor does an order the unit cannot be given, or one for a unit that does not exist.
+    a.send({ t: "press.send", id: "impossible", p: { to: "ALL", body: "I go.", pledge: { orders: [`${mine[0]} - ${mine[0]!.slice(2, 5) === "MOS" ? "PAR" : "MOS"}`], sealed: true } } });
+    expect(await a.next("error", (m) => m.id === "impossible")).toMatchObject({ p: { code: "bad_pledge" } });
+    a.send({ t: "press.send", id: "mixed", p: { to: bob.power, body: "Both.", pledge: { orders: [`${mine[0]} H`, `${theirs[0]} H`], sealed: false } } });
+    expect(await a.next("error", (m) => m.id === "mixed")).toMatchObject({ p: { code: "bad_pledge" } });
+    // A refused pledge leaves nothing behind: no pledge, and no message carrying it.
+    expect(await sql(ann.gameId, "SELECT id FROM pledges")).toHaveLength(0);
+    expect(await sql(ann.gameId, "SELECT id FROM press")).toHaveLength(0);
+    // The pledger's own legal order is accepted.
+    a.send({ t: "press.send", id: "own", p: { to: bob.power, body: "I hold.", pledge: { orders: [`${mine[0]} H`], sealed: false } } });
+    expect((await a.next("press", (m) => m.id === "own")).p.pledge).toMatchObject({ pledger: ann.power, orders: [`${mine[0]} H`] });
+    expect(await sql<{ pledger: string }>(ann.gameId, "SELECT pledger FROM pledges")).toEqual([{ pledger: ann.power }]);
+  });
+});
+
 describe("AI seats hold no credentials", () => {
   it("stores no agent tokens and exposes no agent endpoint to the internet", async () => {
     const ann = await create("Ann", { aiFill: true });

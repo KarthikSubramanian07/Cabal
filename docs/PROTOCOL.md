@@ -101,7 +101,7 @@ A draw passes when every surviving, present human player has voted yes in the cu
 ## Pledges
 
 1. Sender chooses orders to commit to. Open pledge: the recipient sees the orders. Sealed pledge: recipients see only `commitment = blake3(canonical(orders) || nonce)` until adjudication.
-2. The server stores the pledge with the phase it applies to.
+2. The server stores the pledge with the phase it applies to. Every pledged order must be one the pledger's own units can legally be given in that phase; anything else is refused with `bad_pledge` and the message is not sent.
 3. After adjudication the server compares the pledged orders to the orders the pledger actually submitted for that phase. Every pledged order present: `kept`. Any missing: `broken`. Nothing submitted, or the phase resolved by the all-hold fallback: `void`.
 4. Receipts go to the pledge audience and its pledger, and are counted in the game's ledger.
 

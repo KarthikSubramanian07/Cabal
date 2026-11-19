@@ -1226,6 +1226,20 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
+  /** Every order `power` could legally give this phase, in canonical text. */
+  private legalMenu(power: PowerName, kind: "M" | "R" | "A"): Set<string> {
+    const menu = new Set<string>();
+    for (const order of Object.values(this.game!.legal(power).by_unit).flat()) {
+      menu.add(order);
+      try {
+        menu.add(this.canonicalOwnOrder(order, kind, power));
+      } catch {
+        // the menu's own spelling is already in the set
+      }
+    }
+    return menu;
+  }
+
   /** Store and deliver one press message. Fully synchronous; returns an error to show the sender, or null. */
   private press(
     from: PowerName,
@@ -1260,6 +1274,13 @@ export class GameRoom extends DurableObject<Env> {
         canonical = pledge.orders.map((o) => this.canonicalOwnOrder(o, kind, from));
       } catch (e) {
         return { code: "bad_pledge", message: e instanceof Error ? e.message : String(e) };
+      }
+      // A pledge is a promise about the pledger's own units. Syntax is not enough: an order for a
+      // unit the pledger does not have would be stamped kept without ever being at risk.
+      const menu = this.legalMenu(from, kind);
+      const stranger = canonical.find((o) => !menu.has(o));
+      if (stranger !== undefined) {
+        return { code: "bad_pledge", message: `${stranger} is not an order one of your units can be given this phase` };
       }
     }
     this.atomic(() => {
