@@ -1100,6 +1100,85 @@ mod bot_tests {
         }
     }
 
+    /// One line per decision, built only from what crosses the wasm boundary.
+    /// `packages/engine/src/engine.test.ts` builds the same line from the same
+    /// fields in JavaScript; keep the two in step.
+    fn transcript_line(d: &BotDecision) -> String {
+        let supports: Vec<String> = d
+            .intent
+            .supports
+            .iter()
+            .map(|s| {
+                format!(
+                    "{}>{}>{}>{}",
+                    s.unit,
+                    s.supports,
+                    s.into.as_deref().unwrap_or("-"),
+                    s.power
+                )
+            })
+            .collect();
+        let fears: Vec<String> = d
+            .intent
+            .fears
+            .iter()
+            .map(|f| format!("{}:{}", f.power, f.threat))
+            .collect();
+        format!(
+            "{} {} {}: {} | targets={} against={} defends={} supports={} fears={} c={} a={}\n",
+            d.phase,
+            d.power,
+            d.level,
+            d.orders.join("; "),
+            d.intent.targets.join(","),
+            d.intent.against.join(","),
+            d.intent.defends.join(","),
+            supports.join(","),
+            fears.join(","),
+            d.intent.candidates,
+            d.intent.adjudications
+        )
+    }
+
+    /// The bot must decide the same thing natively and in WebAssembly. This test
+    /// is the native half: whole games at each level, every decision of every
+    /// power, hashed and compared with `tests/bot-golden.txt`. The engine
+    /// package's test suite plays the same games through the compiled wasm module
+    /// and compares with the same file, so a `usize`, float or hashing slip on
+    /// either target fails one of the two.
+    ///
+    /// After a deliberate change to the bot, regenerate the file with
+    /// `UPDATE_GOLDEN=1 cargo test -p cabal-wasm golden`, then rebuild the engine
+    /// (`pnpm engine:build`) and run `pnpm --filter @cabal/engine test`.
+    #[test]
+    fn bot_decisions_match_the_golden_transcript() {
+        let mut got = String::from(
+            "# seed level until decisions fnv1a64-of-transcript (see bot_tests in crates/cabal-wasm/src/lib.rs)\n",
+        );
+        for (seed, level, until) in [
+            ("golden", "easy", 1910u16),
+            ("golden", "standard", 1910),
+            ("golden", "hard", 1906),
+        ] {
+            let (_, log) = play(seed, level, until);
+            let text: String = log.iter().map(transcript_line).collect();
+            got.push_str(&format!(
+                "{seed} {level} {until} {} {:016x}\n",
+                log.len(),
+                cabal_bot::seed_from_str(&text)
+            ));
+        }
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/bot-golden.txt");
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            std::fs::write(path, &got).unwrap();
+        }
+        let want = std::fs::read_to_string(path).unwrap_or_default();
+        assert_eq!(
+            got, want,
+            "the bot's play changed; if that was intended, see the comment on this test"
+        );
+    }
+
     #[test]
     fn bot_decisions_are_deterministic_and_seeded() {
         let game = EngineGame::new(Map::standard(), Rulebook::default());
