@@ -279,8 +279,9 @@ function Table({ sb }: { sb: Sandbox }) {
         }
         return;
       }
-      // Stepping back into the history must not swallow an order half written.
-      if (key === "arrowleft" && sb.history.length > 0 && draft.step === "idle" && !picker) {
+      // Stepping back into the history must not swallow an order half written, and belongs to
+      // the board: with focus on a button or a link the arrow keys are not ours to take.
+      if (key === "arrowleft" && !onControl && sb.history.length > 0 && draft.step === "idle" && !picker) {
         return setViewing(sb.history.length - 1);
       }
       // Single-key shortcuts can be switched off (WCAG 2.1.4) in How to play.
@@ -313,6 +314,8 @@ function Table({ sb }: { sb: Sandbox }) {
     const panel = choicesRef.current;
     const first = panel?.querySelector<HTMLButtonElement>("button:not(:disabled)");
     (first ?? panel)?.focus();
+    // Focus alone can leave the button flush with the edge of the window, its outline cut off.
+    first?.scrollIntoView({ block: "nearest" });
   }, [draft, picker, viewing]);
 
   // provinces the current draft can act on
