@@ -356,16 +356,13 @@ impl<'a> Resolver<'a> {
             // DATC 6.A.6: an order for another power's unit is ignored. It must
             // never count against the owner, or any power could void a rival's
             // order by submitting a second one for the same unit.
-            let own: Vec<&Order> = list
-                .iter()
-                .copied()
-                .filter(|o| o.power == e.unit.power)
-                .collect();
-            match own.as_slice() {
-                [] => e.illegal = Some(Illegal::ForeignUnit),
-                [o] => e.command = o.command,
+            let owner = e.unit.power;
+            let mut own = list.iter().filter(|o| o.power == owner);
+            match (own.next(), own.next()) {
+                (None, _) => e.illegal = Some(Illegal::ForeignUnit),
+                (Some(o), None) => e.command = o.command,
                 // DATC 4.D.3: all orders illegal, unit holds
-                _ => e.illegal = Some(Illegal::DuplicateOrder),
+                (Some(_), Some(_)) => e.illegal = Some(Illegal::DuplicateOrder),
             }
         }
 
