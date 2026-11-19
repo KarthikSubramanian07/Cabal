@@ -242,6 +242,12 @@ room's time goes: the engine's three parts take about 4 ms on the CI runner and 
 about 50. The new code is plain TypeScript (Web Crypto for push, SQL for the index), and none of it
 runs before the first request that needs it.
 
+Measured again on the raised budget's own commit (`ebfc46e`, 783,818 bytes gzip by the CI job's
+count), seven fresh workerd processes on the CI runner, medians in milliseconds: engine
+instantiation 1, first game 1, first adjudication 2, first request 59, start with AI seats 45, ready
+to results 44. The engine figures are unchanged; the request figures are inside the runner's spread
+(the first request ranged from 45 to 197 across the seven runs).
+
 Engine start-up is not the expensive part of a fresh room: together the three parts are about 12 ms
 of a first request that takes about 90 locally. The JavaScript bundle (zod above all) and
 Durable Object creation are larger, which is what the Worker bundle gate watches.
