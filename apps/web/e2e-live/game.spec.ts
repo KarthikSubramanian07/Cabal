@@ -34,7 +34,8 @@ test.describe("the game room, live", () => {
     await tap(ada, province);
     await tab(ada, "Orders");
     await expect(ada.locator(".orders .row.given code").first()).toHaveText(`${adaUnit} H`);
-    await expect(ada.locator(".sync-line")).toHaveText("Your orders are on file with the server.");
+    // One unit of several: the desk says the rest will hold.
+    await expect(ada.locator(".sync-line")).toHaveText("Your orders are on file. Units without one hold.");
     // Bea's seat strip sees that Ada's orders are in, never what they are.
     await expect(bea.getByRole("list", { name: "Seats this phase" })).toContainText(`${Host}, Ada: orders in, not ready yet.`);
 
