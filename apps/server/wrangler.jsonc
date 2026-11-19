@@ -9,6 +9,15 @@
   "observability": { "enabled": true },
   // The Worker version id: what /health and error logs report as the build when BUILD_ID is unset.
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  // Web Push (RFC 8292). The public half of the VAPID key pair; its private half is the secret
+  // VAPID_PRIVATE_KEY (apps/server/README.md). Push stays off until that secret is set.
+  // Reminders go out PUSH_REMINDER_MINUTES before a deadline. Secrets, never here: VAPID_PRIVATE_KEY,
+  // ADMIN_TOKEN (the metrics summary), ANTHROPIC_API_KEY.
+  "vars": {
+    "VAPID_PUBLIC_KEY": "BEbMrS6yJObH-r2TjWp5wHsRUhjwn14hs9bvjjaVEaE5Vwu6kN1pMB8pXQ_XqbD1Z6qZ5XiYL5QWhFxXSfgBHzQ",
+    "VAPID_SUBJECT": "https://playcabal.pages.dev",
+    "PUSH_REMINDER_MINUTES": "60"
+  },
   "durable_objects": {
     "bindings": [
       { "name": "GAME_ROOM", "class_name": "GameRoom" },
