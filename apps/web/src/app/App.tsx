@@ -1,4 +1,5 @@
 import { Suspense, lazy, useLayoutEffect } from "react";
+import LandingPage from "../landing/LandingPage.jsx";
 import { IdentityProvider } from "../profile/Identity.jsx";
 import { ErrorBoundary } from "./ErrorBoundary.jsx";
 import { PageLoading } from "./PageLoading.jsx";
@@ -10,6 +11,7 @@ import { matchRoute } from "./routes.js";
 const SandboxPage = lazy(() => import("../pages/SandboxPage.jsx"));
 const GamesPage = lazy(() => import("../pages/GamesPage.jsx"));
 const GamePage = lazy(() => import("../pages/GamePage.jsx"));
+/** The front door is in the entry bundle: it is prerendered and hydrated, and must not suspend. */
 const NotYetPage = lazy(() => import("../pages/NotYetPage.jsx"));
 const NotFoundPage = lazy(() => import("../pages/NotFoundPage.jsx"));
 
@@ -26,7 +28,9 @@ export function App() {
           <Suspense fallback={<PageLoading />}>
             {!route ? (
               <NotFoundPage />
-            ) : route.name === "sandbox" || route.name === "home" ? (
+            ) : route.name === "home" ? (
+              <LandingPage />
+            ) : route.name === "sandbox" ? (
               <SandboxPage />
             ) : route.name === "games" ? (
               <GamesPage />
