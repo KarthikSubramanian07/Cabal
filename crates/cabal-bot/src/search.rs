@@ -26,6 +26,7 @@ use cabal_engine::order::{Command, Order};
 
 use crate::board::{Bits, Board};
 use crate::plan::{dest_score, move_to, sample};
+use crate::reconcile::reconcile;
 use crate::rng::Rng;
 use crate::values::{self, Values};
 
@@ -528,27 +529,32 @@ fn refine(
         std::cmp::Reverse(contact)
     });
 
+    // Every trial is the edit *and its consequences*: a unit that stops moving
+    // takes its supporters and its convoy with it, so what the adjudicator
+    // scores is always an order set the bot could actually hand in.
+    let mut trial: Vec<Order> = orders.to_vec();
     for _ in 0..passes {
         let mut improved = false;
         for &k in &sweep {
-            let mut best: Option<(i64, Edit)> = None;
+            let mut best: Option<(i64, Vec<Order>)> = None;
             for edit in edits(b, me, v, &mine, orders, k, pairs) {
                 if arena.left() < cost {
                     break;
                 }
-                let before = [orders[edit[0].0].command, orders[edit[1].0].command];
-                orders[edit[0].0].command = edit[0].1;
-                orders[edit[1].0].command = edit[1].1;
-                let s = total(arena, orders);
-                orders[edit[1].0].command = before[1];
-                orders[edit[0].0].command = before[0];
-                if s > best.map_or(score, |(bs, _)| bs) {
-                    best = Some((s, edit));
+                trial.copy_from_slice(orders);
+                trial[edit[0].0].command = edit[0].1;
+                trial[edit[1].0].command = edit[1].1;
+                reconcile(b, me, &mut trial);
+                if trial[..] == orders[..] {
+                    continue; // the edit does not survive on its own
+                }
+                let s = total(arena, &trial);
+                if s > best.as_ref().map_or(score, |(bs, _)| *bs) {
+                    best = Some((s, trial.clone()));
                 }
             }
-            if let Some((s, edit)) = best {
-                orders[edit[0].0].command = edit[0].1;
-                orders[edit[1].0].command = edit[1].1;
+            if let Some((s, kept)) = best {
+                orders.copy_from_slice(&kept);
                 score = s;
                 improved = true;
             }

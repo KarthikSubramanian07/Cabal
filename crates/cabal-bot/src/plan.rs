@@ -10,6 +10,7 @@ use cabal_engine::geo::{Power, ProvinceId, Region, UnitKind};
 use cabal_engine::order::{Command, Order};
 
 use crate::board::Board;
+use crate::reconcile::reconcile;
 use crate::rng::Rng;
 use crate::values::Values;
 
@@ -258,6 +259,8 @@ pub(crate) fn sample(b: &Board, v: &Values, me: Power, rng: &mut Rng, noise: i32
         }
     }
     tasks.sort_by_key(|t| (std::cmp::Reverse(t.value), t.target));
+    // units somebody is already supporting: they keep the order that support is for
+    let mut backed = vec![false; total];
     for task in &tasks {
         // the target may itself have been turned into a supporter by a richer task
         let still = match (choice[task.target], task.dest) {
@@ -279,6 +282,7 @@ pub(crate) fn sample(b: &Board, v: &Values, me: Power, rng: &mut Rng, noise: i32
                 s != task.target
                     && b.unit(s).province().0 as usize != area
                     && b.can_support(s, area)
+                    && !backed[s]
                     && matches!(choice[s], Choice::Stay | Choice::Go(_))
             })
             .map(|s| {
@@ -309,6 +313,7 @@ pub(crate) fn sample(b: &Board, v: &Values, me: Power, rng: &mut Rng, noise: i32
                 },
                 None => Choice::SupHold(task.target),
             };
+            backed[task.target] = true;
             need -= 1;
         }
     }
@@ -338,11 +343,15 @@ pub(crate) fn sample(b: &Board, v: &Values, me: Power, rng: &mut Rng, noise: i32
         }
     }
 
-    mine.iter()
+    let mut orders: Vec<Order> = mine
+        .iter()
         .map(|&i| Order {
             power: me,
             unit: b.unit(i).province(),
             command: command(b, choice[i]),
         })
-        .collect()
+        .collect();
+    // a repair above can turn a supported mover into a stayer: its supporters follow it
+    reconcile(b, me, &mut orders);
+    orders
 }

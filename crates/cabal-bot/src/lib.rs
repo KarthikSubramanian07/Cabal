@@ -31,6 +31,7 @@
 mod adjust;
 mod board;
 mod plan;
+mod reconcile;
 mod retreat;
 mod rng;
 mod search;
@@ -46,6 +47,7 @@ use cabal_engine::state::{GameState, PhaseKind, Season};
 use serde::{Deserialize, Serialize};
 
 use board::{Board, position_fits, tables};
+pub use reconcile::contradictions;
 use rng::{Rng, mix};
 
 /// Playing strength.
@@ -159,6 +161,10 @@ pub struct Intent {
     pub candidates: u32,
     /// Adjudications spent on the decision (movement only).
     pub adjudications: u32,
+    /// Orders the planner proposed that the engine's validator refused, and
+    /// that were replaced by holds. Always zero unless the planner has a bug.
+    #[serde(default)]
+    pub rejected: u32,
 }
 
 /// A full order set for one power in the current phase.
@@ -226,7 +232,8 @@ pub fn decide(
                     }
                 }
             };
-            let orders = checked_movement(&b, power, picked);
+            let (orders, rejected) = checked_movement(&b, power, picked);
+            intent.rejected = rejected;
             describe_movement(&b, power, &orders, &mut intent);
             orders.into_iter().map(AnyOrder::Movement).collect()
         }
@@ -271,25 +278,59 @@ pub fn decide(
     Decision { orders, intent }
 }
 
-/// Exactly one engine-approved order per unit, in board order. Anything the
-/// engine's validator would reject (it should never see such an order) becomes a hold.
-fn checked_movement(b: &Board, me: Power, picked: Vec<Order>) -> Vec<Order> {
-    b.units_of(me)
+/// Exactly one engine-approved order per unit, in board order, and no order
+/// that contradicts another of the same power (see [`reconcile`]).
+///
+/// Returns the orders and how many of them the engine's validator rejected and
+/// the bot replaced with a hold. That count is a planner bug detector: it has
+/// been zero in every game ever played, and the tests and the arena assert it.
+fn checked_movement(b: &Board, me: Power, picked: Vec<Order>) -> (Vec<Order>, u32) {
+    let mut rejected = 0u32;
+    let mut orders: Vec<Order> = b
+        .units_of(me)
         .into_iter()
         .map(|i| {
             let unit = b.unit(i).province();
-            let hold = Order {
-                power: me,
-                unit,
-                command: Command::Hold,
-            };
             let mut wanted = picked.iter().filter(|o| o.unit == unit && o.power == me);
             match (wanted.next(), wanted.next()) {
-                (Some(&o), None) => normalise(b.map, b.pos, o).unwrap_or(hold),
-                _ => hold,
+                (Some(&o), None) => o,
+                _ => {
+                    rejected += 1;
+                    Order {
+                        power: me,
+                        unit,
+                        command: Command::Hold,
+                    }
+                }
             }
         })
-        .collect()
+        .collect();
+    // Validate, then reconcile; a reconciled order is validated again. The
+    // loop stops on a set that is both legal and consistent; should it ever run
+    // out of rounds, the last word below belongs to the validator.
+    for _ in 0..=orders.len() {
+        let mut dirty = false;
+        for o in orders.iter_mut() {
+            match normalise(b.map, b.pos, *o) {
+                Ok(n) => *o = n,
+                Err(_) => {
+                    o.command = Command::Hold;
+                    rejected += 1;
+                    dirty = true;
+                }
+            }
+        }
+        if reconcile::reconcile(b, me, &mut orders) == 0 && !dirty {
+            break;
+        }
+    }
+    for o in orders.iter_mut() {
+        if normalise(b.map, b.pos, *o).is_err() {
+            o.command = Command::Hold;
+            rejected += 1;
+        }
+    }
+    (orders, rejected)
 }
 
 /// One legal retreat order per dislodged unit; two of our own never share a destination.
@@ -423,6 +464,18 @@ fn describe_movement(b: &Board, me: Power, orders: &[Order], intent: &mut Intent
                 let Some(i) = b.occ[target.0 as usize] else {
                     continue;
                 };
+                // Report a support only if it is real: the supported unit, when
+                // it is ours, was ordered to do exactly what is being supported.
+                let theirs = orders.iter().find(|q| q.unit == target).map(|q| q.command);
+                let real = match (theirs, dest) {
+                    (None, _) => true,
+                    (Some(Command::Move { dest: d, .. }), Some(x)) => d == x,
+                    (Some(Command::Move { .. }), None) => false,
+                    (Some(_), d) => d.is_none(),
+                };
+                if !real {
+                    continue;
+                }
                 intent.supports.push(SupportIntent {
                     unit: o.unit,
                     target,
