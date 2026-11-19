@@ -45,12 +45,16 @@ async function bobGoesMissing(misses: number, settings: Record<string, unknown> 
   const a = await Client.connect(ann.gameId, ann.token);
   const b = await Client.connect(ann.gameId, bob.token);
   const annUnits = (await a.next("welcome")).p.state.units[ann.power]!;
-  const bobUnits = (await b.next("welcome")).p.state.units[bob.power]!;
+  await b.next("welcome");
   let phase = "S1901M";
   for (let i = 0; i < misses; i++) {
     if (i < 2) b.send({ t: "ready", p: { phase, ready: true } });
     phase = (await holdAndReady(a, annUnits, phase)).p.phase;
   }
+  // Where Bob's units stand now: once he is in civil disorder the bot moves them for him.
+  const watcher = await Client.connect(ann.gameId);
+  const bobUnits = (await watcher.next("welcome")).p.state.units[bob.power]!;
+  watcher.close();
   return { ann, bob, a, b, annUnits, bobUnits, phase };
 }
 
