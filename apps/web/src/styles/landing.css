@@ -1,0 +1,833 @@
+/*
+ * The front door. The hero is the war room at night, in ink: the Channel cut from the board, a
+ * paper dispatch with a wax seal, and the one orchestrated moment of the page, when the order
+ * that breaks the promise ink-draws across the water and the stamp comes down. Below it the page
+ * turns to bone paper, one idea per band.
+ *
+ * Everything the hero animates is drawn in its final state by default; the motion only runs where
+ * the reader has not asked for less, so a reduced-motion reader (or a screenshot) sees the story told.
+ */
+
+.landing {
+  --night: var(--ink);
+  --night-2: #1d1b19;
+  --night-rule: #3a3632;
+  --night-text: #d9d3c4;
+  display: block;
+  background: var(--bone);
+  /* The stamp's thud starts larger than the slip; it must never widen the page. */
+  overflow-x: clip;
+}
+
+.landing:focus {
+  outline: none;
+}
+
+.landing-inner {
+  width: min(1200px, 100%);
+  margin: 0 auto;
+  padding: 0 clamp(16px, 4vw, 56px);
+}
+
+.landing-h2 {
+  margin: 0 0 var(--space-5);
+  font-family: var(--font-display);
+  font-size: clamp(28px, 3.4vw, 46px);
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: -0.005em;
+  text-transform: uppercase;
+  text-wrap: balance;
+}
+
+.landing-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit);
+  color: inherit;
+  font-weight: 650;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 5px;
+  text-decoration-color: var(--brass);
+}
+
+.landing-link:hover {
+  text-decoration-color: currentColor;
+}
+
+/* ---------------------------------------------------------------- the hero */
+
+.hero {
+  background: var(--night);
+  color: var(--bone);
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(32px, 5vw, 72px);
+  width: min(1320px, 100%);
+  margin: 0 auto;
+  padding: clamp(36px, 4.6vw, 64px) clamp(16px, 4vw, 56px) clamp(28px, 3vw, 40px);
+}
+
+.hero-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(46px, 5.8vw, 82px);
+  font-weight: 400;
+  line-height: 0.93;
+  letter-spacing: -0.012em;
+  text-transform: uppercase;
+}
+
+.hero-title span {
+  display: block;
+}
+
+.hero-lede {
+  max-width: 54ch;
+  margin: clamp(20px, 2.4vw, 30px) 0 0;
+  color: var(--night-text);
+  font-size: clamp(16px, 1.35vw, 19px);
+  line-height: 1.62;
+  text-wrap: pretty;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 18px;
+  margin-top: clamp(26px, 3vw, 38px);
+}
+
+/* Play now: a brass block that presses down like a key on a telegraph. */
+.hero-play {
+  display: grid;
+  gap: 2px;
+  min-height: 64px;
+  padding: 10px 26px 11px;
+  border: 0;
+  background: var(--brass);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 5px 0 var(--brass-deep);
+  transition:
+    transform var(--dur-instant) var(--ease-out),
+    box-shadow var(--dur-instant) var(--ease-out);
+}
+
+.hero-play:hover {
+  background: #d3ae55;
+}
+
+.hero-play:active:not(:disabled) {
+  transform: translateY(4px);
+  box-shadow: 0 1px 0 var(--brass-deep);
+}
+
+.hero-play:disabled {
+  cursor: progress;
+  opacity: 0.85;
+}
+
+.hero-play:focus-visible,
+.hero-second:focus-visible,
+.hero-third:focus-visible {
+  outline: 3px solid var(--bone);
+  outline-offset: 4px;
+}
+
+.hero-play-label {
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 1.05;
+  text-transform: uppercase;
+}
+
+.hero-play-note {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.hero-second {
+  min-height: 52px;
+  padding: 0 20px;
+  border: 1px solid var(--bone);
+  background: none;
+  color: var(--bone);
+  font: inherit;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.hero-second:hover {
+  background: var(--night-2);
+}
+
+.hero-third {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit);
+  color: var(--bone);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--brass);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 5px;
+}
+
+.hero-error {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--vermilion);
+  color: #f2b6a6;
+  font-weight: 560;
+}
+
+.hero-fine {
+  margin: 18px 0 0;
+  color: #a39d90;
+  font-size: var(--text-md);
+}
+
+/* ---- the theatre: the Channel, the order, the dispatch */
+
+.theatre {
+  position: relative;
+  margin: 0;
+  padding-right: clamp(0px, 3vw, 40px);
+}
+
+.theatre-map {
+  position: relative;
+  aspect-ratio: 380 / 360;
+  border: 1px solid var(--night-rule);
+  background: #171615;
+  overflow: hidden;
+}
+
+.theatre-map img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.theatre-orders {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.order-line {
+  fill: none;
+  stroke: var(--vermilion);
+  stroke-width: 3.2;
+  stroke-linecap: round;
+  stroke-dasharray: 86;
+  stroke-dashoffset: 0;
+}
+
+.order-head {
+  fill: var(--vermilion);
+}
+
+/* London's fleet ends the phase in the Channel, at the head of its order. */
+.fleet.london {
+  transform: translate(227px, 616px);
+}
+
+.fleet rect {
+  fill: var(--p-england);
+  stroke: var(--bone);
+  stroke-width: 1.2;
+}
+
+.fleet.france rect {
+  fill: var(--p-france);
+}
+
+.fleet text {
+  fill: var(--bone);
+  font-family: var(--font-display);
+  font-size: 9px;
+}
+
+.fleet.france text {
+  fill: var(--ink);
+}
+
+.sea-name {
+  fill: #8d877b;
+  font-family: var(--font-ui);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* The dispatch: a paper slip pinned over the North Sea. */
+.dispatch-slip {
+  position: absolute;
+  top: clamp(14px, 4%, 36px);
+  right: 0;
+  width: min(318px, 64%);
+  padding: 14px 16px 16px;
+  background: var(--paper);
+  color: var(--ink);
+  transform: rotate(-1.6deg);
+}
+
+.dispatch-slip p {
+  margin: 0;
+}
+
+.note-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.note-body {
+  padding: 10px 0 12px;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.note-seal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--text-md);
+}
+
+.note-seal .seal-wax {
+  --power: var(--p-england);
+  width: 40px;
+  height: 40px;
+  flex: none;
+}
+
+.dispatch-slip code,
+.slip-row code {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+  font-weight: 500;
+}
+
+.dispatch-receipt {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  min-height: 44px;
+  margin-top: 10px !important;
+  padding-top: 6px;
+  border-top: 1px dashed var(--rule);
+  font-size: var(--text-md);
+}
+
+.broken-stamp {
+  position: absolute;
+  right: 12px;
+  bottom: 13px;
+  padding: 3px 10px 2px;
+  border: 3px solid var(--vermilion-deep);
+  color: var(--vermilion-deep);
+  font-family: var(--font-display);
+  font-size: 23px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transform: rotate(-11deg);
+}
+
+/* ---- wax seals */
+
+.seal-wax {
+  display: block;
+  overflow: visible;
+}
+
+.seal-fill {
+  fill: var(--power, var(--p-england));
+}
+
+.seal-ring {
+  fill: none;
+  stroke: rgba(18, 17, 16, 0.28);
+  stroke-width: 0.9;
+}
+
+.seal-wax text {
+  fill: rgba(255, 255, 255, 0.92);
+  font-family: var(--font-display);
+  font-size: 9.5px;
+}
+
+.seal-crack {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 28;
+  stroke-dashoffset: 0;
+}
+
+/* ---- the seven seals at the foot of the hero */
+
+.table-seals {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: min(1320px, 100%);
+  margin: 0 auto;
+  padding: 22px clamp(16px, 4vw, 56px) 30px;
+  border-top: 1px solid var(--night-rule);
+  list-style: none;
+}
+
+.table-seals li {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  color: #b8b1a3;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.table-seals .seal-wax {
+  width: 46px;
+  height: 46px;
+}
+
+.table-seals .seal-wax text {
+  font-size: 9px;
+}
+
+/* ---------------------------------------------------------------- a phase at the table */
+
+.year-band {
+  padding: clamp(56px, 7vw, 104px) 0 clamp(48px, 6vw, 88px);
+}
+
+.year-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin: clamp(12px, 2vw, 24px) 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.year-steps li {
+  position: relative;
+  padding: 22px clamp(14px, 2vw, 28px) 0 0;
+  border-top: 2px solid var(--ink);
+  counter-increment: step;
+}
+
+.year-steps li + li {
+  padding-left: clamp(14px, 2vw, 28px);
+  border-left: 1px solid var(--rule);
+}
+
+.year-steps li::before {
+  content: counter(step);
+  position: absolute;
+  top: -13px;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  background: var(--ink);
+  color: var(--bone);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.year-steps li + li::before {
+  left: clamp(14px, 2vw, 28px);
+}
+
+.year-steps h3 {
+  margin: 6px 0 10px;
+  font-family: var(--font-display);
+  font-size: clamp(26px, 2.4vw, 34px);
+  font-weight: 400;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.year-steps p {
+  margin: 0;
+  max-width: 34ch;
+  color: var(--ink-2);
+  font-size: var(--text-lg);
+  line-height: 1.55;
+}
+
+/* ---------------------------------------------------------------- the Ledger */
+
+.ledger-band {
+  padding: clamp(56px, 7vw, 96px) 0;
+  border-top: 1px solid var(--rule);
+  background: var(--bone-2);
+}
+
+.ledger-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr);
+  align-items: center;
+  gap: clamp(32px, 6vw, 88px);
+}
+
+.ledger-grid > div > p {
+  max-width: 58ch;
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-lg);
+  line-height: 1.6;
+}
+
+.ledger-slip {
+  padding: 18px 20px 14px;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+}
+
+.ledger-slip p {
+  margin: 0;
+}
+
+.slip-head {
+  padding-bottom: 10px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  text-transform: uppercase;
+}
+
+.slip-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 44px;
+  border-bottom: 1px solid var(--bone-3);
+  font-size: var(--text-md);
+}
+
+.slip-who {
+  font-weight: 600;
+}
+
+.slip-stamp {
+  min-width: 74px;
+  padding: 2px 8px 1px;
+  border: 2px solid currentColor;
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-align: center;
+  text-transform: uppercase;
+  transform: rotate(-4deg);
+}
+
+.slip-stamp.kept {
+  color: var(--kept);
+}
+
+.slip-stamp.broken {
+  color: var(--vermilion-deep);
+}
+
+.slip-stamp.void {
+  color: var(--ink-3);
+}
+
+.slip-note {
+  padding-top: 10px;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+/* ---------------------------------------------------------------- rivals, proof, last call */
+
+.rivals {
+  padding: clamp(56px, 7vw, 96px) 0;
+  border-top: 1px solid var(--rule);
+}
+
+.rivals-grid,
+.proof-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
+  gap: clamp(20px, 5vw, 72px);
+  align-items: start;
+}
+
+.rivals-copy p,
+.proof-grid p {
+  max-width: 62ch;
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-lg);
+  line-height: 1.6;
+}
+
+.proof-band {
+  padding: clamp(48px, 6vw, 88px) 0;
+  border-top: 1px solid var(--rule);
+}
+
+.proof-grid p.proof-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 28px;
+  margin: 0;
+}
+
+.last-call {
+  padding: clamp(40px, 5vw, 64px) 0;
+  background: var(--ink);
+  color: var(--bone);
+}
+
+.last-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.last-grid .landing-h2 {
+  margin: 0;
+}
+
+.last-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.last-actions .btn.big {
+  color: var(--ink);
+}
+
+/* ---------------------------------------------------------------- the one moment of motion */
+
+@media (prefers-reduced-motion: no-preference) {
+  .dispatch-slip {
+    animation: land-slip-in 760ms var(--ease-out) 250ms both;
+  }
+
+  .note-seal .seal-wax {
+    animation: land-thud 420ms var(--ease-thud) 1250ms both;
+  }
+
+  .order-line {
+    animation:
+      land-draw 760ms var(--ease-in-out) 2100ms both,
+      land-betray 1ms linear 3200ms both;
+  }
+
+  .order-head {
+    animation: land-appear 160ms linear 2800ms both;
+  }
+
+  .fleet.london {
+    animation: land-sail 560ms var(--ease-in-out) 2860ms both;
+  }
+
+  .dispatch-receipt {
+    animation: land-appear 360ms var(--ease-out) 2650ms both;
+  }
+
+  .broken-stamp {
+    animation: land-stamp 380ms var(--ease-thud) 3200ms both;
+  }
+
+  .dispatch-slip .seal-crack {
+    animation: land-crack 300ms var(--ease-out) 3380ms both;
+  }
+
+  .table-seals .turncoat .seal-crack {
+    animation: land-crack 300ms var(--ease-out) 3600ms both;
+  }
+}
+
+@keyframes land-slip-in {
+  from {
+    opacity: 0;
+    transform: translateY(22px) rotate(-5deg);
+  }
+}
+
+@keyframes land-thud {
+  from {
+    opacity: 0;
+    transform: scale(1.9) rotate(-14deg);
+  }
+}
+
+@keyframes land-draw {
+  from {
+    stroke-dashoffset: 86;
+  }
+}
+
+@keyframes land-betray {
+  from {
+    stroke: var(--bone);
+  }
+}
+
+/* From London along the order's curve into the Channel. */
+@keyframes land-sail {
+  from {
+    transform: translate(295.6px, 567.1px);
+  }
+  50% {
+    transform: translate(261.5px, 597.4px);
+  }
+}
+
+@keyframes land-appear {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes land-stamp {
+  from {
+    opacity: 0;
+    transform: scale(2.3) rotate(-3deg);
+  }
+}
+
+@keyframes land-crack {
+  from {
+    stroke-dashoffset: 28;
+  }
+}
+
+/* ---------------------------------------------------------------- small screens */
+
+@media (max-width: 1000px) {
+  .hero-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .theatre {
+    max-width: 560px;
+    padding-right: 0;
+  }
+
+  .year-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 40px;
+  }
+
+  .year-steps li:nth-child(3) {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .year-steps li:nth-child(3)::before {
+    left: 0;
+  }
+
+  .ledger-grid,
+  .rivals-grid,
+  .proof-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .hero-title {
+    font-size: clamp(40px, 12.4vw, 56px);
+  }
+
+  .hero-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .hero-play,
+  .hero-second {
+    width: 100%;
+  }
+
+  .hero-third {
+    justify-self: start;
+  }
+
+  .dispatch-slip {
+    position: relative;
+    top: auto;
+    right: auto;
+    width: calc(100% - 20px);
+    margin: -64px auto 0;
+  }
+
+  .broken-stamp {
+    font-size: 22px;
+  }
+
+  .table-seals {
+    gap: 2px;
+    padding-top: 18px;
+  }
+
+  .table-seals li {
+    font-size: 12px;
+  }
+
+  .table-seals .seal-wax {
+    width: 36px;
+    height: 36px;
+  }
+
+  .year-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .year-steps li + li {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .year-steps li + li::before {
+    left: 0;
+  }
+
+  .slip-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px 12px;
+    padding: 6px 0;
+  }
+
+  .slip-row code {
+    grid-row: 2;
+  }
+
+  .slip-stamp {
+    grid-row: 1 / span 2;
+    grid-column: 2;
+  }
+}

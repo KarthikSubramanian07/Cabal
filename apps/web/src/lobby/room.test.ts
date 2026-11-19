@@ -1,7 +1,7 @@
 import { type PressView, type SeatView, ServerMessage, resolveSettings } from "@cabal/protocol";
 import type { Frame } from "@cabal/protocol/client";
 import { describe, expect, it } from "vitest";
-import { applyFrame, canStart, fromSummary, humanSeats, openSeats } from "./room.js";
+import { applyFrame, canStart, fromSummary, humanSeats, markThreadRead, openSeats } from "./room.js";
 import { POWERS } from "./terms.js";
 
 const STATE = { name: "S1901M", units: {}, centers: {}, homes: {}, retreats: {}, builds: {} };
@@ -142,5 +142,67 @@ describe("the room view", () => {
     expect(canStart({ ...filling, settings: resolveSettings({ aiFill: true }) })).toEqual({ ok: true, why: null });
     expect(canStart({ ...filling, settings: resolveSettings({ aiFill: false }) }).why).toBe("6 seats are still open, and this table waits for players.");
     expect(canStart({ ...filling, status: "active", settings: resolveSettings({}) }).ok).toBe(false);
+  });
+
+  it("keeps the seat's orders on file, and starts each new phase with none", () => {
+    let view = applyFrame(null, welcome({ status: "active", power: "FRANCE", orders: ["A PAR H"] }), 0)!;
+    expect(view.orders).toEqual(["A PAR H"]);
+    view = applyFrame(view, frame({ t: "orders.ack", id: "c2", p: { phase: "S1901M", accepted: ["A PAR - BUR"], rejected: [], verdicts: [] } }), 0)!;
+    expect(view.orders).toEqual(["A PAR - BUR"]);
+    // An acknowledgement for a phase that has gone is not this phase's orders.
+    expect(applyFrame(view, frame({ t: "orders.ack", p: { phase: "W1900A", accepted: [], rejected: [], verdicts: [] } }), 0)).toBe(view);
+    view = applyFrame(view, frame({ t: "state", seq: 9, p: { phase: "F1901M", state: { ...STATE, name: "F1901M" }, deadlineAt: 5, serverTime: 0, seq: 9, status: "active" } }), 0)!;
+    expect(view.orders).toEqual([]);
+    expect(view.ordersPhase).toBe("F1901M");
+  });
+
+  it("remembers a phase's results with the board it began on, and clears the phase's votes", () => {
+    let view = applyFrame(null, welcome({ status: "active", votes: { phase: "S1901M", draw: [{ power: "FRANCE", value: true, include: null }], required: ["FRANCE"], hidden: false, cast: 1, yes: 1 } }), 0)!;
+    const summary = { phase: "S1901M", adjudicatedAt: 1, centers: { FRANCE: 3 } };
+    view = applyFrame(
+      view,
+      frame({
+        t: "results",
+        seq: 4,
+        p: { phase: "S1901M", results: [{ power: "FRANCE", unit: "A PAR", order: "A PAR - BUR", ok: true, code: "ok", reason: "" }], dislodged: [], standoffs: [], civil_disorder: [], summary, seq: 4 },
+      }),
+      0,
+    )!;
+    expect(view.lastResolved).toBe("S1901M");
+    expect(view.resolved["S1901M"]!.before).toEqual(STATE);
+    expect(view.history).toEqual([summary]);
+    expect(view.votes).toMatchObject({ draw: [], cast: 0, yes: 0 });
+  });
+
+  it("stamps a receipt on its pledge, and never lets an older copy take the stamp away", () => {
+    const pledge = { id: "p1", pledger: "FRANCE", audience: "ITALY", phase: "S1901M", sealed: true, commitment: "c".repeat(64), orders: null, receipt: null, nonce: null };
+    const message = { id: "m9", phase: "S1901M", from: "FRANCE", to: "ITALY", body: "Trust me", sentAt: 50, pledge } as PressView;
+    let view = applyFrame(null, welcome({ status: "active", power: "ITALY", press: [message] }), 0)!;
+    view = applyFrame(view, frame({ t: "pledge.receipt", seq: 5, p: { pledgeId: "p1", receipt: "kept", revealed: ["A PAR H"], nonce: "a".repeat(32) } }), 0)!;
+    expect(view.press[0]!.pledge).toMatchObject({ receipt: "kept", orders: ["A PAR H"], nonce: "a".repeat(32) });
+    // A reconnect replays the message as it was sent, before the stamp.
+    view = applyFrame(view, welcome({ status: "active", power: "ITALY", press: [message] }), 0)!;
+    expect(view.press[0]!.pledge?.receipt).toBe("kept");
+  });
+
+  it("counts unread messages from others, and takes the server's counts when it sends them", () => {
+    let view = applyFrame(null, welcome({ status: "active", power: "ITALY", unread: { ALL: 1 } }), 0)!;
+    view = applyFrame(view, frame({ t: "press", seq: 4, p: { id: "x1", phase: "S1901M", from: "FRANCE", to: "ITALY", body: "psst", sentAt: 60, pledge: null } }), 0)!;
+    view = applyFrame(view, frame({ t: "press", seq: 5, p: { id: "x2", phase: "S1901M", from: "ITALY", to: "FRANCE", body: "yes?", sentAt: 61, pledge: null } }), 0)!;
+    expect(view.unread).toEqual({ ALL: 1, FRANCE: 1 });
+    expect(markThreadRead(view, "FRANCE").unread.FRANCE).toBe(0);
+    view = applyFrame(view, frame({ t: "press.unread", p: { unread: { ALL: 0 } } }), 0)!;
+    expect(view.unread).toEqual({ ALL: 0 });
+  });
+
+  it("follows the grace period, extensions and the end of the game", () => {
+    let view = applyFrame(null, welcome({ status: "active", deadlineAt: 100 }), 0)!;
+    view = applyFrame(view, frame({ t: "deadline", seq: 4, p: { phase: "S1901M", deadlineAt: 160, serverTime: 0, grace: true } }), 0)!;
+    expect(view.grace).toBe(true);
+    view = applyFrame(view, frame({ t: "extend", seq: 5, p: { phase: "S1901M", requestedBy: ["FRANCE"], needed: 2, granted: false, deadlineAt: null } }), 0)!;
+    expect(view.extend).toEqual({ phase: "S1901M", requestedBy: ["FRANCE"], needed: 2, granted: false });
+    expect(view.deadlineAt).toBe(160);
+    view = applyFrame(view, frame({ t: "finished", seq: 6, p: { result: "draw", winners: ["FRANCE"], scores: { FRANCE: 1 }, reason: "vote" } }), 0)!;
+    expect(view).toMatchObject({ status: "finished", deadlineAt: null, finished: { result: "draw", reason: "vote" } });
   });
 });

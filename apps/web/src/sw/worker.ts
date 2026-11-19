@@ -5,6 +5,7 @@
  * it; the page then offers a reload (src/pwa/register.ts). It never takes over on its own.
  */
 import { createWorker } from "./handlers.js";
+import { fallbackNotification, notificationFor, pickClient } from "./push.js";
 
 declare const __CABAL_SW__: { version: string; precache: string[] };
 
@@ -17,14 +18,35 @@ interface FetchEvent extends ExtendableEvent {
   respondWith(response: Promise<Response>): void;
 }
 
+interface PushEvent extends ExtendableEvent {
+  data: { json(): unknown } | null;
+}
+
+interface WindowClientLike {
+  url: string;
+  focus(): Promise<unknown>;
+  navigate(url: string): Promise<unknown>;
+}
+
+interface NotificationEventLike extends ExtendableEvent {
+  notification: { close(): void; data: { url?: string } | null };
+}
+
 interface WorkerScope {
   location: Location;
   caches: CacheStorage;
-  clients: { claim(): Promise<void> };
+  clients: {
+    claim(): Promise<void>;
+    matchAll(options: { type: "window"; includeUncontrolled: boolean }): Promise<WindowClientLike[]>;
+    openWindow(url: string): Promise<unknown>;
+  };
+  registration: { showNotification(title: string, options: object): Promise<void> };
   skipWaiting(): Promise<void>;
   addEventListener(type: "install" | "activate", listener: (event: ExtendableEvent) => void): void;
   addEventListener(type: "fetch", listener: (event: FetchEvent) => void): void;
   addEventListener(type: "message", listener: (event: MessageEvent) => void): void;
+  addEventListener(type: "push", listener: (event: PushEvent) => void): void;
+  addEventListener(type: "notificationclick", listener: (event: NotificationEventLike) => void): void;
 }
 
 const scope = self as unknown as WorkerScope;
@@ -54,4 +76,36 @@ scope.addEventListener("message", (event) => {
 scope.addEventListener("fetch", (event) => {
   const answer = worker.respond(event.request);
   if (answer) event.respondWith(answer);
+});
+
+// Web Push: the server says what happened in a game while this player was away from it.
+scope.addEventListener("push", (event) => {
+  let data: unknown = null;
+  try {
+    data = event.data?.json() ?? null;
+  } catch {
+    data = null;
+  }
+  const shown = notificationFor(data, scope.location.origin) ?? fallbackNotification();
+  event.waitUntil(scope.registration.showNotification(shown.title, shown.options));
+});
+
+scope.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const path = event.notification.data?.url ?? "/";
+  event.waitUntil(
+    scope.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (clients) => {
+      const pick = pickClient(clients, path, scope.location.origin);
+      if (!pick) return scope.clients.openWindow(path);
+      if (pick.navigate) {
+        // A window this worker does not control refuses to be navigated: open the page instead.
+        try {
+          await pick.client.navigate(path);
+        } catch {
+          return scope.clients.openWindow(path);
+        }
+      }
+      return pick.client.focus();
+    }),
+  );
 });

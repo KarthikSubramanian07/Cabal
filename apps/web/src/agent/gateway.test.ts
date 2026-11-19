@@ -19,7 +19,8 @@ function mockEnv(files: Record<string, { body: string; type: string }>): AssetEn
 }
 
 const files = {
-  "/index.html": { body: "<!doctype html><h1>Cabal Diplomacy</h1><p>home</p>", type: "text/html" },
+  "/index.html": { body: "<!doctype html><html><head><title>Cabal</title></head><body><h1>Cabal Diplomacy</h1><p>home</p></body></html>", type: "text/html" },
+  "/landing/index.html": { body: "<!doctype html><html><head><title>Cabal</title></head><body><h1>Shake hands. Seal it.</h1></body></html>", type: "text/html" },
   "/index.md": { body: "# Cabal\n\nDiplomacy with receipts.\n", type: "text/markdown" },
   "/about/index.html": { body: "<!doctype html><h1>About</h1>", type: "text/html" },
   "/about/index.md": { body: "# About Cabal\n\nWe build Diplomacy with receipts.\n", type: "text/markdown" },
@@ -101,7 +102,7 @@ describe("handleAgentRequest", () => {
     const html = { headers: { Accept: "text/html,application/xhtml+xml,*/*;q=0.8" } };
 
     it("serves the app shell for every client route", async () => {
-      for (const path of ["/sandbox", "/games", "/ledger", "/g/K7Q2", "/u/ada", "/replay/K7Q2", "/g/K7Q2/"]) {
+      for (const path of ["/sandbox", "/games", "/ledger", "/g/K7Q2XZ", "/u/ada", "/replay/K7Q2XZ", "/g/k7q2xz/"]) {
         const res = await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, html), env);
         expect(res.status, path).toBe(200);
         expect(await res.text(), path).toContain("<h1>Cabal Diplomacy</h1>");
@@ -109,11 +110,35 @@ describe("handleAgentRequest", () => {
       }
     });
 
-    it("keeps the reserved routes out of search indexes but not the sandbox", async () => {
-      const game = await handleAgentRequest(new Request("https://playcabal.pages.dev/g/K7Q2", html), env);
-      expect(game.headers.get("X-Robots-Tag")).toBe("noindex");
-      const sandbox = await handleAgentRequest(new Request("https://playcabal.pages.dev/sandbox", html), env);
-      expect(sandbox.headers.get("X-Robots-Tag")).toBeNull();
+    it("keeps tables and replays out of search indexes but not the public pages", async () => {
+      for (const path of ["/g/K7Q2XZ", "/replay/K7Q2XZ"]) {
+        const res = await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, html), env);
+        expect(res.headers.get("X-Robots-Tag"), path).toBe("noindex");
+        expect(await res.text(), path).toContain('<meta name="robots" content="noindex, follow" />');
+      }
+      for (const path of ["/sandbox", "/games", "/ledger", "/u/ada"]) {
+        const res = await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, html), env);
+        expect(res.headers.get("X-Robots-Tag"), path).toBeNull();
+      }
+    });
+
+    it("writes each address's own title and canonical link into the shell", async () => {
+      const res = await handleAgentRequest(new Request("https://playcabal.pages.dev/u/ada", html), env);
+      const text = await res.text();
+      expect(text).toContain("<title>ada — Cabal</title>");
+      expect(text).toContain('<link rel="canonical" href="https://playcabal.pages.dev/u/ada" />');
+      expect(text).toContain('<meta property="og:url" content="https://playcabal.pages.dev/u/ada" />');
+    });
+
+    it("serves the front door from its prerendered shell, and the plain shell when there is none", async () => {
+      const res = await handleAgentRequest(new Request("https://playcabal.pages.dev/", html), env);
+      const text = await res.text();
+      expect(text).toContain("Shake hands. Seal it.");
+      expect(text).toContain('<link rel="canonical" href="https://playcabal.pages.dev/" />');
+      const bare = mockEnv({ ...files, "/landing/index.html": undefined as never });
+      const fallback = await handleAgentRequest(new Request("https://playcabal.pages.dev/", html), bare);
+      expect(fallback.status).toBe(200);
+      expect(await fallback.text()).toContain("Cabal Diplomacy");
     });
 
     it("still answers unknown paths with a real 404", async () => {
@@ -123,12 +148,70 @@ describe("handleAgentRequest", () => {
       }
     });
 
+    it("answers a table or replay code that cannot exist with a 404 no index keeps", async () => {
+      for (const path of ["/g/K7Q2", "/replay/zzzz", "/g/K7Q2X0"]) {
+        const res = await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, html), env);
+        expect(res.status, path).toBe(404);
+        expect(res.headers.get("X-Robots-Tag"), path).toBe("noindex");
+        // Still the app, which draws its own "no table goes by that code".
+        expect(await res.text(), path).toContain("<h1>Cabal Diplomacy</h1>");
+      }
+    });
+
+    it("keeps the board's preloads for pages that draw it, and drops them for the rest", async () => {
+      const preloads =
+        '<link rel="modulepreload" crossorigin href="/assets/SandboxPage-abc.js"><link rel="modulepreload" crossorigin href="/assets/board-def.js">' +
+        '<link rel="preload" as="fetch" type="application/wasm" crossorigin="anonymous" href="/assets/cabal_engine_bg-123.wasm">';
+      const shell = mockEnv({ ...files, "/index.html": { body: `<!doctype html><html><head><title>Cabal</title>${preloads}</head><body><h1>Cabal Diplomacy</h1></body></html>`, type: "text/html" } });
+      for (const path of ["/sandbox", "/g/K7Q2XZ", "/replay/K7Q2XZ"]) {
+        const text = await (await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, html), shell)).text();
+        expect(text, path).toContain("cabal_engine_bg-123.wasm");
+        expect(text, path).toContain("board-def.js");
+      }
+      for (const path of ["/ledger", "/u/ada", "/games"]) {
+        const text = await (await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, html), shell)).text();
+        expect(text, path).not.toContain("cabal_engine_bg");
+        expect(text, path).not.toContain("board-def.js");
+        expect(text, path).not.toContain("SandboxPage");
+      }
+    });
+
+    it("asks the game server about a handle: nobody's is a 404, anyone's is named as they write it", async () => {
+      const asked: string[] = [];
+      const server = {
+        async fetch(input: RequestInfo | URL) {
+          const url = new URL(input instanceof Request ? input.url : String(input));
+          asked.push(url.pathname);
+          // Handles are found whatever their case, as the server finds them.
+          if (url.pathname.toLowerCase() === "/api/players/kestrel") return Response.json({ player: { id: "p1", handle: "Kestrel", createdAt: 1 } });
+          if (url.pathname === "/api/players/broken") return new Response("down", { status: 503 });
+          return Response.json({ error: "no such player" }, { status: 404 });
+        },
+      };
+      const live = { ...env, SERVER: server } satisfies AssetEnv;
+      const nobody = await handleAgentRequest(new Request("https://playcabal.pages.dev/u/Nobody_ever_here", html), live);
+      expect(nobody.status).toBe(404);
+      expect(nobody.headers.get("X-Robots-Tag")).toBe("noindex");
+      expect(await nobody.text()).toContain('<meta name="robots" content="noindex, follow" />');
+      // Every spelling of a handle shares the one its owner writes.
+      for (const path of ["/u/kestrel", "/u/KESTREL"]) {
+        const res = await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, html), live);
+        expect(res.status, path).toBe(200);
+        const text = await res.text();
+        expect(text, path).toContain('<link rel="canonical" href="https://playcabal.pages.dev/u/Kestrel" />');
+        expect(text, path).toContain("<title>Kestrel — Cabal</title>");
+      }
+      // A server that cannot say does not turn a record away.
+      expect((await handleAgentRequest(new Request("https://playcabal.pages.dev/u/broken", html), live)).status).toBe(200);
+      expect(asked).toContain("/api/players/Nobody_ever_here");
+    });
+
     it("gives agents the home Markdown at /sandbox and a 404 for routes with no content", async () => {
       const md = { headers: { Accept: "text/markdown" } };
       const sandbox = await handleAgentRequest(new Request("https://playcabal.pages.dev/sandbox", md), env);
       expect(sandbox.status).toBe(200);
       expect(await sandbox.text()).toContain("Diplomacy with receipts");
-      const game = await handleAgentRequest(new Request("https://playcabal.pages.dev/g/K7Q2", md), env);
+      const game = await handleAgentRequest(new Request("https://playcabal.pages.dev/g/K7Q2XZ", md), env);
       expect(game.status).toBe(404);
       expect(game.headers.get("Content-Type")).toContain("text/markdown");
     });

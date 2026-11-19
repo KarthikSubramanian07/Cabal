@@ -195,18 +195,23 @@ export class CabalSocket {
   }
 
   /**
-   * Drop the current connection and reconnect after the first backoff delay, as if the network had
-   * failed. For tests and for "the tab came back to the foreground" hooks.
+   * Drop the current connection and dial again now, whatever the backoff had grown to: for a
+   * person's "reconnect now", the network coming back and the tab returning to the foreground.
+   * Any retry already waiting is cancelled, so presses never stack up timers.
    */
   reconnect(): void {
     if (this.status === "closed") return;
     const ws = this.ws;
-    this.dropped();
+    this.dropped(false);
     try {
       ws?.close(4000, "client reconnect");
     } catch {
       // already closed
     }
+    this.clearTimer(this.retryTimer);
+    this.retryTimer = null;
+    this.attempt = 0;
+    void this.open();
   }
 
   /** The server's clock, as best this client knows it. Use it for deadline countdowns. */
@@ -369,6 +374,8 @@ export class CabalSocket {
 
   private retry(): void {
     this.setStatus("waiting");
+    // One retry at a time: a second drop while one is waiting replaces it.
+    this.clearTimer(this.retryTimer);
     const delay = backoffDelay(this.attempt++, this.options.backoff, this.options.random);
     this.retryTimer = this.setTimer(() => {
       this.retryTimer = null;
@@ -376,8 +383,8 @@ export class CabalSocket {
     }, delay);
   }
 
-  /** The connection is gone (or is being abandoned): fail what was waiting on it and try again. */
-  private dropped(): void {
+  /** The connection is gone (or is being abandoned): fail what was waiting on it and, unless told not to, try again. */
+  private dropped(again = true): void {
     this.generation++;
     this.ws = null;
     this.stopHeartbeat();
@@ -386,7 +393,7 @@ export class CabalSocket {
       waiting.reject(new CabalError("disconnected", "the connection dropped before the server replied"));
       this.pending.delete(id);
     }
-    if (this.status !== "closed") this.retry();
+    if (again && this.status !== "closed") this.retry();
   }
 
   private onClose(code: number, reason: string): void {

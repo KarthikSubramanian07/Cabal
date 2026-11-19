@@ -130,6 +130,7 @@ function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHr
         <a class="brand" href="/" aria-label="Cabal home">${wordmarkSvg()}</a>
         <nav aria-label="Site">
           <a href="/games">Games</a>
+          <a href="/ledger">Ledger</a>
           <a href="/sandbox">Sandbox</a>
           <a href="/sandbox#how-to-play">How to play</a>
           <a href="/about"${current("/about")}>About</a>
@@ -165,9 +166,9 @@ function ensureDir(path) {
 /** The authored pages: route, Markdown source, title and description. */
 const PAGES = [
   ["/", "home.md", "Cabal — Diplomacy browser game with receipts", "Play classic Diplomacy in the browser with explainable adjudication."],
-  ["/about", "about.md", "About Cabal — Diplomacy with receipts", "Cabal is an open-source Diplomacy browser game with a DATC-complete adjudicator."],
+  ["/about", "about.md", "About Cabal — Diplomacy with receipts", "Cabal is an open-source Diplomacy game in the browser: bots, friends, sealed promises and a DATC-complete adjudicator."],
   ["/contact", "contact.md", "Contact Cabal", "Email and GitHub contact paths for the Cabal Diplomacy project."],
-  ["/privacy", "privacy.md", "Privacy — Cabal", "How the Cabal Diplomacy sandbox handles information in your browser."],
+  ["/privacy", "privacy.md", "Privacy — Cabal", "What Cabal keeps about you, on your device and on its server, and why."],
 ];
 
 function notFoundPage(stylesheet) {
@@ -243,14 +244,19 @@ function enrichIndexHtml() {
   };
 
   const software = {
-    "@type": "SoftwareApplication",
+    "@type": ["VideoGame", "SoftwareApplication"],
     "@id": `${SITE}/#app`,
     name: "Cabal",
     applicationCategory: "GameApplication",
     operatingSystem: "Web browser",
     url: `${SITE}/`,
     description:
-      "Cabal is a Diplomacy browser game with receipts: classic 1901 board, simultaneous orders, and a DATC-complete Rust/WebAssembly adjudicator.",
+      "Cabal is Diplomacy in the browser: the classic 1901 board against six bots or with friends, orders resolved at once by a DATC-complete Rust/WebAssembly adjudicator, promises sealed in wax, and a public Ledger of who kept their word.",
+    genre: ["Strategy", "Board game"],
+    gamePlatform: "Web browser",
+    playMode: ["MultiPlayer", "SinglePlayer"],
+    image: `${SITE}/og.png`,
+    screenshot: `${SITE}/og.png`,
     offers: {
       "@type": "Offer",
       price: "0",
@@ -259,9 +265,19 @@ function enrichIndexHtml() {
     author: { "@id": `${SITE}/#organization` },
   };
 
+  const website = {
+    "@type": "WebSite",
+    "@id": `${SITE}/#website`,
+    name: "Cabal",
+    url: `${SITE}/`,
+    description: "Play Diplomacy in your browser against bots or friends, seal your promises, and see who keeps their word on the Ledger.",
+    inLanguage: "en",
+    publisher: { "@id": `${SITE}/#organization` },
+  };
+
   const jsonLd = {
     "@context": "https://schema.org",
-    "@graph": [organization, software],
+    "@graph": [website, organization, software],
   };
 
   // Replace legacy VideoGame-only JSON-LD if present; else inject before </head>.
@@ -275,19 +291,8 @@ function enrichIndexHtml() {
     html = html.replace("</head>", `${ldTag}\n  </head>`);
   }
 
-  // Brand-forward title for discoverability (Diplomacy + Cabal).
-  html = html.replace(
-    /<title>[^<]*<\/title>/,
-    "<title>Cabal — Diplomacy browser game with receipts</title>",
-  );
-  html = html.replace(
-    /property="og:title" content="[^"]*"/,
-    'property="og:title" content="Cabal — Diplomacy browser game with receipts"',
-  );
-  html = html.replace(
-    /name="twitter:title" content="[^"]*"/,
-    'name="twitter:title" content="Cabal — Diplomacy browser game with receipts"',
-  );
+  // Title, description, canonical link and share card: the front door's by default; the Pages
+  // worker writes each address's own over them as the page goes out (src/app/meta.ts).
 
   if (!html.includes('rel="describedby"')) {
     html = html.replace(
@@ -308,12 +313,14 @@ function enrichIndexHtml() {
           <button type="button" class="nav-toggle" aria-expanded="false">Menu</button>
           <nav aria-label="Site" data-open="false">
             <a href="/games">Games</a>
+            <a href="/ledger">Ledger</a>
             <a href="/sandbox" aria-current="page">Sandbox</a>
             <button type="button">How to play</button>
             <a href="/about">About</a>
             <a href="/contact">Contact</a>
             <a class="nav-end" href="https://github.com/KarthikSubramanian07/Cabal">GitHub</a>
           </nav>
+          <div class="player-menu"><button type="button" class="player-button" aria-expanded="false"><span class="player-seal empty" aria-hidden="true"></span><span class="player-name">Your account</span></button></div>
         </header>
         <main class="loading-body">
           <div class="loading-card">
@@ -365,19 +372,20 @@ function writeLlms() {
   writeFileSync(join(dist, "llms.txt"), md("llms.txt"));
 }
 
+/** The pages a search index may keep; tables and replays are reached by their code, not listed. */
+export const SITEMAP = [
+  ["/", "daily", "1.0"],
+  ["/sandbox", "monthly", "0.9"],
+  ["/games", "hourly", "0.8"],
+  ["/ledger", "daily", "0.8"],
+  ["/about", "monthly", "0.6"],
+  ["/contact", "yearly", "0.4"],
+  ["/privacy", "yearly", "0.4"],
+];
+
 function writeSitemap() {
-  writeFileSync(
-    join(dist, "sitemap.xml"),
-    `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>${SITE}/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
-  <url><loc>${SITE}/about</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>${SITE}/contact</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>${SITE}/privacy</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>${SITE}/llms.txt</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
-</urlset>
-`,
-  );
+  const urls = SITEMAP.map(([path, freq, priority]) => `  <url><loc>${SITE}${path}</loc><changefreq>${freq}</changefreq><priority>${priority}</priority></url>`);
+  writeFileSync(join(dist, "sitemap.xml"), `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`);
 }
 
 function loadEsbuild() {
@@ -462,6 +470,53 @@ async function bundleServiceWorker(esbuild) {
   return { version, files: precache.length };
 }
 
+/**
+ * The front door, prerendered: the app's own markup for `/` (src/landing/prerender.tsx) written into
+ * a copy of the shell at dist/landing/index.html, which the Pages worker serves for `/`. The
+ * board's preloads are dropped from this copy: the front door has no board, and the engine
+ * (a megabyte) must not compete with the headline.
+ */
+async function writeLanding(esbuild) {
+  const out = join(root, "node_modules/.cache/cabal-prerender/landing.mjs");
+  await esbuild.build({
+    entryPoints: [join(root, "src/landing/prerender.tsx")],
+    outfile: out,
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    target: "node20",
+    jsx: "automatic",
+    // React's server renderer reaches for Node built-ins with require().
+    banner: { js: 'import { createRequire as __cabalRequire } from "node:module"; const require = __cabalRequire(import.meta.url);' },
+    loader: { ".css": "empty" },
+    // Pages behind the front door are bundled too (their dynamic imports), never run: their
+    // asset URLs (the engine's WebAssembly) need only exist.
+    plugins: [
+      {
+        name: "asset-urls",
+        setup(build) {
+          build.onResolve({ filter: /\?url$/ }, (args) => ({ path: args.path, namespace: "asset-url" }));
+          build.onLoad({ filter: /.*/, namespace: "asset-url" }, () => ({ contents: 'export default "";', loader: "js" }));
+        },
+      },
+    ],
+    define: { "import.meta.env.PROD": "true", "import.meta.env.DEV": "false", "process.env.NODE_ENV": '"production"' },
+    logLevel: "warning",
+  });
+  const { renderLanding } = await import(`${pathToFileURL(out).href}?v=${Date.now()}`);
+  const markup = renderLanding();
+  let html = readFileSync(join(dist, "index.html"), "utf8");
+  html = html.replace(/\s*<link rel="modulepreload"[^>]*(?:SandboxPage|board)-[^>]*>/g, "");
+  html = html.replace(/\s*<link rel="preload" as="fetch"[^>]*cabal_engine_bg-[^>]*>/g, "");
+  const start = html.indexOf('<div id="root">');
+  const end = html.lastIndexOf("</div>", html.indexOf("</body>"));
+  if (start < 0 || end < start) throw new Error("emit-agent-site: no #root in dist/index.html");
+  html = `${html.slice(0, start)}<div id="root" data-prerendered="home">${markup}${html.slice(end)}`;
+  assertMinPlainText("front door", markup.replace(/<[^>]+>/g, " "), 1500);
+  ensureDir(join(dist, "landing"));
+  writeFileSync(join(dist, "landing/index.html"), html);
+}
+
 async function main() {
   if (!existsSync(join(dist, "index.html"))) {
     throw new Error("dist/index.html missing; run vite build first");
@@ -473,6 +528,7 @@ async function main() {
   writeSitemap();
   enrichIndexHtml();
   const esbuild = loadEsbuild();
+  await writeLanding(esbuild);
   await bundleWorker(esbuild);
   const sw = await bundleServiceWorker(esbuild);
   console.log(`emit-agent-site: wrote trust pages, markdown siblings, llms.txt, _worker.js, sw.js (build ${sw.version}, ${sw.files} files precached)`);

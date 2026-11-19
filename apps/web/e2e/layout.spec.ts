@@ -142,7 +142,7 @@ test.describe("brand", () => {
     expect(await audit()).toEqual({ rounded: [], shadowed: [] });
     await page.getByRole("button", { name: "Keep playing" }).click();
     // The coast menu floats over the map; it is lifted by a rule, not a shadow.
-    await page.goto("/");
+    await page.goto("/sandbox");
     await expect(page.locator("svg.board")).toBeVisible();
     await tap(page, "MAO");
     await tap(page, "SPA");

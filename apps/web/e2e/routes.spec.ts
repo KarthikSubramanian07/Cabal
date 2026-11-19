@@ -1,39 +1,23 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("routes", () => {
-  test("serves the sandbox at / and at /sandbox", async ({ page }) => {
-    for (const path of ["/", "/sandbox"]) {
-      await page.goto(path);
-      await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
-      await expect(page.locator(".phase-title")).toContainText("Spring 1901");
-    }
+  test("serves the front door at / and the sandbox at /sandbox", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByRole("heading", { level: 1, name: "Shake hands. Seal it. Break it." })).toBeVisible();
+    await page.goto("/sandbox");
+    await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator(".phase-title")).toContainText("Spring 1901");
+    // The browser's back button returns without a reload.
+    await page.getByRole("banner").getByRole("link", { name: "Cabal home" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Shake hands. Seal it. Break it." })).toBeVisible();
+    await page.goBack();
+    await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
   });
-
-  const reserved: [string, string][] = [
-    ["/ledger", "The Ledger is not open yet."],
-    ["/u/ada", "No file on this player yet."],
-    ["/replay/K7Q2", "This replay is not ready yet."],
-  ];
-
-  for (const [path, title] of reserved) {
-    test(`${path} is reserved with a not-yet page`, async ({ page }) => {
-      await page.goto(path);
-      await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
-      await expect(page.getByRole("banner").getByRole("img", { name: "Cabal" })).toBeVisible();
-      await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", "noindex");
-      await page.getByRole("link", { name: "Open the sandbox" }).click();
-      await expect(page).toHaveURL(/\/sandbox$/);
-      await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
-      // The browser's back button returns without a reload.
-      await page.goBack();
-      await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
-    });
-  }
 
   test("a link to a code that cannot exist says so without asking the server", async ({ page }) => {
     await page.goto("/g/K7Q2");
     await expect(page.getByRole("heading", { level: 1, name: "No table goes by that code." })).toBeVisible();
-    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", "noindex");
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
     await page.getByRole("link", { name: "Find a table" }).click();
     await expect(page).toHaveURL(/\/games$/);
     await expect(page.getByRole("heading", { level: 1, name: "The games room" })).toBeVisible();
@@ -45,14 +29,14 @@ test.describe("routes", () => {
       expect(response?.status(), path).toBe(404);
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
       await expect(page.getByRole("banner").getByRole("img", { name: "Cabal" })).toBeVisible();
-      await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", "noindex");
+      await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
       // The static page, not the app shell with a client-side message.
       expect(await page.locator("script[src]").count()).toBe(0);
     }
   });
 
   test("the app shell and the trust pages come back 200 with the edge's security headers", async ({ page }) => {
-    for (const path of ["/", "/sandbox", "/g/K7Q2", "/about", "/privacy"]) {
+    for (const path of ["/", "/sandbox", "/g/K7Q2XZ", "/about", "/privacy"]) {
       const response = await page.goto(path);
       expect(response?.status(), path).toBe(200);
       const headers = response!.headers();
@@ -89,20 +73,24 @@ test.describe("routes", () => {
       );
     // Without the app's script: what the build wrote into index.html.
     await page.route("**/assets/index-*.js", (route) => route.abort());
-    await page.goto("/");
+    await page.goto("/sandbox");
     await expect(page.locator(".app.prerender .loading-note")).toBeVisible();
     const written = await boxes();
     await page.unroute("**/assets/index-*.js");
 
-    // With it, held on the loading screen by a slow engine download.
+    // With it, held on the loading screen by an engine download that waits until the screen is
+    // measured (a fixed delay raced the measurement on a loaded machine).
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((done) => (release = done));
     await page.route("**/*.wasm", async (route) => {
-      await new Promise((done) => setTimeout(done, 2500));
+      await held;
       await route.continue();
     });
-    await page.goto("/");
+    await page.goto("/sandbox");
     await expect(page.locator("main.loading-body")).toBeVisible();
     await expect(page.locator(".app.prerender")).toHaveCount(0);
     expect(await boxes()).toEqual(written);
+    release();
     // And the app does take over.
     await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
   });
@@ -129,7 +117,7 @@ test.describe("routes", () => {
       });
       expect(bar).toEqual({ background: "rgb(18, 17, 16)", rule: "rgb(217, 79, 48)" });
       // The same links, in the same order, as the app's own top bar.
-      await expect(banner.getByRole("navigation", { name: "Site" }).locator("a")).toHaveText(["Games", "Sandbox", "How to play", "About", "Contact", "GitHub"]);
+      await expect(banner.getByRole("navigation", { name: "Site" }).locator("a")).toHaveText(["Games", "Ledger", "Sandbox", "How to play", "About", "Contact", "GitHub"]);
       // A static page, not the app: no script runs here.
       expect(await page.locator("script[src]").count()).toBe(0);
       const heading = page.getByRole("heading", { level: 1 });
@@ -139,7 +127,7 @@ test.describe("routes", () => {
       expect(await page.evaluate(() => document.fonts.check('16px "Archivo Black"'))).toBe(true);
       expect(await heading.evaluate((el) => getComputedStyle(el).fontFamily)).toContain("Archivo Black");
       await banner.getByRole("link", { name: "Cabal home" }).click();
-      await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByRole("heading", { level: 1, name: "Shake hands. Seal it. Break it." })).toBeVisible({ timeout: 20_000 });
     });
   }
 });

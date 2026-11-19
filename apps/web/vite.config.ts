@@ -115,6 +115,21 @@ function edge(): Plugin {
         },
       };
 
+      /**
+       * The `SERVER` binding, when a real game server is named (the live suite): the edge asks it
+       * whether a record's handle exists. Without one the edge serves records as it would if the
+       * server could not say, so the stand-in suite never depends on a server.
+       */
+      const target = process.env.CABAL_SERVER;
+      const gameServer = target
+        ? {
+            fetch(input: RequestInfo | URL): Promise<Response> {
+              const from = new URL(input instanceof Request ? input.url : String(input));
+              return fetch(new URL(from.pathname + from.search, target), input instanceof Request ? { headers: input.headers } : undefined);
+            },
+          }
+        : undefined;
+
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
         if ((req.method !== "GET" && req.method !== "HEAD") || url.pathname === "/api" || url.pathname.startsWith("/api/")) return next();
@@ -122,7 +137,7 @@ function edge(): Plugin {
           worker ??= import(/* @vite-ignore */ pathToFileURL(resolve(dist, "_worker.js")).href).then((m) => m.default);
           const headers = new Headers();
           for (const [name, value] of Object.entries(req.headers)) if (typeof value === "string") headers.set(name, value);
-          const response = await (await worker).fetch(new Request(url, { method: req.method ?? "GET", headers }), { ASSETS: assets });
+          const response = await (await worker).fetch(new Request(url, { method: req.method ?? "GET", headers }), { ASSETS: assets, ...(gameServer ? { SERVER: gameServer } : {}) });
           let body: Buffer = Buffer.from(await response.arrayBuffer());
           const out = new Headers(response.headers);
           // Plain http on localhost: do not ask the browser to upgrade the page's own requests.

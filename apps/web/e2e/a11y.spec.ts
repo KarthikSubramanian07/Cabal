@@ -94,7 +94,7 @@ test.describe("accessibility scan", () => {
 
   test("the board that failed to load", async ({ page }) => {
     await page.route("**/*.wasm", (route) => route.abort());
-    await page.goto("/");
+    await page.goto("/sandbox");
     await expect(page.getByRole("heading", { level: 1, name: "The board did not load." })).toBeVisible({ timeout: 20_000 });
     await scan(page, "load failure");
   });

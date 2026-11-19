@@ -1,7 +1,7 @@
 /**
  * One table at `/g/:code`. Before the game: the lobby, with the seating plan as the seat picker,
- * the terms, the host's Start, and table talk. Once it runs: who is moving, the clock, the board
- * as it stands and the public press. The seat this device holds comes from localStorage; the
+ * the terms, the host's Start, and table talk. Once it runs: the game room (room/LiveTable.tsx),
+ * with the board, the seat's orders, press with seals, the draw vote and, at the end, the Ledger. The seat this device holds comes from localStorage; the
  * link itself carries only the code, so it is safe to share.
  */
 import type { PowerName } from "@cabal/protocol";
@@ -16,9 +16,10 @@ import { describeTerms, phaseLabel, powerLabel, timeLeft } from "../lobby/terms.
 import { type Room, useRoom } from "../lobby/useRoom.js";
 import { failureText } from "../net/api.js";
 import { isGameCode, spacedCode } from "../net/code.js";
-import { readName } from "../net/seats.js";
+import { NotifyOffer } from "../profile/NotificationsPanel.jsx";
+import { useIdentity } from "../profile/Identity.jsx";
 
-const LiveBoard = lazy(() => import("../lobby/LiveBoard.jsx"));
+const LiveTable = lazy(() => import("../room/LiveTable.jsx").then((m) => ({ default: m.LiveTable })));
 
 function useNow(every = 15_000): number {
   const [now, setNow] = useState(Date.now);
@@ -96,25 +97,21 @@ function Terms({ view }: { view: RoomView }) {
 }
 
 function JoinPanel({ view, selected, onJoin }: { view: RoomView; selected: PowerName | null; onJoin: Room["join"] }) {
-  const [name, setName] = useState(readName);
+  const { player, asPlayer } = useIdentity();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const input = useRef<HTMLInputElement>(null);
   const errorId = useId();
   const open = openSeats(view);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed) {
-      setError("Write the name the table will know you by.");
-      input.current?.focus();
-      return;
-    }
-    setBusy(true);
+    if (busy) return;
     setError(null);
     try {
-      await onJoin(trimmed, selected ?? undefined);
+      await asPlayer("You are about to take a seat. The table, the Ledger and your record will know you by this name.", async (me) => {
+        setBusy(true);
+        await onJoin(me, selected ?? undefined);
+      });
     } catch (err) {
       setError(failureText(err));
     } finally {
@@ -124,23 +121,13 @@ function JoinPanel({ view, selected, onJoin }: { view: RoomView; selected: Power
 
   if (open.length === 0) return <p className="talk-note">Every seat is taken. You can watch and read the table talk.</p>;
   return (
-    <form className="join-panel" onSubmit={submit} noValidate>
+    <form className="join-panel" onSubmit={submit} noValidate aria-describedby={error ? errorId : undefined}>
       <h2>Take a seat</h2>
-      <p className="fine">Choose an open seat above, or leave it to chance.</p>
+      <p className="fine">
+        Choose an open seat above, or leave it to chance.{" "}
+        {player ? `You join as ${player.handle}.` : "You choose a handle as you sit down."}
+      </p>
       <div className="join-row">
-        <div className="field">
-          <label htmlFor="join-name">Your name at the table</label>
-          <input
-            ref={input}
-            id="join-name"
-            autoComplete="nickname"
-            maxLength={32}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            aria-invalid={error !== null && name.trim() === ""}
-            aria-describedby={error ? errorId : undefined}
-          />
-        </div>
         <button type="submit" className="btn brass big" disabled={busy}>
           {busy ? "Taking the seat" : selected ? `Sit as ${powerLabel(selected)}` : "Take any open seat"}
         </button>
@@ -259,27 +246,18 @@ function Table({ room, view }: { room: Room; view: RoomView }) {
       ) : null}
       <div className="table-grid">
         <div className="table-main">
-          {running && view.state ? (
-            <Suspense fallback={<p className="room-wait">Unrolling the map</p>}>
-              <LiveBoard state={view.state} label={`The board, ${phaseLabel(view.phase)}`} />
-            </Suspense>
-          ) : null}
           <section aria-labelledby="seats-title" className="seats-section">
             <h2 id="seats-title">{lobby ? "Seating plan" : "The powers"}</h2>
             {room.seat ? (
               <p className="fine">
-                You sit as {powerLabel(room.seat.power)}. Your seat is kept in this browser only; open this table on another device and you will be watching.
+                You sit as {powerLabel(room.seat.power)}. Open this table on another device signed in to your account and you are seated there too.
               </p>
             ) : null}
             <SeatingPlan seats={view.seats} me={me} running={running} picking={lobby && !room.seat} selected={selected} onSelect={setSelected} />
           </section>
           {lobby && !room.seat ? <JoinPanel view={view} selected={selected} onJoin={room.join} /> : null}
+          {lobby && room.seat ? <NotifyOffer moment="seated" /> : null}
           {lobby && isHost ? <HostPanel view={view} onStart={room.start} /> : null}
-          {running && room.seat ? (
-            <p className="talk-note">
-              Ordering in live games arrives with the next release. Until then a seat that sends no orders holds its units, and after missed turns the bot may cover it.
-            </p>
-          ) : null}
           <Terms view={view} />
         </div>
         <TableTalk
@@ -343,7 +321,37 @@ function Live({ code }: { code: string }) {
       </StatusPage>
     );
   }
-  return <Table room={room} view={room.load.view} />;
+  const view = room.load.view;
+  // Once the game has begun the table becomes the game room: the board, orders, press and seals.
+  if (view.status !== "lobby") {
+    // The summary has no board; the socket's welcome brings it a moment later.
+    if (!view.state) {
+      if (room.crowded) {
+        return (
+          <StatusPage
+            stamp="Full"
+            eyebrow={`Table ${spacedCode(code)}`}
+            title="Your seat is open in too many places."
+            pageTitle={`Table ${spacedCode(code)}`}
+            actions={
+              <button type="button" className="btn brass" onClick={room.reconnect}>
+                Reconnect
+              </button>
+            }
+          >
+            <p>{room.notice}</p>
+          </StatusPage>
+        );
+      }
+      return <PageLoading />;
+    }
+    return (
+      <Suspense fallback={<PageLoading />}>
+        <LiveTable room={room} view={view} />
+      </Suspense>
+    );
+  }
+  return <Table room={room} view={view} />;
 }
 
 function MissingTable({ code }: { code: string }) {

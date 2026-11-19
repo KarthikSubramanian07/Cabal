@@ -1,0 +1,1008 @@
+/*
+ * The game room: a live table. It wears the sandbox's frame (board, sidebar, phone sheet) and adds
+ * the seat strip, the clock, press threads, the wax Seal with its rubber-stamped receipt, the draw
+ * vote and the final ledger. Brass is what you can act on; vermilion is a broken word.
+ */
+
+.table.live {
+  grid-template-columns: minmax(0, 1fr) 400px;
+}
+
+/* On a wide screen the side column stays beside the board and scrolls on its own. */
+.live-side {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - var(--topbar-h));
+  min-height: 0;
+}
+
+.live-side .sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ---- the head: table, seat, phase and the clock */
+
+.live-head {
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.live-table {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+.table-code-sm {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--ink);
+}
+
+.you-as,
+.watching {
+  margin-left: auto;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid var(--ink);
+  color: var(--ink);
+  font-weight: 650;
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.you-as {
+  border-left: 6px solid var(--power);
+}
+
+.watching {
+  border-style: dashed;
+}
+
+.clock {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.clock.soon {
+  border-color: var(--brass-deep);
+  box-shadow: inset 0 -3px 0 var(--brass);
+}
+
+.clock.now {
+  border-color: var(--vermilion-deep);
+  color: var(--vermilion-deep);
+  box-shadow: inset 0 -3px 0 var(--vermilion);
+}
+
+.grace-tag {
+  padding: 1px 5px;
+  background: var(--ink);
+  color: var(--bone);
+  font-family: var(--font-ui);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ready-count {
+  margin-top: 6px;
+}
+
+/* ---- the seat strip: seven cells, each in its power's colour */
+
+.chairs {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  margin: 0;
+  padding: 10px 18px 12px;
+  list-style: none;
+  border-bottom: 1px solid var(--rule);
+  gap: 4px;
+}
+
+/* One strip, two places: beside the board on a wide screen, over the map on a phone. */
+.chairs.at-stage {
+  display: none;
+}
+
+.chair {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  padding: 5px 4px 6px;
+  border: 1px solid var(--rule);
+  border-top: 5px solid var(--power);
+  background: var(--paper);
+  min-width: 0;
+}
+
+.chair.mine {
+  border-color: var(--ink);
+  border-top-color: var(--power);
+  outline: 1px solid var(--ink);
+  outline-offset: 0;
+}
+
+.chair-code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.chair-sc {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.chair-word {
+  grid-column: 1 / -1;
+  margin-top: 3px;
+  font-size: 10.5px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chair.tone-ready {
+  box-shadow: inset 0 -3px 0 var(--kept);
+}
+
+.chair.tone-ready .chair-word {
+  color: var(--kept);
+}
+
+.chair.tone-in .chair-word {
+  color: var(--ink);
+}
+
+.chair.tone-in .chair-word {
+  color: var(--ink);
+}
+
+.chair.tone-in .chair-word::before {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+.chair.tone-waiting .chair-word {
+  color: var(--brass-ink);
+}
+
+.chair.tone-away {
+  border-style: dashed;
+}
+
+.chair.tone-disorder .chair-word {
+  color: var(--vermilion-deep);
+}
+
+.chair.tone-out {
+  opacity: 0.55;
+  background: repeating-linear-gradient(135deg, transparent 0 5px, var(--bone-3) 5px 6px);
+}
+
+.chair.tone-out .chair-code {
+  text-decoration: line-through;
+}
+
+/* ---- the stepper sits under the strip; tabs under that */
+
+.live-side .stepper {
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.live-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-bottom: 1px solid var(--ink);
+  background: var(--bone);
+}
+
+.live-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--hit);
+  border: 0;
+  border-right: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink-3);
+  font-weight: 620;
+  font-size: var(--text-md);
+  cursor: pointer;
+}
+
+.live-tab:last-child {
+  border-right: 0;
+}
+
+.live-tab[aria-selected="true"] {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: inset 0 -3px 0 var(--brass);
+}
+
+.unread {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  background: var(--ink);
+  color: var(--bone);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.live-panel {
+  min-height: 0;
+}
+
+.live-panel[hidden] {
+  display: none;
+}
+
+.live-side .actions {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  gap: 6px;
+  background: var(--paper);
+  border-top: 1px solid var(--rule);
+}
+
+.btn.primary.is-ready {
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--kept);
+  box-shadow: inset 0 -3px 0 var(--kept);
+}
+
+.sync-line {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+.sync-line.alert,
+.refusals {
+  color: var(--vermilion-deep);
+}
+
+.refusals {
+  margin: 8px 0 0;
+  padding: 0 0 0 10px;
+  border-left: 3px solid var(--vermilion);
+  list-style: none;
+  font-size: var(--text-sm);
+}
+
+.standings {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.standings li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--bone-3);
+  --power: var(--ink);
+}
+
+.standings .swatch,
+.scores .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  background: var(--power);
+}
+
+.standing-n {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+/* ---- the connection strip: a telegraph line down */
+
+.wire-down {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sheet);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 18px;
+  background: var(--ink);
+  color: var(--bone);
+  border-bottom: 3px solid var(--brass);
+  font-size: var(--text-md);
+}
+
+.wire-down p {
+  margin: 0;
+}
+
+.wire-down .btn.small {
+  border-color: var(--bone);
+  background: transparent;
+  color: var(--bone);
+}
+
+/* ---- press: threads, dispatches, the composer */
+
+.press {
+  display: grid;
+}
+
+.threads {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.thread-tab {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: var(--hit);
+  padding: 0 4px;
+  border: 1px solid var(--rule);
+  border-left: 5px solid var(--power);
+  background: var(--paper);
+  font-size: var(--text-sm);
+  font-weight: 620;
+  cursor: pointer;
+}
+
+.thread-tab[aria-pressed="true"] {
+  border-color: var(--ink);
+  border-left-color: var(--power);
+  background: var(--bone);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+
+.thread-tab .unread {
+  position: absolute;
+  top: -7px;
+  right: -4px;
+  min-width: 17px;
+  height: 17px;
+  font-size: 10px;
+}
+
+.thread-log {
+  max-height: 46vh;
+  min-height: 160px;
+  overflow-y: auto;
+}
+
+.thread-log ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thread-head {
+  margin: 0;
+  padding: 10px 16px;
+  border-bottom: 1px dashed var(--rule);
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+.thread-head strong {
+  color: var(--ink);
+}
+
+.phase-rule {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -2px 0 8px;
+  color: var(--ink-3);
+  font-size: var(--text-2xs);
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.phase-rule::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--rule);
+}
+
+.press-compose {
+  border-top: 1px solid var(--ink);
+}
+
+.press-compose .talk-row {
+  flex-wrap: wrap;
+}
+
+.press-compose .talk-row .fine {
+  flex: 1 1 140px;
+}
+
+.seal-toggle[aria-pressed="true"] {
+  border-color: var(--brass-deep);
+  box-shadow: inset 0 -2px 0 var(--brass);
+}
+
+.seal-pick {
+  display: grid;
+  gap: 8px;
+  margin: 2px 0 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--brass-deep);
+  background: var(--bone);
+}
+
+.seal-pick legend {
+  padding: 0 6px;
+  font-weight: 650;
+  font-size: var(--text-md);
+}
+
+.seal-choices,
+.seal-mode {
+  display: grid;
+  gap: 2px;
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 0;
+  font-size: var(--text-md);
+  cursor: pointer;
+}
+
+.check input {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: var(--ink);
+  flex: none;
+}
+
+/* ---- the Seal: wax, commitment, and the receipt stamped across it */
+
+.seal-card {
+  position: relative;
+  margin: 10px 0 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+}
+
+.seal-card.open {
+  border-style: dashed;
+}
+
+.seal-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.seal-head figcaption {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.seal-kind {
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.seal-sub {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+.seal-hash {
+  color: var(--ink-2);
+  font-size: 11.5px;
+}
+
+.wax {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  transform: rotate(-8deg);
+}
+
+.wax-body {
+  fill: var(--brass-deep);
+  stroke: #6d5312;
+  stroke-width: 1.2;
+}
+
+.wax-ring {
+  fill: none;
+  stroke: #e2c77d;
+  stroke-width: 1.4;
+  opacity: 0.8;
+}
+
+.wax-mark {
+  fill: #f3e2b0;
+}
+
+.wax-crack {
+  fill: none;
+  stroke: var(--paper);
+  stroke-width: 2.4;
+  stroke-linejoin: bevel;
+}
+
+.wax.broken {
+  transform: rotate(-8deg) scale(0.96);
+}
+
+.seal-orders {
+  display: grid;
+  gap: 2px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seal-orders code {
+  font-size: 12.5px;
+}
+
+.seal-note {
+  margin: 8px 0 0;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+.seal-proof {
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--rule);
+}
+
+.proof {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.proof.ok {
+  color: var(--kept);
+}
+
+.proof.bad {
+  color: var(--vermilion-deep);
+  font-weight: 620;
+}
+
+/* The rubber stamp: a receipt is inked on, slightly crooked, never centred and never smooth. */
+.rubber {
+  margin-left: auto;
+  padding: 4px 9px 3px;
+  border: 3px double currentColor;
+  font-family: var(--font-display);
+  font-size: 16px;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  text-transform: uppercase;
+  transform: rotate(-7deg);
+  mix-blend-mode: multiply;
+}
+
+.rubber.kept {
+  color: var(--kept);
+}
+
+.rubber.broken {
+  color: var(--vermilion-deep);
+  transform: rotate(5deg);
+}
+
+.rubber.void {
+  color: var(--ink-3);
+}
+
+.rubber.small {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 6px 1px;
+  border-width: 2px;
+  border-style: solid;
+  font-size: 11px;
+  transform: rotate(-4deg);
+}
+
+.seal-card.stamped.broken {
+  border-color: var(--vermilion-deep);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .seal-card.stamped .rubber {
+    animation: stamp-down var(--dur-slow) var(--ease-thud) both;
+  }
+}
+
+@keyframes stamp-down {
+  0% {
+    opacity: 0;
+    transform: rotate(-7deg) scale(1.9);
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    transform: rotate(-7deg) scale(1);
+  }
+}
+
+/* ---- the draw vote, more time, the powers */
+
+.live-panel > section,
+.live-panel .press,
+.draw-vote,
+.extension,
+.game-over-panel {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.live-panel .press {
+  padding: 0;
+}
+
+.draw-tally {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.ballots {
+  display: grid;
+  gap: 2px;
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+
+.ballots li {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0 4px 8px;
+  border-left: 3px solid var(--kept);
+}
+
+.ballots li.no {
+  border-left-color: var(--ink-4);
+}
+
+.ballot-power {
+  font-weight: 650;
+}
+
+.draw-include {
+  margin: 10px 0;
+  padding: 6px 12px;
+  border: 1px solid var(--rule);
+}
+
+.vote-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 10px 0 6px;
+}
+
+.vote-buttons .btn {
+  min-height: var(--hit);
+}
+
+.vote-buttons .btn[aria-pressed="true"] {
+  box-shadow: inset 0 -3px 0 var(--ink);
+}
+
+.live-panel .seating {
+  grid-template-columns: 1fr 1fr;
+}
+
+.live-panel .terms dl {
+  grid-template-columns: 1fr 1fr;
+}
+
+/* ---- game over: scores and the Ledger */
+
+.game-over-panel .stamp {
+  margin-bottom: var(--space-3);
+}
+
+.over-title {
+  margin: 0 0 4px;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1.1;
+  text-transform: none;
+  color: var(--ink);
+  letter-spacing: 0;
+}
+
+.sidebar .game-over-panel h2.over-title {
+  font-size: 24px;
+  color: var(--ink);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.scores {
+  width: 100%;
+  margin: 14px 0 6px;
+  border-collapse: collapse;
+  font-size: var(--text-md);
+}
+
+.scores th,
+.scores td {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--bone-3);
+  text-align: left;
+}
+
+.scores thead th {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  font-weight: 650;
+}
+
+.scores td {
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.scores thead th:not(:first-child) {
+  text-align: right;
+}
+
+.scores tr.won th {
+  font-weight: 700;
+}
+
+.scores tr.won td:last-child {
+  color: var(--kept);
+  font-weight: 700;
+}
+
+.score-who {
+  margin-left: 8px;
+  color: var(--ink-3);
+  font-weight: 400;
+  font-size: var(--text-sm);
+}
+
+.ledger-title {
+  margin: 18px 0 8px;
+  padding-top: 12px;
+  border-top: 2px solid var(--ink);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ledger-totals {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+
+.ledger-totals li {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0 3px 8px;
+  border-left: 4px solid var(--power);
+}
+
+.ledger-power {
+  min-width: 70px;
+  font-weight: 650;
+}
+
+.ledger-totals .kept {
+  color: var(--kept);
+}
+
+.ledger-totals .broken {
+  color: var(--vermilion-deep);
+}
+
+.ledger-totals .void {
+  color: var(--ink-3);
+}
+
+.ledger-entries {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ledger-entry {
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  font-size: var(--text-sm);
+}
+
+.ledger-entry.broken {
+  border-color: var(--vermilion-deep);
+}
+
+.ledger-entry p {
+  margin: 0 0 4px;
+}
+
+.ledger-orders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.ledger-entry .bad {
+  color: var(--vermilion-deep);
+}
+
+/* ---- phones: the sheet carries the tabs, the board stays the first screen */
+
+@media (max-width: 1000px) {
+  .table.live {
+    display: block;
+  }
+
+  /* The sheet's handle already says the season, the year and the time left. */
+  .live-head .phase-title,
+  .live-head .phase-meta {
+    display: none;
+  }
+
+  .live-head {
+    padding: 10px 14px 8px;
+  }
+
+  .live-head .live-table {
+    margin: 0;
+  }
+
+  .chairs.at-side {
+    display: none;
+  }
+
+  .chairs.at-stage {
+    display: grid;
+    flex: none;
+    padding: 4px 6px 5px;
+    gap: 3px;
+    border-bottom: 1px solid var(--ink);
+    background: var(--bone);
+  }
+
+  .chairs.at-stage .chair {
+    padding: 3px 3px 4px;
+    border-top-width: 4px;
+  }
+
+  .chairs.at-stage .chair-code {
+    font-size: 11px;
+  }
+
+  .chairs.at-stage .chair-sc {
+    font-size: 10px;
+  }
+
+  .chairs.at-stage .chair-word {
+    margin-top: 1px;
+    font-size: 9.5px;
+  }
+
+  .live-side .stepper {
+    padding: 8px 10px;
+  }
+
+  .threads {
+    padding: 8px 10px;
+  }
+
+  .thread-log {
+    max-height: 30dvh;
+    min-height: 120px;
+  }
+
+  .live-side {
+    position: fixed;
+    top: auto;
+    height: auto;
+  }
+
+  .live-side .actions {
+    position: static;
+  }
+
+  /* The sheet's closed height is fixed (--sheet-h): the filing line shows once it is opened. */
+  .live-side:not([data-open="true"]) .sync-line {
+    display: none;
+  }
+
+  .wire-down {
+    position: fixed;
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: calc(var(--sheet-h) + env(safe-area-inset-bottom, 0px));
+    padding: 8px 14px;
+  }
+
+  .app[data-route="game"] .footer {
+    padding-bottom: calc(var(--sheet-h) + env(safe-area-inset-bottom, 0px) + 16px);
+  }
+
+  /* The offline banner sits over the foot of the page: leave room to scroll the last row clear. */
+  .app[data-route="game"]:has(.wire-down) .footer {
+    padding-bottom: calc(var(--sheet-h) + env(safe-area-inset-bottom, 0px) + 120px);
+  }
+}
