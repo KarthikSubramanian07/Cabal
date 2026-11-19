@@ -2,6 +2,7 @@
  * Seat tokens: `<gameId>.<POWER>.<random>`. The room stores only a SHA-256 of
  * the token, so a leaked database never yields a usable credential.
  */
+import { createHash } from "node:crypto";
 
 export function randomId(bytes = 16): string {
   const buf = new Uint8Array(bytes);
@@ -29,8 +30,10 @@ export function parseToken(token: string): { gameId: string; power: string } | n
   return { gameId, power };
 }
 
-export async function hashToken(token: string): Promise<string> {
-  const data = new TextEncoder().encode(token);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+/**
+ * Synchronous on purpose: a room picks a seat and writes its token hash in one uninterrupted step,
+ * so two joins can never interleave between the choice and the write.
+ */
+export function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
 }
