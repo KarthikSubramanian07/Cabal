@@ -28,8 +28,9 @@
     { "name": "READ_LIMITER", "namespace_id": "4804", "simple": { "limit": 300, "period": 60 } }
   ],
   // Claude turns for games that opt into `aiBrain: "claude"`. The built-in bot never uses the queue.
-  // One message is one model call: small batches, bounded concurrency, and a dead-letter queue so a
-  // turn that cannot be delivered is visible instead of silently dropped.
+  // One message is one model call: small batches, bounded concurrency (two full tables of six seats
+  // can think at once; spend is bounded per game by the room, not here), and a dead-letter queue so
+  // a turn that cannot be delivered is visible instead of silently dropped.
   "queues": {
     "producers": [{ "binding": "AGENT_QUEUE", "queue": "cabal-agent-turns" }],
     "consumers": [
@@ -38,7 +39,7 @@
         "max_batch_size": 1,
         "max_batch_timeout": 1,
         "max_retries": 2,
-        "max_concurrency": 4,
+        "max_concurrency": 12,
         "dead_letter_queue": "cabal-agent-turns-dlq"
       }
     ]
