@@ -7,21 +7,27 @@
 
 use std::collections::HashMap;
 
+use cabal_engine::adjudicate::movement::{
+    CycleKind, MovementExplanation, Opposition, explain_movement,
+};
 use cabal_engine::geo::{Map, Power, SupplyCenter, Terrain, UnitKind};
 use cabal_engine::json::{
     MilaMessage, MilaState, SavedGame, SavedPledge, province_code, state_from_mila,
     state_to_mila_with,
 };
-use cabal_engine::order::AnyOrder;
-use cabal_engine::outcome::{AdjustOutcome, RetreatOutcome};
+use cabal_engine::order::{AnyOrder, Order};
+use cabal_engine::outcome::{
+    AdjustOutcome, ConvoyOutcome, OrderOutcome, RetreatOutcome, SupportOutcome,
+};
 use cabal_engine::parse::parse;
 use cabal_engine::rulebook::Rulebook;
-use cabal_engine::state::PhaseKind;
+use cabal_engine::state::{GameState, PhaseKind, Position};
 use cabal_engine::text::{
-    adjust_text, describe_outcome, order_text, outcome_code, retreat_text, retreat_text_in,
-    unit_text,
+    adjust_text, describe_outcome_in, explain_sentence, order_text, outcome_actors, outcome_code,
+    retreat_text, retreat_text_in, unit_text,
 };
-use cabal_engine::{Game as EngineGame, PhaseResult, Status};
+use cabal_engine::validate::{Verdict, validate_orders};
+use cabal_engine::{Game as EngineGame, PhaseResult, ProvinceId, Status};
 use serde::{Deserialize, Serialize};
 use tsify::{Ts, Tsify};
 use wasm_bindgen::prelude::*;
@@ -30,6 +36,54 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 pub fn version() -> String {
     cabal_engine::VERSION.to_string()
+}
+
+/// What this build of the engine is and what it can do.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct EngineInfo {
+    /// Semantic version of the rules engine.
+    pub version: String,
+    /// Short hash of the commit it was built from, or `unknown`.
+    pub commit: String,
+    /// `release` or `debug`.
+    pub profile: String,
+    /// Optimisation level it was compiled at: `0` to `3`, `s` or `z`.
+    pub opt_level: String,
+    /// Target triple, `wasm32-unknown-unknown` here.
+    pub target: String,
+    /// Bundled maps, by the name `Game.fromSaved` accepts.
+    pub maps: Vec<String>,
+    /// Rulebook editions, by the name every `rulebook` argument accepts.
+    pub rulebooks: Vec<String>,
+    /// Capabilities of this build, so a host can ask before it calls:
+    /// `validate`, `explain`, `preview`, `legal_moves`, `snapshot`,
+    /// `tolerant_process`.
+    pub features: Vec<String>,
+}
+
+/// Version and build identity, for health checks and bug reports.
+#[wasm_bindgen(js_name = buildInfo)]
+pub fn build_info() -> Result<Ts<EngineInfo>, JsError> {
+    Ok(EngineInfo {
+        version: cabal_engine::VERSION.to_string(),
+        commit: cabal_engine::build::COMMIT.to_string(),
+        profile: cabal_engine::build::PROFILE.to_string(),
+        opt_level: cabal_engine::build::OPT_LEVEL.to_string(),
+        target: cabal_engine::build::TARGET.to_string(),
+        maps: vec!["standard".to_string(), "duel".to_string()],
+        rulebooks: ["2023", "1982", "1971", "dptg"].map(String::from).to_vec(),
+        features: [
+            "validate",
+            "explain",
+            "preview",
+            "legal_moves",
+            "snapshot",
+            "tolerant_process",
+        ]
+        .map(String::from)
+        .to_vec(),
+    }
+    .into_ts()?)
 }
 
 // ---------- map ----------
@@ -274,17 +328,95 @@ pub struct OrdersByPower {
 }
 
 #[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+#[tsify(missing_as_null)]
 pub struct OrderResult {
     pub power: String,
     /// `A PAR`
     pub unit: String,
-    /// Canonical order text as adjudicated (illegal orders appear as holds).
+    /// Canonical order text as adjudicated (illegal orders appear as holds;
+    /// `submitted` keeps what was asked for).
     pub order: String,
     pub ok: bool,
-    /// `ok`, `bounce`, `cut`, `void`, `dislodged`, `no_path`, `illegal`, `paradox`, `disband`.
+    /// Stable machine code. Movement: `ok`, `bounce` (another move into the
+    /// province was as strong or stronger), `repelled` (the unit holding there
+    /// was not beaten), `head_to_head` (lost or tied against the unit coming
+    /// the other way), `own_unit` (would dislodge a unit of its own power),
+    /// `no_path` (no unbroken convoy), `cut`, `void`, `dislodged`, `paradox`,
+    /// `illegal`. Retreats: `ok`, `bounce`, `illegal`, `disband`.
+    /// Adjustments: `ok`, `illegal`.
     pub code: String,
-    /// Human readable reason.
+    /// Short human readable reason naming the other units in full
+    /// (`bounced with A MUN`).
     pub reason: String,
+    /// The units behind a failure, in full (`["A MUN"]`): what the move bounced
+    /// with, the unit that repelled it, cut the support or dislodged the unit.
+    #[serde(default)]
+    pub by: Vec<String>,
+    /// `illegal` only: why, as a code (`unreachable`, `duplicate_order`,
+    /// `attacker_origin`, `allowance_used`, ...).
+    #[serde(default)]
+    pub illegal: Option<String>,
+    /// `illegal` movement orders only: the order as it was submitted.
+    #[serde(default)]
+    pub submitted: Option<String>,
+}
+
+/// An order that never reached the board: it could not be read, named another
+/// power, was the wrong kind for the phase, or was for a unit the power does
+/// not have. The rest of the phase is adjudicated without it.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct RejectedOrder {
+    pub power: String,
+    /// The text exactly as submitted.
+    pub input: String,
+    /// `unparseable`, `wrong_power`, `wrong_phase`, `unknown_power`, `no_unit`,
+    /// `foreign_unit` or `not_dislodged`.
+    pub code: String,
+    /// One plain-English sentence.
+    pub reason: String,
+}
+
+/// The verdict on one order, from `validateOrders`.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+#[tsify(missing_as_null)]
+pub struct OrderVerdict {
+    /// The text exactly as submitted.
+    pub input: String,
+    /// Canonical text when the order can be read for this phase, legal or not.
+    pub canonical: Option<String>,
+    /// Would adjudication accept the order as written?
+    pub legal: bool,
+    /// `ok`, or why not: `unparseable`, `wrong_power`, `wrong_phase`,
+    /// `unknown_power`; movement `no_unit`, `foreign_unit`, `duplicate_order`,
+    /// `move_to_self`, `unreachable`, `ambiguous_coast`, `support_self`,
+    /// `support_unreachable`, `support_no_unit`, `convoy_not_at_sea`,
+    /// `convoy_not_army`, `convoy_no_route`; retreats `not_dislodged`,
+    /// `occupied`, `attacker_origin`, `standoff`; adjustments `nothing_to_do`,
+    /// `allowance_used`, `not_home_center`, `not_owned`, `bad_terrain`.
+    pub code: String,
+    /// One plain-English sentence.
+    pub reason: String,
+    /// The unit the order is for (`A PAR`), when the power has one there.
+    pub unit: Option<String>,
+}
+
+/// One verdict per submitted order, in the order they were given.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+#[tsify(missing_as_null)]
+#[serde(transparent)]
+pub struct OrderVerdicts(pub Vec<OrderVerdict>);
+
+impl From<Verdict> for OrderVerdict {
+    fn from(v: Verdict) -> Self {
+        OrderVerdict {
+            input: v.input,
+            canonical: v.canonical,
+            legal: v.legal,
+            code: v.code,
+            reason: v.reason,
+            unit: v.unit,
+        }
+    }
 }
 
 #[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
@@ -302,6 +434,10 @@ pub struct PhaseOutcome {
     pub results: Vec<OrderResult>,
     pub dislodged: Vec<DislodgedInfo>,
     pub standoffs: Vec<String>,
+    /// Orders that were submitted but could not be adjudicated at all. Kept for
+    /// the life of this `Game` object; a game restored from storage has none.
+    #[serde(default)]
+    pub rejected: Vec<RejectedOrder>,
     /// Units removed by the civil disorder rule (adjustment phases).
     pub civil_disorder: Vec<String>,
     /// State after this phase, named with the phase that followed it.
@@ -387,14 +523,137 @@ pub struct ReplayReport {
     pub divergences: Vec<Divergence>,
 }
 
-/// Why a movement phase resolved as it did, from `Game.explain`.
+/// A unit and a strength (DATC 5.B).
 #[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct UnitStrength {
+    /// `A MUN`
+    pub unit: String,
+    pub strength: u32,
+}
+
+/// What a move had to overcome in its destination.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+#[tsify(missing_as_null)]
+pub struct OppositionInfo {
+    /// `empty` (nobody there, or the occupant left), `hold` (the occupant
+    /// stayed: its hold strength) or `head_to_head` (the occupant moved the
+    /// opposite way: its defend strength).
+    pub kind: String,
+    /// The occupant or opponent, `null` for `empty`.
+    pub unit: Option<String>,
+    pub strength: u32,
+    /// The occupant belongs to the mover's own power and cannot be dislodged.
+    pub own_unit: bool,
+}
+
+/// A move against a unit's province.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct AttackInfo {
+    pub unit: String,
+    /// Attack strength.
+    pub strength: u32,
+    pub succeeded: bool,
+}
+
+/// A support order aimed at an order, and whether it added strength.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct SupportInfo {
+    /// The supporting unit, `A MAR`.
+    pub unit: String,
+    /// Index of the support order among the results.
+    pub index: usize,
+    /// `ok`, `cut`, `dislodged` or `void`.
+    pub code: String,
+    /// False when the support failed, or was given against its own power's unit.
+    pub counted: bool,
+    /// Units whose attack cut it.
+    pub cut_by: Vec<String>,
+}
+
+/// A fleet ordered to convoy an army.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+#[tsify(missing_as_null)]
+pub struct ConvoyInfo {
+    /// The fleet, `F NTH`.
+    pub unit: String,
+    /// `ok`, `dislodged`, `paradox` or `void`.
+    pub code: String,
+    /// The unit that dislodged the fleet and broke the convoy.
+    pub dislodged_by: Option<String>,
+}
+
+/// Orders that depended on one another in a circle, and the rule that settled it.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct CycleInfo {
+    /// `circular_movement` (every move succeeds), `convoy_paradox` (the
+    /// convoys fail, Szykman rule) or `unresolved` (every order fails).
+    pub kind: String,
+    /// Indices into the results, ascending.
+    pub members: Vec<usize>,
+}
+
+/// Everything behind one order's result.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+#[tsify(missing_as_null)]
+pub struct OrderExplanation {
+    /// Index among the phase's results.
+    pub index: usize,
+    pub power: String,
+    pub unit: String,
+    pub order: String,
+    pub ok: bool,
+    /// Same code as the result's.
+    pub code: String,
+    /// One or two plain-English sentences, units named in full.
+    pub sentence: String,
+    /// The units behind a failure, as in the result's `by`.
+    pub by: Vec<String>,
+    /// `illegal` only: the reason code and the order as submitted.
+    pub illegal: Option<String>,
+    pub submitted: Option<String>,
+    /// Moves: attack strength. Zero without a path or against an own unit.
+    pub attack: Option<u32>,
+    /// Moves: what stood in the destination.
+    pub opposition: Option<OppositionInfo>,
+    /// Moves: every other move into the same province, with its prevent strength.
+    pub rivals: Vec<UnitStrength>,
+    /// Units that stayed put: the hold strength an attacker had to beat.
+    pub hold: Option<u32>,
+    /// Moves against this unit's province.
+    pub attacks: Vec<AttackInfo>,
+    /// Supports for this order, counted or not.
+    pub supports: Vec<SupportInfo>,
+    /// Support orders: units whose attack cut it.
+    pub cut_by: Vec<String>,
+    /// Moves: the army travels by convoy.
+    pub by_convoy: bool,
+    /// Convoyed moves: the fleets ordered to carry the army.
+    pub convoys: Vec<ConvoyInfo>,
+    /// Convoyed moves: was there an unbroken chain of convoys in the end?
+    pub convoy_path: Option<bool>,
+    /// Index into `cycles` when a backup rule settled this order.
+    pub cycle: Option<usize>,
+    /// Results this one's resolution asked for (the outgoing `edges`).
+    pub depends_on: Vec<usize>,
+}
+
+/// Why a movement phase resolved as it did, from `Game.explain`,
+/// `Game.explainPreview` and `explainPreview`.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+#[tsify(missing_as_null)]
 pub struct Explanation {
     /// Nodes are the phase outcome's `results`, in the same order; an edge
-    /// [a, b] means resolving result a queried result b.
+    /// [a, b] means resolving result a queried result b. A plain bounce has no
+    /// edge: read `orders[a].by` and `rivals` for the units involved.
     pub edges: Vec<(usize, usize)>,
     /// Standalone Graphviz DOT of the same graph, labelled with orders and outcomes.
     pub dot: String,
+    /// One entry per result, in the same order.
+    #[serde(default)]
+    pub orders: Vec<OrderExplanation>,
+    /// Dependency cycles settled by a backup rule (circular movement, convoy paradox).
+    #[serde(default)]
+    pub cycles: Vec<CycleInfo>,
 }
 
 #[derive(Tsify, Serialize, Deserialize, Clone, Debug, Default)]
@@ -404,6 +663,88 @@ pub struct LegalOrders {
     pub by_unit: HashMap<String, Vec<String>>,
     /// Adjustment phases: units to build (positive) or remove (negative).
     pub allowance: i32,
+}
+
+/// `Game.legalAll`: legal orders for every power, keyed by power name.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug, Default)]
+#[tsify(hashmap_as_object)]
+#[serde(transparent)]
+pub struct LegalOrdersByPower(pub HashMap<String, LegalOrders>);
+
+/// A destination a unit may move to.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct MoveOption {
+    /// `BUR`, or `STP/NC` where a fleet must pick a coast.
+    pub to: String,
+    /// The move needs a convoy (`A LON - BEL VIA`).
+    pub via_convoy: bool,
+}
+
+/// A move by another unit that this unit may support.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct SupportOption {
+    /// Province of the unit being supported.
+    pub unit: String,
+    pub to: String,
+}
+
+/// A convoy this fleet may be part of.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct ConvoyOption {
+    /// Province of the army.
+    pub army: String,
+    pub to: String,
+}
+
+/// Everything one unit may be ordered to do, as data for a board to highlight.
+/// A hold (or, in retreats, a disband) is always allowed and is not listed.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct UnitMoves {
+    pub power: String,
+    /// `A PAR`, `F STP/SC`
+    pub unit: String,
+    /// `PAR`, `STP`
+    pub province: String,
+    pub moves: Vec<MoveOption>,
+    /// Provinces whose unit may be supported in place.
+    pub support_holds: Vec<String>,
+    pub support_moves: Vec<SupportOption>,
+    pub convoys: Vec<ConvoyOption>,
+    /// Retreat phases: where the dislodged unit may go (`BOH`, `STP/NC`).
+    pub retreats: Vec<String>,
+}
+
+/// A centre open to a build.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct BuildOption {
+    pub province: String,
+    pub army: bool,
+    /// Regions a fleet may be built on: `["BRE"]`, `["STP/NC", "STP/SC"]`, or none inland.
+    pub fleets: Vec<String>,
+}
+
+/// What a power may do in an adjustment phase.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug, Default)]
+pub struct AdjustOptions {
+    /// Units to build (positive) or remove (negative).
+    pub allowance: i32,
+    pub builds: Vec<BuildOption>,
+    /// Units that may be disbanded, when the allowance is negative.
+    pub disbands: Vec<String>,
+}
+
+/// `Game.legalMoves`: the legal orders of a phase as data, not order text.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug, Default)]
+#[tsify(hashmap_as_object)]
+pub struct LegalMoves {
+    /// `S1901M`
+    pub phase: String,
+    /// `M`, `R` or `A`.
+    pub kind: String,
+    /// Movement: every unit. Retreats: every dislodged unit. Adjustments: empty.
+    pub units: Vec<UnitMoves>,
+    /// Adjustment phases: options per power name.
+    pub adjustments: HashMap<String, AdjustOptions>,
 }
 
 fn status_text(map: &Map, s: Status) -> String {
@@ -439,35 +780,463 @@ fn parse_for(map: &Map, text: &str, p: Power) -> Result<cabal_engine::parse::Par
     }
 }
 
-fn typed_orders(game: &EngineGame, orders: &OrdersByPower) -> Result<Vec<AnyOrder>, JsError> {
+/// Orders read for a phase: the ones the resolver can judge, and the ones that
+/// never reached the board.
+struct Submission {
+    orders: Vec<AnyOrder>,
+    rejected: Vec<RejectedOrder>,
+}
+
+/// Read every submitted order against the board. Nothing here fails the phase:
+/// an order that cannot be read, names another power, is the wrong kind for the
+/// phase or is for a unit the power does not have is set aside with a reason,
+/// and the rest are adjudicated. Powers are taken in name order so the result
+/// never depends on the order of an object's keys.
+fn read_orders(game: &EngineGame, orders: &OrdersByPower) -> Submission {
     let map = game.map();
-    let mut out = Vec::new();
-    for (power, list) in &orders.orders {
-        let p = map
-            .find_power(power)
-            .ok_or_else(|| JsError::new(&format!("unknown power {power}")))?;
-        for text in list {
-            let parsed = parse_for(map, text, p).map_err(|e| JsError::new(&e))?;
-            let order = match game.phase().kind {
-                PhaseKind::Movement => parsed.to_movement(Some(p)).map(AnyOrder::Movement),
-                PhaseKind::Retreat => parsed.to_retreat(Some(p)).map(AnyOrder::Retreat),
-                PhaseKind::Adjustment => parsed.to_adjustment(Some(p)).map(AnyOrder::Adjustment),
+    let mut out = Submission {
+        orders: Vec::new(),
+        rejected: Vec::new(),
+    };
+    let mut powers: Vec<(&String, &Vec<String>)> = orders.orders.iter().collect();
+    powers.sort();
+    for (power, list) in powers {
+        let Some(p) = map.find_power(power) else {
+            out.rejected.extend(list.iter().map(|text| RejectedOrder {
+                power: power.clone(),
+                input: text.clone(),
+                code: "unknown_power".to_string(),
+                reason: format!("{power} is not a power on this map."),
+            }));
+            continue;
+        };
+        for v in validate_orders(map, &game.state, game.rulebook, p, list) {
+            match v.order {
+                Some(order) if v.addresses_own_unit() => out.orders.push(order),
+                _ => out.rejected.push(RejectedOrder {
+                    power: map.power(p).name.to_ascii_uppercase(),
+                    input: v.input,
+                    code: v.code,
+                    reason: v.reason,
+                }),
             }
-            .map_err(|e| JsError::new(&format!("{text}: {e}")))?;
-            let order = match order {
-                AnyOrder::Movement(o) => AnyOrder::Movement(
-                    cabal_engine::order::normalise(map, &game.state.position, o).unwrap_or(o),
-                ),
-                other => other,
-            };
-            out.push(order);
         }
     }
-    Ok(out)
+    out
+}
+
+/// A unit by the province it stands in, named in full where the board has one.
+fn unit_name(map: &Map, pos: &Position, p: ProvinceId) -> String {
+    match pos.unit_at(p) {
+        Some(u) => unit_text(map, u),
+        None => province_code(map, p),
+    }
+}
+
+/// The text of what was submitted for a unit whose order was thrown out.
+fn submitted_text(
+    map: &Map,
+    pos: &Position,
+    submitted: &[Order],
+    unit: ProvinceId,
+) -> Option<String> {
+    let texts: Vec<String> = submitted
+        .iter()
+        .filter(|o| o.unit == unit)
+        .map(|o| order_text(map, pos, o))
+        .collect();
+    (!texts.is_empty()).then(|| texts.join(" / "))
+}
+
+fn movement_result(
+    map: &Map,
+    pos: &Position,
+    submitted: &[Order],
+    order: &Order,
+    out: &OrderOutcome,
+) -> OrderResult {
+    let (illegal, text) = match out {
+        OrderOutcome::Illegal { reason, .. } => (
+            Some(reason.code().to_string()),
+            submitted_text(map, pos, submitted, order.unit),
+        ),
+        _ => (None, None),
+    };
+    OrderResult {
+        power: map.power(order.power).name.to_ascii_uppercase(),
+        unit: pos
+            .unit_at(order.unit)
+            .map(|u| unit_text(map, u))
+            .unwrap_or_default(),
+        order: order_text(map, pos, order),
+        ok: out.succeeds(),
+        code: outcome_code(out).to_string(),
+        reason: describe_outcome_in(map, pos, out),
+        by: outcome_actors(order, out)
+            .into_iter()
+            .map(|p| unit_name(map, pos, p))
+            .collect(),
+        illegal,
+        submitted: text,
+    }
+}
+
+fn movement_orders(orders: &[AnyOrder]) -> Vec<Order> {
+    orders
+        .iter()
+        .filter_map(|o| match o {
+            AnyOrder::Movement(o) => Some(*o),
+            _ => None,
+        })
+        .collect()
+}
+
+fn support_code(o: &SupportOutcome) -> &'static str {
+    match o {
+        SupportOutcome::Succeeds => "ok",
+        SupportOutcome::Cut { .. } => "cut",
+        SupportOutcome::Dislodged { .. } => "dislodged",
+        SupportOutcome::Void => "void",
+    }
+}
+
+/// Adjudicate `submitted` on `pos` with tracing and describe every result.
+fn explanation_of(
+    map: &Map,
+    pos: &Position,
+    rulebook: Rulebook,
+    submitted: &[Order],
+) -> Explanation {
+    let (_, x): (_, MovementExplanation) = explain_movement(map, pos, rulebook, submitted);
+    let name = |p: ProvinceId| unit_name(map, pos, p);
+    let index_of = |p: ProvinceId| x.orders.iter().position(|o| o.unit == p).unwrap_or(0);
+    let orders = x
+        .orders
+        .iter()
+        .zip(&x.outcomes)
+        .zip(&x.why)
+        .enumerate()
+        .map(|(i, ((order, out), why))| {
+            let r = movement_result(map, pos, submitted, order, out);
+            OrderExplanation {
+                index: i,
+                sentence: explain_sentence(map, pos, &x, i, r.submitted.as_deref()),
+                power: r.power,
+                unit: r.unit,
+                order: r.order,
+                ok: r.ok,
+                code: r.code,
+                by: r.by,
+                illegal: r.illegal,
+                submitted: r.submitted,
+                attack: why.attack,
+                opposition: why.opposition.map(|o| match o {
+                    Opposition::Empty => OppositionInfo {
+                        kind: "empty".to_string(),
+                        unit: None,
+                        strength: 0,
+                        own_unit: false,
+                    },
+                    Opposition::Hold {
+                        occupant,
+                        strength,
+                        own_unit,
+                    } => OppositionInfo {
+                        kind: "hold".to_string(),
+                        unit: Some(name(occupant)),
+                        strength,
+                        own_unit,
+                    },
+                    Opposition::HeadToHead { opponent, strength } => OppositionInfo {
+                        kind: "head_to_head".to_string(),
+                        unit: Some(name(opponent)),
+                        strength,
+                        own_unit: false,
+                    },
+                }),
+                rivals: why
+                    .rivals
+                    .iter()
+                    .map(|r| UnitStrength {
+                        unit: name(r.unit),
+                        strength: r.prevent,
+                    })
+                    .collect(),
+                hold: why.hold,
+                attacks: why
+                    .attacks
+                    .iter()
+                    .map(|a| AttackInfo {
+                        unit: name(a.from),
+                        strength: a.strength,
+                        succeeded: a.succeeded,
+                    })
+                    .collect(),
+                supports: why
+                    .supports
+                    .iter()
+                    .map(|s| SupportInfo {
+                        unit: name(s.supporter),
+                        index: index_of(s.supporter),
+                        code: support_code(&s.outcome).to_string(),
+                        counted: s.counted,
+                        cut_by: s.cut_by.iter().map(|&c| name(c)).collect(),
+                    })
+                    .collect(),
+                cut_by: why.cut_by.iter().map(|&c| name(c)).collect(),
+                by_convoy: why.by_convoy,
+                convoys: why
+                    .convoys
+                    .iter()
+                    .map(|c| ConvoyInfo {
+                        unit: name(c.fleet),
+                        code: match c.outcome {
+                            ConvoyOutcome::Succeeds => "ok",
+                            ConvoyOutcome::Dislodged { .. } => "dislodged",
+                            ConvoyOutcome::Paradox => "paradox",
+                            ConvoyOutcome::Void => "void",
+                        }
+                        .to_string(),
+                        dislodged_by: match c.outcome {
+                            ConvoyOutcome::Dislodged { by } => Some(name(by)),
+                            _ => None,
+                        },
+                    })
+                    .collect(),
+                convoy_path: why.convoy_path,
+                cycle: why.cycle,
+                depends_on: x
+                    .edges
+                    .iter()
+                    .filter(|&&(from, _)| from == i)
+                    .map(|&(_, to)| to)
+                    .collect(),
+            }
+        })
+        .collect();
+    let graph = cabal_engine::adjudicate::movement::MovementDependencies {
+        orders: x.orders.clone(),
+        outcomes: x.outcomes.clone(),
+        edges: x.edges.clone(),
+    };
+    Explanation {
+        edges: x.edges.iter().copied().collect(),
+        dot: graph.to_dot(map, pos),
+        orders,
+        cycles: x
+            .cycles
+            .iter()
+            .map(|c| CycleInfo {
+                kind: match c.kind {
+                    CycleKind::CircularMovement => "circular_movement",
+                    CycleKind::ConvoyParadox => "convoy_paradox",
+                    CycleKind::Unresolved => "unresolved",
+                }
+                .to_string(),
+                members: c.members.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// The legal orders of the current phase as data. `only` limits the answer to
+/// one power; the convoy search is shared by every power either way.
+fn legal_moves_of(game: &EngineGame, only: Option<cabal_engine::Power>) -> LegalMoves {
+    let map = game.map();
+    let state: &GameState = &game.state;
+    let pos = &state.position;
+    let code = |p: ProvinceId| province_code(map, p);
+    let power_name = |p: cabal_engine::Power| map.power(p).name.to_ascii_uppercase();
+    let wanted = |p: cabal_engine::Power| only.is_none_or(|o| o == p);
+    let mut out = LegalMoves {
+        phase: state.phase.to_string(),
+        ..LegalMoves::default()
+    };
+    match state.phase.kind {
+        PhaseKind::Movement => {
+            out.kind = "M".to_string();
+            let options = match only {
+                // one power with no fleet at sea skips the convoy route tables
+                Some(p) => cabal_engine::legal::legal_movement(map, pos, p)
+                    .into_iter()
+                    .filter_map(|(province, orders)| {
+                        pos.unit_at(province)
+                            .map(|u| cabal_engine::legal::UnitOptions::from_orders(*u, &orders))
+                    })
+                    .collect(),
+                None => cabal_engine::legal::movement_options(map, pos),
+            };
+            for o in options {
+                out.units.push(UnitMoves {
+                    power: power_name(o.unit.power),
+                    unit: unit_text(map, &o.unit),
+                    province: code(o.unit.province()),
+                    moves: o
+                        .moves
+                        .iter()
+                        .map(|&(r, via_convoy)| MoveOption {
+                            to: map.region_name(r),
+                            via_convoy,
+                        })
+                        .collect(),
+                    support_holds: o.support_holds.iter().map(|&p| code(p)).collect(),
+                    support_moves: o
+                        .support_moves
+                        .iter()
+                        .map(|&(unit, to)| SupportOption {
+                            unit: code(unit),
+                            to: code(to),
+                        })
+                        .collect(),
+                    convoys: o
+                        .convoys
+                        .iter()
+                        .map(|&(army, to)| ConvoyOption {
+                            army: code(army),
+                            to: code(to),
+                        })
+                        .collect(),
+                    retreats: Vec::new(),
+                });
+            }
+        }
+        PhaseKind::Retreat => {
+            out.kind = "R".to_string();
+            for d in state.dislodged.iter().filter(|d| wanted(d.unit.power)) {
+                let retreats = cabal_engine::legal::legal_retreats(map, state, d.unit.power)
+                    .remove(&d.unit.province())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|o| match o.command {
+                        cabal_engine::RetreatCommand::Retreat { dest, coast } => {
+                            Some(map.region_name(cabal_engine::Region::new(dest, coast)))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                out.units.push(UnitMoves {
+                    power: power_name(d.unit.power),
+                    unit: unit_text(map, &d.unit),
+                    province: code(d.unit.province()),
+                    moves: Vec::new(),
+                    support_holds: Vec::new(),
+                    support_moves: Vec::new(),
+                    convoys: Vec::new(),
+                    retreats,
+                });
+            }
+        }
+        PhaseKind::Adjustment => {
+            out.kind = "A".to_string();
+            for p in map.power_ids().filter(|&p| wanted(p)) {
+                let (allowance, orders) =
+                    cabal_engine::legal::legal_adjustments(map, pos, game.rulebook, p);
+                let mut options = AdjustOptions {
+                    allowance,
+                    ..AdjustOptions::default()
+                };
+                for o in orders {
+                    match o.command {
+                        cabal_engine::AdjustCommand::Build { kind, region } => {
+                            let province = code(region.province);
+                            if options.builds.last().is_none_or(|b| b.province != province) {
+                                options.builds.push(BuildOption {
+                                    province,
+                                    army: false,
+                                    fleets: Vec::new(),
+                                });
+                            }
+                            let build = options.builds.last_mut().expect("just pushed");
+                            match kind {
+                                Some(UnitKind::Fleet) => build.fleets.push(map.region_name(region)),
+                                _ => build.army = true,
+                            }
+                        }
+                        cabal_engine::AdjustCommand::Disband { unit } => {
+                            options.disbands.push(unit_name(map, pos, unit))
+                        }
+                        cabal_engine::AdjustCommand::Waive => {}
+                    }
+                }
+                out.adjustments.insert(power_name(p), options);
+            }
+        }
+    }
+    out
+}
+
+/// Legal orders as text for the powers in `only` (every power when `None`),
+/// with one convoy search for the whole board.
+fn legal_text_of(
+    game: &EngineGame,
+    only: Option<cabal_engine::Power>,
+) -> HashMap<cabal_engine::Power, LegalOrders> {
+    let map = game.map();
+    let state = &game.state;
+    let pos = &state.position;
+    let mut out: HashMap<cabal_engine::Power, LegalOrders> = map
+        .power_ids()
+        .filter(|&p| only.is_none_or(|o| o == p))
+        .map(|p| (p, LegalOrders::default()))
+        .collect();
+    match state.phase.kind {
+        PhaseKind::Movement => {
+            let all = match only {
+                Some(p) => cabal_engine::legal::legal_movement(map, pos, p),
+                None => cabal_engine::legal::legal_movement_all(map, pos),
+            };
+            for (province, orders) in all {
+                let Some(unit) = pos.unit_at(province) else {
+                    continue;
+                };
+                if let Some(legal) = out.get_mut(&unit.power) {
+                    legal.by_unit.insert(
+                        unit_text(map, unit),
+                        orders.iter().map(|o| order_text(map, pos, o)).collect(),
+                    );
+                }
+            }
+        }
+        PhaseKind::Retreat => {
+            for (&p, legal) in out.iter_mut() {
+                for (province, orders) in cabal_engine::legal::legal_retreats(map, state, p) {
+                    let unit = state
+                        .dislodged
+                        .iter()
+                        .find(|d| d.unit.province() == province)
+                        .map(|d| unit_text(map, &d.unit))
+                        .unwrap_or_default();
+                    legal.by_unit.insert(
+                        unit,
+                        orders
+                            .iter()
+                            .map(|o| retreat_text_in(map, state, o))
+                            .collect(),
+                    );
+                }
+            }
+        }
+        PhaseKind::Adjustment => {
+            for (&p, legal) in out.iter_mut() {
+                let (delta, orders) =
+                    cabal_engine::legal::legal_adjustments(map, pos, game.rulebook, p);
+                legal.allowance = delta;
+                legal.by_unit.insert(
+                    String::new(),
+                    orders.iter().map(|o| adjust_text(map, pos, o)).collect(),
+                );
+            }
+        }
+    }
+    out
 }
 
 /// The outcome of adjudicated phase `index` (archived phases count first).
-fn outcome_of(game: &EngineGame, index: usize) -> Option<PhaseOutcome> {
+fn outcome_of(
+    game: &EngineGame,
+    index: usize,
+    rejected: Option<&Vec<RejectedOrder>>,
+) -> Option<PhaseOutcome> {
     let record = game.record_at(index)?;
     let record: &cabal_engine::PhaseRecord = &record;
     // the state this phase led to, not the state the game is in now
@@ -476,25 +1245,24 @@ fn outcome_of(game: &EngineGame, index: usize) -> Option<PhaseOutcome> {
     let map = game.map();
     let pos = &record.state.position;
     let power_name = |p: cabal_engine::Power| map.power(p).name.to_ascii_uppercase();
+    let dislodged_name = |p: ProvinceId| {
+        record
+            .state
+            .dislodged
+            .iter()
+            .find(|d| d.unit.province() == p)
+            .map(|d| unit_text(map, &d.unit))
+            .unwrap_or_else(|| province_code(map, p))
+    };
     let mut results = Vec::new();
     let mut dislodged = Vec::new();
     let mut standoffs = Vec::new();
     let mut civil_disorder = Vec::new();
     match &record.result {
         PhaseResult::Movement(r) => {
+            let submitted = movement_orders(&record.orders);
             for (o, out) in r.orders.iter().zip(&r.outcomes) {
-                let unit = pos
-                    .unit_at(o.unit)
-                    .map(|u| unit_text(map, u))
-                    .unwrap_or_default();
-                results.push(OrderResult {
-                    power: power_name(o.power),
-                    unit,
-                    order: order_text(map, pos, o),
-                    ok: out.succeeds(),
-                    code: outcome_code(out).to_string(),
-                    reason: describe_outcome(map, out),
-                });
+                results.push(movement_result(map, pos, &submitted, o, out));
             }
             // retreat options come from the state after the phase
             if !r.dislodged.is_empty() {
@@ -528,24 +1296,26 @@ fn outcome_of(game: &EngineGame, index: usize) -> Option<PhaseOutcome> {
                     .find(|d| d.unit.province() == o.unit)
                     .map(|d| unit_text(map, &d.unit))
                     .unwrap_or_default();
+                let mut by = Vec::new();
+                let mut illegal = None;
                 let (ok, code, reason) = match out {
                     RetreatOutcome::Succeeds => (true, "ok", "retreats".to_string()),
-                    RetreatOutcome::Bounced { with } => (
-                        false,
-                        "bounce",
-                        format!(
-                            "bounced with {}",
-                            with.iter()
-                                .map(|&p| province_code(map, p))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                    ),
-                    RetreatOutcome::Illegal { reason } => (
-                        false,
-                        "illegal",
-                        format!("illegal retreat ({reason:?}), disbanded"),
-                    ),
+                    RetreatOutcome::Bounced { with } => {
+                        by = with.iter().map(|&p| dislodged_name(p)).collect();
+                        (
+                            false,
+                            "bounce",
+                            format!("bounced with {}, disbanded", by.join(", ")),
+                        )
+                    }
+                    RetreatOutcome::Illegal { reason } => {
+                        illegal = Some(reason.code().to_string());
+                        (
+                            false,
+                            "illegal",
+                            format!("illegal retreat ({}), disbanded", reason.message()),
+                        )
+                    }
                     RetreatOutcome::Disbanded => (false, "disband", "disbanded".to_string()),
                 };
                 results.push(OrderResult {
@@ -555,15 +1325,24 @@ fn outcome_of(game: &EngineGame, index: usize) -> Option<PhaseOutcome> {
                     ok,
                     code: code.to_string(),
                     reason,
+                    by,
+                    illegal,
+                    submitted: None,
                 });
             }
         }
         PhaseResult::Adjustment(r) => {
             for (o, out) in r.orders.iter().zip(&r.outcomes) {
+                let mut illegal = None;
                 let (ok, code, reason) = match out {
                     AdjustOutcome::Succeeds => (true, "ok", "done".to_string()),
                     AdjustOutcome::Illegal { reason } => {
-                        (false, "illegal", format!("illegal ({reason:?})"))
+                        illegal = Some(reason.code().to_string());
+                        (
+                            false,
+                            "illegal",
+                            format!("illegal order ({})", reason.message()),
+                        )
                     }
                 };
                 results.push(OrderResult {
@@ -573,6 +1352,9 @@ fn outcome_of(game: &EngineGame, index: usize) -> Option<PhaseOutcome> {
                     ok,
                     code: code.to_string(),
                     reason,
+                    by: Vec::new(),
+                    illegal,
+                    submitted: None,
                 });
             }
             civil_disorder = r.civil_disorder.iter().map(|u| unit_text(map, u)).collect();
@@ -583,6 +1365,7 @@ fn outcome_of(game: &EngineGame, index: usize) -> Option<PhaseOutcome> {
         results,
         dislodged,
         standoffs,
+        rejected: rejected.cloned().unwrap_or_default(),
         civil_disorder,
         next: state_to_mila_with(map, &after, game.rulebook).into(),
         status: if last {
@@ -666,6 +1449,55 @@ mod wasm_tests {
     }
 
     #[wasm_bindgen_test]
+    fn one_unreadable_order_does_not_reject_the_phase() {
+        let mut game = Game::new(None).unwrap();
+        let mut orders = OrdersByPower::default();
+        orders.orders.insert(
+            "FRANCE".into(),
+            vec!["complete garbage".into(), "A PAR - BUR".into()],
+        );
+        let orders = Ts::new_unchecked(serde_wasm_bindgen::to_value(&orders).unwrap());
+
+        let preview = game.preview(orders.clone()).unwrap();
+        assert_eq!(game.history_length(), 0, "a preview leaves no trace");
+        let outcome = game.process(orders).unwrap();
+        let outcome: PhaseOutcome = serde_wasm_bindgen::from_value(outcome.js_value()).unwrap();
+        let preview: PhaseOutcome = serde_wasm_bindgen::from_value(preview.js_value()).unwrap();
+
+        assert_eq!(outcome.rejected.len(), 1);
+        assert_eq!(outcome.rejected[0].code, "unparseable");
+        assert_eq!(outcome.rejected[0].input, "complete garbage");
+        assert!(outcome.next.units["FRANCE"].contains(&"A BUR".to_string()));
+        assert_eq!(preview.next.units, outcome.next.units);
+        assert_eq!(preview.rejected.len(), 1);
+    }
+
+    #[wasm_bindgen_test]
+    fn verdicts_and_structured_moves_cross_the_boundary() {
+        let game = Game::new(None).unwrap();
+        let verdicts = game
+            .validate_orders("FRANCE", vec!["A PAR - MOS".into(), "a par - bur".into()])
+            .unwrap();
+        let verdicts: OrderVerdicts = serde_wasm_bindgen::from_value(verdicts.js_value()).unwrap();
+        assert_eq!(verdicts.0[0].code, "duplicate_order");
+        assert_eq!(verdicts.0[1].canonical.as_deref(), Some("A PAR - BUR"));
+        assert!(game.validate_orders("ATLANTIS", Vec::new()).is_err());
+
+        let moves: LegalMoves =
+            serde_wasm_bindgen::from_value(game.legal_moves(None).unwrap().js_value()).unwrap();
+        assert_eq!(moves.kind, "M");
+        assert_eq!(moves.units.len(), 22);
+        let all: LegalOrdersByPower =
+            serde_wasm_bindgen::from_value(game.legal_all().unwrap().js_value()).unwrap();
+        assert_eq!(all.0.len(), 7);
+
+        let info: EngineInfo =
+            serde_wasm_bindgen::from_value(build_info().unwrap().js_value()).unwrap();
+        assert_eq!(info.version, version());
+        assert_eq!(info.target, "wasm32-unknown-unknown");
+    }
+
+    #[wasm_bindgen_test]
     fn explain_traces_past_movement_phases_only() {
         let mut game = Game::new(None).unwrap();
         let mut orders = OrdersByPower::default();
@@ -684,6 +1516,21 @@ mod wasm_tests {
             serde_wasm_bindgen::from_value(explanation.js_value()).unwrap();
         assert!(!explanation.edges.is_empty());
         assert!(explanation.dot.starts_with("digraph movement {"));
+        assert_eq!(explanation.orders.len(), 22);
+        let par = explanation
+            .orders
+            .iter()
+            .find(|o| o.unit == "A PAR")
+            .unwrap();
+        assert_eq!(par.attack, Some(2));
+        assert!(par.supports[0].counted);
+        let mun = explanation
+            .orders
+            .iter()
+            .find(|o| o.unit == "A MUN")
+            .unwrap();
+        assert_eq!(mun.code, "bounce");
+        assert_eq!(mun.by, ["A PAR"]);
         assert!(game.explain(1).is_err());
     }
 }
@@ -694,6 +1541,51 @@ mod wasm_tests {
 #[wasm_bindgen]
 pub struct Game {
     inner: EngineGame,
+    /// Orders set aside by `process`, by index of the phase they were sent for.
+    rejected: HashMap<usize, Vec<RejectedOrder>>,
+}
+
+impl Game {
+    fn wrap(inner: EngineGame) -> Game {
+        Game {
+            inner,
+            rejected: HashMap::new(),
+        }
+    }
+
+    fn power(&self, name: &str) -> Result<cabal_engine::Power, JsError> {
+        self.inner
+            .map()
+            .find_power(name)
+            .ok_or_else(|| JsError::new(&format!("unknown power {name}")))
+    }
+
+    /// The current position as a fresh game with no history: what-if questions
+    /// are asked of this copy, never of the game itself.
+    fn hypothetical(&self) -> Game {
+        Game::wrap(EngineGame::from_state(
+            self.inner.map(),
+            self.inner.rulebook,
+            self.inner.state.clone(),
+        ))
+    }
+
+    fn explain_orders(&self, orders: Ts<OrdersByPower>) -> Result<Explanation, JsError> {
+        if self.inner.phase().kind != PhaseKind::Movement {
+            return Err(JsError::new(&format!(
+                "{} is not a movement phase",
+                self.inner.phase()
+            )));
+        }
+        let orders: OrdersByPower = orders.to_rust()?;
+        let submitted = movement_orders(&read_orders(&self.inner, &orders).orders);
+        Ok(explanation_of(
+            self.inner.map(),
+            &self.inner.state.position,
+            self.inner.rulebook,
+            &submitted,
+        ))
+    }
 }
 
 #[wasm_bindgen]
@@ -701,9 +1593,10 @@ impl Game {
     /// Start a new game on the standard map. `rulebook` is `2023` (default), `1982`, `1971` or `dptg`.
     #[wasm_bindgen(constructor)]
     pub fn new(rulebook: Option<String>) -> Result<Game, JsError> {
-        Ok(Game {
-            inner: EngineGame::new(Map::standard(), rulebook_of(rulebook)?),
-        })
+        Ok(Game::wrap(EngineGame::new(
+            Map::standard(),
+            rulebook_of(rulebook)?,
+        )))
     }
 
     /// Resume from a state in MILA layout (no history). A state from
@@ -715,9 +1608,11 @@ impl Game {
         let s: State = state.to_rust()?;
         let gs =
             state_from_mila(map, &MilaState::from(s)).map_err(|e| JsError::new(&e.to_string()))?;
-        Ok(Game {
-            inner: EngineGame::from_state(map, rulebook_of(rulebook)?, gs),
-        })
+        Ok(Game::wrap(EngineGame::from_state(
+            map,
+            rulebook_of(rulebook)?,
+            gs,
+        )))
     }
 
     /// Replay a MILA saved game (JSON text) through the engine, adjudicating
@@ -732,7 +1627,7 @@ impl Game {
         let saved = parse_saved(json)?;
         let inner = EngineGame::from_saved(&saved, rulebook_of(rulebook)?)
             .map_err(|e| JsError::new(&e.to_string()))?;
-        Ok(Game { inner })
+        Ok(Game::wrap(inner))
     }
 
     /// Continue a saved game (JSON text) without adjudicating anything: the last
@@ -742,7 +1637,7 @@ impl Game {
         let saved = parse_saved(json)?;
         let inner = EngineGame::resume(&saved, rulebook_of(rulebook)?)
             .map_err(|e| JsError::new(&e.to_string()))?;
-        Ok(Game { inner })
+        Ok(Game::wrap(inner))
     }
 
     /// Restore from `snapshot()` text. With `saved` (saved game JSON text) as
@@ -755,7 +1650,7 @@ impl Game {
         let saved = saved.as_deref().map(parse_saved).transpose()?;
         let inner = EngineGame::from_snapshot(&snapshot, saved.as_ref())
             .map_err(|e| JsError::new(&e.to_string()))?;
-        Ok(Game { inner })
+        Ok(Game::wrap(inner))
     }
 
     /// The current state as lossless JSON text, constant in size: board, retreat
@@ -793,8 +1688,9 @@ impl Game {
     }
 
     /// Canonicalise movement orders against the actual board before submission.
-    /// Illegal orders remain present so process can report their original failure;
-    /// retreat and adjustment orders retain their phase-specific validation.
+    /// Illegal orders remain present so process can report their original failure,
+    /// and so do orders that cannot be read: nothing here throws over one bad
+    /// line. Retreat and adjustment orders are returned as they came.
     #[wasm_bindgen(js_name = normaliseOrders)]
     pub fn normalise_orders(
         &self,
@@ -807,14 +1703,16 @@ impl Game {
         let mut output = input.clone();
         let map = self.inner.map();
         for (power, texts) in &mut output.orders {
-            let p = map
-                .find_power(power)
-                .ok_or_else(|| JsError::new(&format!("unknown power {power}")))?;
+            let Some(p) = map.find_power(power) else {
+                continue;
+            };
             for text in texts {
-                let parsed = parse_for(map, text, p).map_err(|e| JsError::new(&e))?;
-                let order = parsed
-                    .to_movement(Some(p))
-                    .map_err(|e| JsError::new(&e.to_string()))?;
+                let Ok(parsed) = parse_for(map, text, p) else {
+                    continue;
+                };
+                let Ok(order) = parsed.to_movement(Some(p)) else {
+                    continue;
+                };
                 if let Ok(order) =
                     cabal_engine::order::normalise(map, &self.inner.state.position, order)
                 {
@@ -830,84 +1728,110 @@ impl Game {
         Ok(output.into_ts()?)
     }
 
-    /// Legal orders for a power in the current phase.
+    /// Judge the orders `power` wants to submit for the current phase against
+    /// the board, one verdict per order in the order given: canonical text,
+    /// legal or not, a machine code and a sentence. Orders are judged together
+    /// where the rules say so (two orders for one unit, builds past the
+    /// allowance). Never throws over an order; only over an unknown power.
+    #[wasm_bindgen(js_name = validateOrders)]
+    pub fn validate_orders(
+        &self,
+        power: &str,
+        orders: Vec<String>,
+    ) -> Result<Ts<OrderVerdicts>, JsError> {
+        let p = self.power(power)?;
+        let verdicts = validate_orders(
+            self.inner.map(),
+            &self.inner.state,
+            self.inner.rulebook,
+            p,
+            &orders,
+        );
+        Ok(OrderVerdicts(verdicts.into_iter().map(OrderVerdict::from).collect()).into_ts()?)
+    }
+
+    /// Legal orders for a power in the current phase, as order text.
     pub fn legal(&self, power: &str) -> Result<Ts<LegalOrders>, JsError> {
+        let p = self.power(power)?;
+        let legal = legal_text_of(&self.inner, Some(p))
+            .remove(&p)
+            .unwrap_or_default();
+        Ok(legal.into_ts()?)
+    }
+
+    /// Legal orders for every power at once, keyed by power name. One convoy
+    /// search serves the whole board, so this is several times cheaper on a
+    /// fleet-heavy board than calling `legal` once per power.
+    #[wasm_bindgen(js_name = legalAll)]
+    pub fn legal_all(&self) -> Result<Ts<LegalOrdersByPower>, JsError> {
         let map = self.inner.map();
-        let p = map
-            .find_power(power)
-            .ok_or_else(|| JsError::new(&format!("unknown power {power}")))?;
-        let pos = &self.inner.state.position;
-        let mut by_unit: HashMap<String, Vec<String>> = HashMap::new();
-        let mut allowance = 0;
-        match self.inner.phase().kind {
-            PhaseKind::Movement => {
-                for (province, orders) in cabal_engine::legal::legal_movement(map, pos, p) {
-                    let unit = pos
-                        .unit_at(province)
-                        .map(|u| unit_text(map, u))
-                        .unwrap_or_default();
-                    by_unit.insert(
-                        unit,
-                        orders.iter().map(|o| order_text(map, pos, o)).collect(),
-                    );
-                }
-            }
-            PhaseKind::Retreat => {
-                for (province, orders) in
-                    cabal_engine::legal::legal_retreats(map, &self.inner.state, p)
-                {
-                    let unit = self
-                        .inner
-                        .state
-                        .dislodged
-                        .iter()
-                        .find(|d| d.unit.province() == province)
-                        .map(|d| unit_text(map, &d.unit))
-                        .unwrap_or_default();
-                    by_unit.insert(
-                        unit,
-                        orders
-                            .iter()
-                            .map(|o| retreat_text_in(map, &self.inner.state, o))
-                            .collect(),
-                    );
-                }
-            }
-            PhaseKind::Adjustment => {
-                let (delta, orders) =
-                    cabal_engine::legal::legal_adjustments(map, pos, self.inner.rulebook, p);
-                allowance = delta;
-                by_unit.insert(
-                    String::new(),
-                    orders.iter().map(|o| adjust_text(map, pos, o)).collect(),
-                );
-            }
-        }
-        Ok(LegalOrders { by_unit, allowance }.into_ts()?)
+        let all = legal_text_of(&self.inner, None)
+            .into_iter()
+            .map(|(p, legal)| (map.power(p).name.to_ascii_uppercase(), legal))
+            .collect();
+        Ok(LegalOrdersByPower(all).into_ts()?)
+    }
+
+    /// The legal orders of the current phase as data rather than text: for
+    /// each unit its destinations, the units it may support and the convoys it
+    /// may join; in retreats the open destinations; in adjustments the builds
+    /// and disbands per power. `power` limits the answer to one power.
+    /// Use this to highlight a board; use `legal` when order text is wanted.
+    #[wasm_bindgen(js_name = legalMoves)]
+    pub fn legal_moves(&self, power: Option<String>) -> Result<Ts<LegalMoves>, JsError> {
+        let only = power.as_deref().map(|p| self.power(p)).transpose()?;
+        Ok(legal_moves_of(&self.inner, only).into_ts()?)
     }
 
     /// Adjudicate the current phase with the given orders and advance.
+    ///
+    /// One bad order never rejects the phase. An order that cannot be read,
+    /// names another power, is the wrong kind for the phase or is for a unit
+    /// the power does not have is returned in `rejected` with a reason, and
+    /// everything else is adjudicated. Throws only when the game is finished.
     pub fn process(&mut self, orders: Ts<OrdersByPower>) -> Result<Ts<PhaseOutcome>, JsError> {
         let orders: OrdersByPower = orders.to_rust()?;
-        let typed = typed_orders(&self.inner, &orders)?;
+        let submission = read_orders(&self.inner, &orders);
         self.inner
-            .process(&typed)
+            .process(&submission.orders)
             .map_err(|e| JsError::new(&e.to_string()))?;
         let last = self.inner.phase_count() - 1;
-        let outcome = outcome_of(&self.inner, last).expect("phase recorded");
+        if !submission.rejected.is_empty() {
+            self.rejected.insert(last, submission.rejected);
+        }
+        let outcome =
+            outcome_of(&self.inner, last, self.rejected.get(&last)).expect("phase recorded");
         Ok(outcome.into_ts()?)
+    }
+
+    /// What-if: the outcome these orders would have in the current phase. The
+    /// game is not touched: no history, no state change, nothing to undo. Any
+    /// phase kind, any set of orders for any powers; units left out hold.
+    pub fn preview(&self, orders: Ts<OrdersByPower>) -> Result<Ts<PhaseOutcome>, JsError> {
+        self.hypothetical().process(orders)
+    }
+
+    /// What-if with reasons: the full explanation these orders would have in
+    /// the current movement phase, without touching the game.
+    #[wasm_bindgen(js_name = explainPreview)]
+    pub fn explain_preview(&self, orders: Ts<OrdersByPower>) -> Result<Ts<Explanation>, JsError> {
+        Ok(self.explain_orders(orders)?.into_ts()?)
     }
 
     /// Outcome of a past phase by index into the history. `next` and `status`
     /// describe the game right after that phase, not as it stands now.
     pub fn outcome(&self, index: usize) -> Result<Ts<PhaseOutcome>, JsError> {
-        let outcome =
-            outcome_of(&self.inner, index).ok_or_else(|| JsError::new("no such phase"))?;
+        let outcome = outcome_of(&self.inner, index, self.rejected.get(&index))
+            .ok_or_else(|| JsError::new("no such phase"))?;
         Ok(outcome.into_ts()?)
     }
 
-    /// Why the movement phase at `index` in the history resolved as it did: the
-    /// dependency edges between its results and a standalone Graphviz DOT graph.
+    /// Why the movement phase at `index` in the history resolved as it did.
+    /// For every result: one plain-English sentence, the units responsible, the
+    /// attack, hold, defend and prevent strengths it was judged on, which
+    /// supports counted and who cut the others, the fleets of a convoy and what
+    /// broke it, and the cycle a backup rule settled (circular movement, convoy
+    /// paradox). Plus the dependency edges and a standalone Graphviz DOT graph.
     /// Computed on demand by re-running the resolution with tracing; throws for
     /// retreat and adjustment phases and for an index past the history.
     pub fn explain(&self, index: usize) -> Result<Ts<Explanation>, JsError> {
@@ -921,26 +1845,13 @@ impl Game {
                 record.state.phase
             )));
         }
-        let map = self.inner.map();
-        let pos = &record.state.position;
-        let submitted: Vec<_> = record
-            .orders
-            .iter()
-            .filter_map(|o| match o {
-                AnyOrder::Movement(o) => Some(*o),
-                _ => None,
-            })
-            .collect();
-        let (_, graph) = cabal_engine::adjudicate::movement::resolve_movement_with_dependencies(
-            map,
-            pos,
+        let submitted = movement_orders(&record.orders);
+        Ok(explanation_of(
+            self.inner.map(),
+            &record.state.position,
             self.inner.rulebook,
             &submitted,
-        );
-        Ok(Explanation {
-            edges: graph.edges.iter().copied().collect(),
-            dot: graph.to_dot(map, pos),
-        }
+        )
         .into_ts()?)
     }
 
@@ -1173,7 +2084,10 @@ pub fn canonical_order(text: &str, phase_kind: &str, power: &str) -> Result<Stri
     Ok(out)
 }
 
-/// What-if preview: adjudicate one movement phase from a state without keeping history.
+/// What-if preview: the outcome a set of orders would have from a state, with
+/// no game to keep and nothing mutated. Works for any phase kind and any
+/// hypothetical order set; units left without an order hold (or, in retreats,
+/// disband). Orders that cannot be adjudicated come back in `rejected`.
 #[wasm_bindgen]
 pub fn preview(
     state: Ts<State>,
@@ -1182,6 +2096,31 @@ pub fn preview(
 ) -> Result<Ts<PhaseOutcome>, JsError> {
     let mut game = Game::from_state(state, rulebook)?;
     game.process(orders)
+}
+
+/// What-if with reasons: the full explanation a set of orders would have in the
+/// movement phase of `state`. See `Game.explain` for what it holds.
+#[wasm_bindgen(js_name = explainPreview)]
+pub fn explain_preview(
+    state: Ts<State>,
+    orders: Ts<OrdersByPower>,
+    rulebook: Option<String>,
+) -> Result<Ts<Explanation>, JsError> {
+    Ok(Game::from_state(state, rulebook)?
+        .explain_orders(orders)?
+        .into_ts()?)
+}
+
+/// Judge orders against the board of `state` without a game: one verdict per
+/// order. See `Game.validateOrders`.
+#[wasm_bindgen(js_name = validateOrders)]
+pub fn validate_orders_in(
+    state: Ts<State>,
+    power: &str,
+    orders: Vec<String>,
+    rulebook: Option<String>,
+) -> Result<Ts<OrderVerdicts>, JsError> {
+    Game::from_state(state, rulebook)?.validate_orders(power, orders)
 }
 
 /// BLAKE3 commitment over canonical orders and a hex nonce (a *seal*).
