@@ -166,9 +166,9 @@ function ensureDir(path) {
 /** The authored pages: route, Markdown source, title and description. */
 const PAGES = [
   ["/", "home.md", "Cabal — Diplomacy browser game with receipts", "Play classic Diplomacy in the browser with explainable adjudication."],
-  ["/about", "about.md", "About Cabal — Diplomacy with receipts", "Cabal is an open-source Diplomacy browser game with a DATC-complete adjudicator."],
+  ["/about", "about.md", "About Cabal — Diplomacy with receipts", "Cabal is an open-source Diplomacy game in the browser: bots, friends, sealed promises and a DATC-complete adjudicator."],
   ["/contact", "contact.md", "Contact Cabal", "Email and GitHub contact paths for the Cabal Diplomacy project."],
-  ["/privacy", "privacy.md", "Privacy — Cabal", "How the Cabal Diplomacy sandbox handles information in your browser."],
+  ["/privacy", "privacy.md", "Privacy — Cabal", "What Cabal keeps about you, on your device and on its server, and why."],
 ];
 
 function notFoundPage(stylesheet) {
