@@ -324,11 +324,11 @@ A signed-in player who subscribes a browser (`POST /api/me/push`) is told by Web
 |---|---|
 | `started` | the game began; says which power the player has |
 | `phase` | a phase resolved and the player has orders to write in the next one |
-| `press` | a private message arrived for the player's power; never its text |
+| `press` | a private message arrived for the player's power; never its text. Once per sending power per phase: later dispatches from that power in the same phase are silent |
 | `deadline` | `reminderMinutes` before the deadline, once per phase, when the player can act and has not filed orders or readied; only in phases at least twice that long |
 | `finished` | the game ended in a solo, a draw, or was abandoned |
 
-A push message is encrypted to the browser (RFC 8291, `aes128gcm`) and decrypts to `{ kind, gameId, title, body, url, tag, sentAt }`. `url` is the game's path on the web app (`/g/K7Q2AB`), `tag` replaces an earlier notice of the same kind for the same game on the device. A push never carries orders, press text, pledges or a token. Delivery is best effort and never holds up a game; a subscription the push service reports gone is deleted.
+A push message is encrypted to the browser (RFC 8291, `aes128gcm`) and decrypts to `{ kind, gameId, title, body, url, tag, sentAt }`. `url` is the game's path on the web app (`/g/K7Q2AB`), `tag` replaces an earlier notice of the same kind for the same game on the device (for `press`, of the same kind from the same power, so dispatches from two powers stay apart). A push never carries orders, press text, pledges or a token. Delivery is best effort and never holds up a game; a subscription the push service reports gone is deleted.
 
 ## Client library
 

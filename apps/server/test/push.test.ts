@@ -193,6 +193,30 @@ describe("what a room tells players who are away", () => {
     bob.close();
   });
 
+  it("tells an away player once per sender and phase however many dispatches come", async () => {
+    const t = await table();
+    await start(t.annSeat);
+    const ann = await Client.connect(t.gameId, t.annSeat.token);
+    await ann.next("welcome", (m) => m.p.power !== null);
+    for (let i = 0; i < 12; i++) {
+      ann.send({ t: "press.send", id: `m${i}`, p: { to: t.bobSeat.power, body: `ping ${i}` } });
+      await ann.next("press", (m) => m.id === `m${i}`);
+      await sleep(110); // under the socket's token bucket
+    }
+    await untilPushed(t.bobDevice, "press");
+    await sleep(300);
+    expect((await t.bobDevice.inbox()).filter((p) => p.kind === "press")).toHaveLength(1);
+    // A new phase is new mail.
+    await deadlineIn(t.gameId);
+    await untilPhase(t.gameId, (phase) => phase !== "S1901M");
+    ann.send({ t: "press.send", id: "next", p: { to: t.bobSeat.power, body: "and again" } });
+    await ann.next("press", (m) => m.id === "next");
+    await untilPushed(t.bobDevice, "press", 2);
+    await sleep(200);
+    expect((await t.bobDevice.inbox()).filter((p) => p.kind === "press")).toHaveLength(2);
+    ann.close();
+  });
+
   it("tells away players who have orders to write that a phase resolved", async () => {
     const t = await table();
     await start(t.annSeat);

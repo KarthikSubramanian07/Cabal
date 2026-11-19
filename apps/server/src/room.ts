@@ -444,6 +444,14 @@ CREATE TABLE IF NOT EXISTS seat_tokens (
   power TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+-- One push per sender, recipient and phase: the first private dispatch to an away player tells
+-- them mail is waiting; the rest of that phase's dispatches from the same power are silent.
+CREATE TABLE IF NOT EXISTS press_notices (
+  phase TEXT NOT NULL,
+  recipient TEXT NOT NULL,
+  sender TEXT NOT NULL,
+  PRIMARY KEY (phase, recipient, sender)
+);
 `;
 
 function json(data: unknown, status = 200): Response {
@@ -2187,9 +2195,12 @@ export class GameRoom extends DurableObject<Env> {
       } else {
         this.broadcast({ t: "press", p: view(to) }, to);
         if (to !== from) this.broadcast({ t: "press", id: origin?.id, p: view(from) }, from);
-        // A private dispatch to someone away: tell them it came, never what it says.
+        // A private dispatch to someone away: tell them it came, never what it says. Once per
+        // sender and phase: a rival cannot make a phone buzz sixty times a phase.
         const recipient = to !== from ? this.awayPlayers().find((seat) => seat.power === to) : undefined;
-        if (recipient) this.notices.push(notices.press(this.meta!.id, recipient.player_id!, from));
+        if (recipient && this.sql.exec("INSERT OR IGNORE INTO press_notices (phase, recipient, sender) VALUES (?, ?, ?)", phase, to, from).rowsWritten > 0) {
+          this.notices.push(notices.press(this.meta!.id, recipient.player_id!, from));
+        }
       }
     });
     return null;
