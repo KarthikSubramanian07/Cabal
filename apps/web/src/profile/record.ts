@@ -96,3 +96,23 @@ export function withOwnCodes(recent: readonly PlayerResult[], mine: readonly MyG
     return own ? { ...g, gameId: own.gameId } : g;
   });
 }
+
+/** A table on the player's own list, in a word or two. */
+export function tableState(g: Pick<MyGame, "status" | "result" | "score">): string {
+  if (g.status === "playing") return "In play";
+  if (g.status === "left") return "Seat handed on";
+  if (g.status === "abandoned") {
+    // A game that ended before any phase resolved (a draw voted at once) is kept as void: it
+    // happened, but it counts for nothing.
+    return g.result === "draw" ? "Drawn before play" : g.result === "solo" ? "Ended before play" : "Abandoned";
+  }
+  return g.result === "solo" ? (g.score ? "Won" : "Lost") : "Drawn";
+}
+
+/**
+ * Games a player finished that the public list leaves out: those at friendly tables (unlisted,
+ * Play now). The list holds the latest `shown` at most, so only a short list can say how many.
+ */
+export function friendlyGames(played: number, listed: number, cap = 20): number {
+  return listed < cap ? Math.max(0, played - listed) : 0;
+}

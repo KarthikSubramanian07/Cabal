@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, test } from "@playwright/test";
-import { fakeServer, fixture, signedIn } from "./api.js";
+import { accountRoutes, fakeServer, fixture, freshProfile, signedIn } from "./api.js";
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
@@ -20,6 +20,54 @@ async function recorded(page: Page) {
   server.on("GET", /^\/api\/games\/Z2BSVX\/ledger$/, () => ({ body: fixture("ledger-Z2BSVX") }));
   return server;
 }
+
+/** ada_l after one Play now game, drawn: a friendly table, so nothing public and no seals counted. */
+async function afterAFriendlyGame(page: Page) {
+  const server = await fakeServer(page);
+  const account = accountRoutes(server);
+  const finishedAt = Date.UTC(2026, 10, 18);
+  const played = { ...freshProfile(), games: { played: 1, solos: 0, draws: 1 } };
+  const game = { gameId: "K7Q2XZ", power: "TURKEY", result: "draw", score: 1 / 7, centers: 3, substitute: false, walkedOut: false, ratingDelta: null, finishedAt };
+  server.on("GET", /^\/api\/players\/ada_l$/i, () => ({ body: played }));
+  server.on("GET", /^\/api\/me$/, () => ({
+    body: { ...played, recent: [game], account: { renameAvailableAt: null, recoveryIssuedAt: account.recoveryIssuedAt, sessions: 1 } },
+  }));
+  server.on("GET", /^\/api\/me\/games$/, () => ({
+    body: {
+      games: [
+        { gameId: "K7Q2XZ", power: "TURKEY", status: "finished", joinedAt: finishedAt - 600_000, finishedAt, result: "draw", score: 1 / 7, centers: 3, ratingDelta: null },
+        // Drawn by vote before the first phase resolved: void, kept as abandoned.
+        { gameId: "QQ7R3D", power: "ITALY", status: "abandoned", joinedAt: finishedAt - 60_000, finishedAt: finishedAt - 30_000, result: "draw", score: 0, centers: 3, ratingDelta: null },
+      ],
+    },
+  }));
+  return server;
+}
+
+test.describe("a record after friendly games", () => {
+  test("agrees with itself: the game played is listed for its player, and the Ledger says why it is empty", async ({ page }) => {
+    await afterAFriendlyGame(page);
+    await signedIn(page);
+    await page.goto("/u/ada_l");
+    await expect(page.getByText(/1 game played/)).toBeVisible();
+    const recent = page.getByRole("region", { name: "Recent games" });
+    await expect(recent.getByText("No finished games yet.")).toHaveCount(0);
+    await expect(recent.getByRole("link", { name: "Replay the game K7Q2XZ" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "The Ledger" })).toContainText("Your games so far were at friendly tables");
+    const own = page.getByRole("region", { name: "Your tables" });
+    await expect(own.getByRole("row", { name: /QQ7 R3D/ })).toContainText("Drawn before play");
+    await scan(page, "own record after a friendly game");
+  });
+
+  test("tells anyone else that friendly games are kept off the public record", async ({ page }) => {
+    await afterAFriendlyGame(page);
+    await page.goto("/u/ada_l");
+    const recent = page.getByRole("region", { name: "Recent games" });
+    await expect(recent).toContainText("One more game at friendly tables is kept off the public record.");
+    await expect(recent.getByText("No finished games yet.")).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "The Ledger" })).toContainText("Seals count here from rated games only");
+  });
+});
 
 test.describe("a player's record", () => {
   test("shows the rating and its path, reliability, the Ledger and recent games", async ({ page }) => {

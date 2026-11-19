@@ -1,6 +1,6 @@
 import type { PlayerResult } from "@cabal/protocol";
 import { describe, expect, it } from "vitest";
-import { ratingPath, ratingTicks, reliabilityLine, resultWord, signed, trustLine, withOwnCodes } from "./record.js";
+import { friendlyGames, ratingPath, ratingTicks, reliabilityLine, resultWord, signed, tableState, trustLine, withOwnCodes } from "./record.js";
 
 const game = (delta: number | null, at: number): PlayerResult => ({
   gameId: `G${at}`,
@@ -76,5 +76,25 @@ describe("withOwnCodes", () => {
     ];
     expect(withOwnCodes([hidden, listed], mine).map((g) => g.gameId)).toEqual(["SECRT2", "G8"]);
     expect(withOwnCodes([hidden], []).map((g) => g.gameId)).toEqual([null]);
+  });
+});
+
+describe("tableState", () => {
+  it("names a game drawn before any phase resolved for what it was, not as abandoned", () => {
+    expect(tableState({ status: "abandoned", result: "draw", score: 0 })).toBe("Drawn before play");
+    expect(tableState({ status: "abandoned", result: "abandoned", score: 0 })).toBe("Abandoned");
+    expect(tableState({ status: "finished", result: "draw", score: 0.5 })).toBe("Drawn");
+    expect(tableState({ status: "finished", result: "solo", score: 1 })).toBe("Won");
+    expect(tableState({ status: "finished", result: "solo", score: 0 })).toBe("Lost");
+    expect(tableState({ status: "playing", result: null, score: null })).toBe("In play");
+  });
+});
+
+describe("friendlyGames", () => {
+  it("counts finished games the public list leaves out, while the list is short enough to know", () => {
+    expect(friendlyGames(1, 0)).toBe(1);
+    expect(friendlyGames(5, 3)).toBe(2);
+    expect(friendlyGames(3, 3)).toBe(0);
+    expect(friendlyGames(40, 20)).toBe(0);
   });
 });
