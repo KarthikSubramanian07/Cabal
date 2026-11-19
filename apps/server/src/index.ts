@@ -14,6 +14,8 @@
  *   GET  /api/games/:id/ws            WebSocket; a player then sends `hello { token }`
  *   GET  /health                      liveness, engine version, build id, index reachability
  *   GET  /api/push/key                the VAPID public key a browser subscribes with (null when push is off)
+ *   POST /api/metrics                 anonymous timings from a browser; GET (admin) the phase 1 metrics
+ *   POST /api/metrics/datc            admin: record the DATC totals for a commit
  *
  * Players, profiles, the leaderboard and the trust ledger are served by players.ts. A signed-in
  * player sends their player secret as the bearer on create and join; they then sit under their
@@ -40,6 +42,7 @@ import { copyRegistryOnce, gameIndex, indexBackend, registrySchema } from "./gam
 import { REQUEST_ID_HEADER, currentRequestId, describeError, log, requestIdFrom, withLogContext } from "./log.js";
 import { gameCode } from "./tokens.js";
 import { CORS, json, limited, readJson, tooMany, withCors } from "./http.js";
+import { metricsRoute } from "./metrics.js";
 import { vapidKeys } from "./notify.js";
 import { playerRoute, resolvePlayer } from "./players.js";
 
@@ -126,6 +129,9 @@ async function route(request: Request, env: Env): Promise<Response> {
     res.headers.set("cache-control", "public, max-age=300");
     return withCors(res);
   }
+
+  const metrics = await metricsRoute(request, env, url);
+  if (metrics) return metrics;
 
   const players = await playerRoute(request, env, url);
   if (players) return players;

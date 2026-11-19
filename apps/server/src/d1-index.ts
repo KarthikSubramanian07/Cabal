@@ -47,6 +47,7 @@ import {
   reliability,
   trust,
 } from "./ratings.js";
+import { fullGameEvent } from "./metrics.js";
 import type { Registry } from "./registry.js";
 import { hashRecoveryCode, hashToken, mintPlayerId, mintPlayerSecret, mintRecoveryCode, normaliseRecoveryCode } from "./tokens.js";
 
@@ -285,6 +286,9 @@ export class D1Index implements GameIndex, PlayerStore {
     }
     const players = [...new Set((record.players ?? []).map((p) => p.playerId).filter((id): id is string => id !== null))];
     for (const id of players) statements.push(this.db.prepare(RECOMPUTE_STATS).bind(now, id, id));
+    // The phase 1 metric "a full game completes", once per game however often this is retried.
+    const metric = fullGameEvent(this.db, record);
+    if (metric) statements.push(metric);
     await this.db.batch(statements);
     await this.rate(record);
   }

@@ -11,6 +11,9 @@ export default defineConfig({
           // budget is set wide open here; budget.test.ts narrows it to test the limits themselves.
           CLAUDE_USD_PER_DAY: "1000000",
           CLAUDE_ACTIVE_GAMES: "1000000",
+          // The operator's token for the metrics routes. Push stays off unless a suite turns it on
+          // with its own keys (push.test.ts), as on a deployment without the VAPID secret.
+          ADMIN_TOKEN: "test-admin-token",
           // The real migration files, applied to the local D1 database before any test runs
           // (test/setup.ts), so tests and production share one schema.
           TEST_MIGRATIONS: await readD1Migrations("./migrations"),
