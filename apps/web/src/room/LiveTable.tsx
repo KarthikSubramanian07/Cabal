@@ -10,6 +10,7 @@
  */
 import type { PowerName } from "@cabal/protocol";
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PageLoading } from "../app/PageLoading.jsx";
 import { shortcutsEnabled } from "../app/prefs.js";
 import { OrderEntry, type WriteResult } from "../components/OrderEntry.jsx";
 import { OrderList, PhaseStepper, Results } from "../components/Sidebar.jsx";
@@ -111,15 +112,9 @@ export function LiveTable({ room, view }: { room: Room; view: RoomView }) {
       </main>
     );
   }
-  if (load.status === "loading") {
-    return (
-      <main className="table-page" id="main" tabIndex={-1}>
-        <p className="room-wait" role="status">
-          Unrolling the map
-        </p>
-      </main>
-    );
-  }
+  // The same loading screen as the page's own, box for box, so the footer does not jump while the
+  // map and the engine arrive (it was the whole of this page's layout shift).
+  if (load.status === "loading") return <PageLoading />;
   return <Floor room={room} view={view} me={me} kind={kind} running={running} over={over} canOrder={canOrder} online={online} desk={load.desk} />;
 }
 
