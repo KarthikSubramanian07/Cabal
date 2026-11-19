@@ -1,5 +1,6 @@
-import { metaFor, writeHead } from "../app/meta.js";
-import { matchRoute } from "../app/routes.js";
+import { type PageMeta, metaFor, writeHead } from "../app/meta.js";
+import { type RouteMatch, matchRoute } from "../app/routes.js";
+import { isGameCode } from "../net/code.js";
 import {
   appendVaryAccept,
   markdownPath,
@@ -57,12 +58,63 @@ function htmlAssetPath(pathname: string): string {
 }
 
 /** The shell with this address's own title, description, canonical link and share card. */
-async function withPageHead(res: Response, path: string): Promise<Response> {
-  const html = writeHead(await res.text(), metaFor(path));
+async function withPageHead(res: Response, path: string, meta: PageMeta = metaFor(path), status = res.status, keepBoard = true): Promise<Response> {
+  let html = writeHead(await res.text(), meta);
+  if (!keepBoard) html = withoutBoardPreloads(html);
   const headers = new Headers(res.headers);
   headers.delete("Content-Length");
   headers.set("Content-Type", "text/html; charset=utf-8");
-  return new Response(html, { status: res.status, headers });
+  return new Response(html, { status, headers });
+}
+
+/** Pages that draw the board: they want its chunk and the engine fetched alongside the entry script. */
+const BOARD_ROUTES: ReadonlySet<string> = new Set(["sandbox", "game", "replay"]);
+
+/**
+ * The shell's hints for the board (its page chunk, its code and the megabyte engine), dropped for
+ * a page that never draws it: on a phone they compete with the page's own script and data. The
+ * build drops the same tags from the front door's copy (scripts/emit-agent-site.mjs).
+ */
+export function withoutBoardPreloads(html: string): string {
+  return html
+    .replace(/\s*<link rel="modulepreload"[^>]*(?:SandboxPage|board)-[^>]*>/g, "")
+    .replace(/\s*<link rel="preload" as="fetch"[^>]*cabal_engine_bg-[^>]*>/g, "");
+}
+
+/**
+ * What the game server says about a player's handle: the handle as its owner writes it, null
+ * when nobody has it, undefined when the server could not say (then the page is served as usual).
+ */
+async function knownHandle(env: AssetEnv, url: URL, handle: string): Promise<string | null | undefined> {
+  if (!env.SERVER) return undefined;
+  try {
+    const res = await env.SERVER.fetch(new Request(new URL(`/api/players/${encodeURIComponent(handle)}`, url).toString(), { headers: { Accept: "application/json" } }));
+    if (res.status === 404) return null;
+    if (!res.ok) return undefined;
+    const body = (await res.json()) as { player?: { handle?: unknown } };
+    return typeof body.player?.handle === "string" ? body.player.handle : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * An app page's head and status. A record names its player as they write their handle, so every
+ * spelling of it shares one canonical address; a handle nobody has, and a table or replay code
+ * that cannot exist, are a 404 that no search index keeps.
+ */
+async function appPage(env: AssetEnv, url: URL, path: string, route: RouteMatch): Promise<{ meta: PageMeta; status: number }> {
+  const meta = metaFor(path);
+  const missing = { meta: { ...meta, index: false }, status: 404 };
+  if (route.name === "game" || route.name === "replay") {
+    return isGameCode((route.params["code"] ?? "").toUpperCase()) ? { meta, status: 200 } : missing;
+  }
+  if (route.name === "profile") {
+    const handle = await knownHandle(env, url, route.params["handle"] ?? "");
+    if (handle === null) return missing;
+    if (handle) return { meta: metaFor(`/u/${encodeURIComponent(handle)}`), status: 200 };
+  }
+  return { meta, status: 200 };
 }
 
 async function fetchAsset(env: AssetEnv, url: URL, pathname: string, request: Request): Promise<Response> {
@@ -216,9 +268,11 @@ async function route(request: Request, env: AssetEnv): Promise<Response> {
     if (chosen !== "text/markdown") {
       const shell = await fetchAsset(env, url, "/index.html", request);
       if (shell.status !== 200) return notFound(env, url, request, false);
-      const res = withNegotiationHeaders(await withPageHead(shell, path));
+      const route = matchRoute(path)!;
+      const { meta, status } = await appPage(env, url, path, route);
+      const res = withNegotiationHeaders(await withPageHead(shell, path, meta, status, BOARD_ROUTES.has(route.name)));
       // Tables and replays are for the people sent the code: keep them out of search indexes.
-      if (!metaFor(path).index) res.headers.set("X-Robots-Tag", "noindex");
+      if (!meta.index) res.headers.set("X-Robots-Tag", "noindex");
       return res;
     }
   }
