@@ -42,30 +42,95 @@ export type Pacing = z.infer<typeof Pacing>;
 export const SeatKind = z.enum(["human", "ai", "open", "civil_disorder"]);
 export type SeatKind = z.infer<typeof SeatKind>;
 
+export const AiBrain = z.enum(["bot", "claude"]);
+export type AiBrain = z.infer<typeof AiBrain>;
+
+/**
+ * Clock presets per pacing. A game that names a pacing and no explicit seconds gets these.
+ * `grace` is the one-off allowance granted at the deadline when a player has still not moved;
+ * `extend` is what a granted extension adds.
+ */
+export const PACING_PRESETS = {
+  live: { movementSeconds: 600, shortPhaseSeconds: 300, graceSeconds: 60, extendSeconds: 300 },
+  daily: { movementSeconds: 86_400, shortPhaseSeconds: 43_200, graceSeconds: 600, extendSeconds: 43_200 },
+  async: { movementSeconds: 172_800, shortPhaseSeconds: 86_400, graceSeconds: 900, extendSeconds: 86_400 },
+} as const satisfies Record<Pacing, Record<string, number>>;
+
+/** The bare validators for each setting, shared by the stored form and the lobby's partial form. */
+const settingsShape = {
+  variant: z.literal("standard"),
+  rulebook: z.enum(["2023", "1982", "1971", "dptg"]),
+  press: PressMode,
+  pacing: Pacing,
+  /** Movement phase length in seconds. Filled from the pacing preset when absent (see `resolveSettings`). */
+  movementSeconds: z.number().int().min(60).max(14 * 24 * 3600),
+  /** Retreat and adjustment phase length in seconds. */
+  shortPhaseSeconds: z.number().int().min(30).max(7 * 24 * 3600),
+  /**
+   * Grace period: when the deadline arrives and a player who can act has sent nothing, the phase
+   * waits this much longer, once. It is never added to a deadline everybody has met. 0 disables it.
+   */
+  graceSeconds: z.number().int().min(0).max(3600),
+  /** Seconds a granted extension adds to the current deadline. */
+  extendSeconds: z.number().int().min(30).max(24 * 3600),
+  /** Private messages one power may send per phase; `null` is unlimited. */
+  whisperBudget: z.number().int().min(0).max(60).nullable(),
+  /** Rulebook press: no press during retreat and adjustment phases. */
+  rulebookPress: z.boolean(),
+  /** Advance as soon as every seat that can act is ready. */
+  readyAdvance: z.boolean(),
+  /** Draws Include All Survivors. When false a draw may name a subset, agreed by every voter. */
+  dias: z.boolean(),
+  /** Eliminated players may cast a visible, advisory draw vote. They are never required and never veto. */
+  ghostVotes: z.boolean(),
+  /** Optional Cabal layer: secretly deal players into cabals with a shared objective. */
+  cabals: z.boolean(),
+  /** Fill empty seats with AI players when the host starts, and cover seats that fall into civil disorder. */
+  aiFill: z.boolean(),
+  /** Who plays AI seats: the built-in bot (free, instant) or Claude (opt-in, capped, falls back to the bot). */
+  aiBrain: AiBrain,
+};
+
 /** Lobby settings that define a game. Also the rating cluster key. */
 export const GameSettings = z.object({
-  variant: z.literal("standard").default("standard"),
-  rulebook: z.enum(["2023", "1982", "1971", "dptg"]).default("2023"),
-  press: PressMode.default("full"),
-  pacing: Pacing.default("async"),
-  /** Movement phase length in seconds. */
-  movementSeconds: z.number().int().min(60).max(14 * 24 * 3600).default(48 * 3600),
-  /** Retreat and adjustment phase length in seconds. */
-  shortPhaseSeconds: z.number().int().min(30).max(7 * 24 * 3600).default(24 * 3600),
-  /** Additional deadline grace, including the two-seat extension length. */
-  graceSeconds: z.number().int().min(0).max(3600).default(300),
-  /** Maximum private messages from one power per phase. */
-  whisperBudget: z.number().int().min(0).max(60).default(10),
-  /** Advance as soon as every seat is ready. */
-  readyAdvance: z.boolean().default(true),
-  dias: z.boolean().default(true),
-  ghostVotes: z.boolean().default(true),
-  /** Optional Cabal layer: secretly deal players into cabals with a shared objective. */
-  cabals: z.boolean().default(false),
-  /** Fill empty seats with AI players when the host starts the game. */
-  aiFill: z.boolean().default(true),
+  variant: settingsShape.variant.default("standard"),
+  rulebook: settingsShape.rulebook.default("2023"),
+  press: settingsShape.press.default("full"),
+  pacing: settingsShape.pacing.default("async"),
+  movementSeconds: settingsShape.movementSeconds.default(PACING_PRESETS.async.movementSeconds),
+  shortPhaseSeconds: settingsShape.shortPhaseSeconds.default(PACING_PRESETS.async.shortPhaseSeconds),
+  graceSeconds: settingsShape.graceSeconds.default(PACING_PRESETS.async.graceSeconds),
+  extendSeconds: settingsShape.extendSeconds.default(PACING_PRESETS.async.extendSeconds),
+  whisperBudget: settingsShape.whisperBudget.default(null),
+  rulebookPress: settingsShape.rulebookPress.default(false),
+  readyAdvance: settingsShape.readyAdvance.default(true),
+  dias: settingsShape.dias.default(true),
+  ghostVotes: settingsShape.ghostVotes.default(true),
+  cabals: settingsShape.cabals.default(false),
+  aiFill: settingsShape.aiFill.default(true),
+  aiBrain: settingsShape.aiBrain.default("bot"),
 });
 export type GameSettings = z.infer<typeof GameSettings>;
+
+/** What a lobby sends: any subset of the settings, with nothing filled in. Unknown keys are dropped. */
+export const GameSettingsInput = z.object(settingsShape).partial();
+export type GameSettingsInput = z.infer<typeof GameSettingsInput>;
+
+/**
+ * Turn a lobby's partial settings into full settings. Clock fields the caller left out come from
+ * the pacing preset; anything the caller did send wins. Throws a ZodError on bad input.
+ */
+export function resolveSettings(input: GameSettingsInput = {}): GameSettings {
+  const partial = GameSettingsInput.parse(input);
+  const preset = PACING_PRESETS[partial.pacing ?? "async"];
+  return GameSettings.parse({
+    ...partial,
+    movementSeconds: partial.movementSeconds ?? preset.movementSeconds,
+    shortPhaseSeconds: partial.shortPhaseSeconds ?? preset.shortPhaseSeconds,
+    graceSeconds: partial.graceSeconds ?? preset.graceSeconds,
+    extendSeconds: partial.extendSeconds ?? preset.extendSeconds,
+  });
+}
 
 // ---------- pledges ----------
 
@@ -106,8 +171,10 @@ export const SeatView = z.object({
   name: z.string().nullable(),
   ready: z.boolean(),
   eliminated: z.boolean(),
-  /** Consecutive missed phases. */
+  /** Consecutive missed movement phases. */
   missed: z.number().int().min(0),
+  /** The built-in bot is covering this civil-disorder seat until its player returns. */
+  autopilot: z.boolean().optional(),
 });
 export type SeatView = z.infer<typeof SeatView>;
 
@@ -146,7 +213,8 @@ export type PressView = z.infer<typeof PressView>;
 // ---------- client -> server ----------
 
 export const ClientMessage = z.discriminatedUnion("t", [
-  z.object({ t: z.literal("hello"), id: z.string().optional(), p: z.object({ token: z.string() }) }),
+  /** First frame of a player's socket: binds it to a seat. Seat tokens never travel in a URL. */
+  z.object({ t: z.literal("hello"), id: z.string().optional(), p: z.object({ token: z.string().max(128) }) }),
   z.object({
     t: z.literal("orders.set"),
     id: z.string().optional(),
@@ -175,7 +243,12 @@ export const ClientMessage = z.discriminatedUnion("t", [
   z.object({
     t: z.literal("vote"),
     id: z.string().optional(),
-    p: z.object({ kind: z.literal("draw"), value: z.boolean() }),
+    p: z.object({
+      kind: z.literal("draw"),
+      value: z.boolean(),
+      /** Non-DIAS games only: the survivors who would share the draw. Absent means every survivor. */
+      include: z.array(PowerName).min(1).max(7).optional(),
+    }),
   }),
   z.object({
     t: z.literal("sync"),
@@ -190,6 +263,19 @@ export type ClientMessage = z.infer<typeof ClientMessage>;
 export const GameStatus = z.enum(["lobby", "active", "paused", "finished", "abandoned"]);
 export type GameStatus = z.infer<typeof GameStatus>;
 
+/** Who has voted for a draw this phase. Votes are public and are cleared when the phase resolves. */
+export const VotesView = z.object({
+  phase: PhaseName,
+  /** Every vote cast this phase. `include` is the proposed set of sharers (non-DIAS), null for all survivors. */
+  draw: z.array(z.object({ power: PowerName, value: z.boolean(), include: z.array(PowerName).nullable() })),
+  /** The seats whose agreement a draw needs: surviving, present human players. */
+  required: z.array(PowerName),
+});
+export type VotesView = z.infer<typeof VotesView>;
+
+export const GameResult = z.enum(["solo", "draw", "abandoned"]);
+export type GameResult = z.infer<typeof GameResult>;
+
 export const ServerMessage = z.discriminatedUnion("t", [
   z.object({
     t: z.literal("welcome"),
@@ -199,6 +285,9 @@ export const ServerMessage = z.discriminatedUnion("t", [
       settings: GameSettings,
       status: GameStatus,
       pauseReason: z.string().nullable().optional(),
+      /** While paused: when the pause ends by itself, and how much of the phase clock is left. */
+      pausedUntil: z.number().int().nullable().optional(),
+      pausedRemainingMs: z.number().int().nullable().optional(),
       power: PowerName.nullable(),
       phase: PhaseName,
       state: StateView,
@@ -207,11 +296,18 @@ export const ServerMessage = z.discriminatedUnion("t", [
       seq: z.number().int(),
       orders: z.array(OrderText),
       press: z.array(PressView),
+      votes: VotesView.optional(),
     }),
   }),
   z.object({
     t: z.literal("state"),
-    p: z.object({ phase: PhaseName, state: StateView, deadlineAt: z.number().int().nullable(), seq: z.number().int() }),
+    p: z.object({
+      phase: PhaseName,
+      state: StateView,
+      deadlineAt: z.number().int().nullable(),
+      seq: z.number().int(),
+      status: GameStatus.optional(),
+    }),
   }),
   z.object({
     t: z.literal("results"),
@@ -239,21 +335,56 @@ export const ServerMessage = z.discriminatedUnion("t", [
     p: z.object({ pledgeId: z.string(), receipt: Receipt, revealed: z.array(OrderText).nullable() }),
   }),
   z.object({ t: z.literal("seats"), p: z.object({ seats: z.array(SeatView) }) }),
-  z.object({ t: z.literal("deadline"), p: z.object({ phase: PhaseName, deadlineAt: z.number().int().nullable() }) }),
+  z.object({
+    t: z.literal("deadline"),
+    p: z.object({
+      phase: PhaseName,
+      deadlineAt: z.number().int().nullable(),
+      /** True when this deadline is the one-off grace period. */
+      grace: z.boolean().optional(),
+    }),
+  }),
   z.object({
     t: z.literal("extend.ack"),
     id: z.string().optional(),
     p: z.object({ phase: PhaseName, requests: z.number().int().min(1), extended: z.boolean() }),
   }),
+  /** Sent to everyone on each extension request, so a second seat can see one is pending. */
+  z.object({
+    t: z.literal("extend"),
+    p: z.object({
+      phase: PhaseName,
+      requestedBy: z.array(PowerName),
+      needed: z.number().int().min(1),
+      granted: z.boolean(),
+      deadlineAt: z.number().int().nullable(),
+    }),
+  }),
+  z.object({ t: z.literal("votes"), p: VotesView }),
   z.object({
     t: z.literal("finished"),
     p: z.object({
-      result: z.enum(["solo", "draw"]),
+      result: GameResult,
       winners: z.array(PowerName),
       scores: z.record(z.string(), z.number()),
+      reason: z.string().nullable().optional(),
     }),
   }),
-  z.object({ t: z.literal("status"), p: z.object({ status: GameStatus, reason: z.string().nullable() }) }),
+  z.object({
+    t: z.literal("status"),
+    p: z.object({
+      status: GameStatus,
+      reason: z.string().nullable(),
+      /** While paused: when the pause ends by itself. */
+      until: z.number().int().nullable().optional(),
+    }),
+  }),
+  /** Ends the reply to a `sync`: the cursor to send next, and whether another page is waiting. */
+  z.object({
+    t: z.literal("synced"),
+    id: z.string().optional(),
+    p: z.object({ seq: z.number().int().min(0), more: z.boolean() }),
+  }),
   z.object({ t: z.literal("error"), id: z.string().optional(), p: z.object({ code: z.string(), message: z.string() }) }),
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;
@@ -261,7 +392,7 @@ export type ServerMessage = z.infer<typeof ServerMessage>;
 // ---------- HTTP ----------
 
 export const CreateGameRequest = z.object({
-  settings: GameSettings.partial().default({}),
+  settings: GameSettingsInput.default({}),
   /** Display name of the creator. */
   name: z.string().trim().min(1).max(32),
 });
@@ -274,11 +405,46 @@ export const JoinGameRequest = z.object({
   name: z.string().trim().min(1).max(32),
   /** Preferred power; the server assigns one when absent or taken. */
   power: PowerName.optional(),
+  /** Substitute invite issued by a seated player for one vacated seat of a running game. */
+  invite: z.string().regex(/^[0-9a-f]{32}$/).optional(),
 });
 export type JoinGameRequest = z.infer<typeof JoinGameRequest>;
 
 export const JoinGameResponse = CreateGameResponse;
 export type JoinGameResponse = z.infer<typeof JoinGameResponse>;
+
+/** `POST /api/games/:id/substitute`: a seated player opens one vacated seat to an invited substitute. */
+export const SubstituteInviteRequest = z.object({ power: PowerName });
+export type SubstituteInviteRequest = z.infer<typeof SubstituteInviteRequest>;
+
+export const SubstituteInviteResponse = z.object({ gameId: z.string(), power: PowerName, invite: z.string() });
+export type SubstituteInviteResponse = z.infer<typeof SubstituteInviteResponse>;
+
+/** One row of the global games index kept by the `Registry` Durable Object. */
+export const GameRecord = z.object({
+  gameId: z.string(),
+  result: GameResult,
+  reason: z.string().nullable(),
+  winners: z.array(PowerName),
+  scores: z.record(z.string(), z.number()),
+  settings: GameSettings,
+  cluster: z.string(),
+  phaseCount: z.number().int().min(0),
+  createdAt: z.number().int(),
+  finishedAt: z.number().int(),
+  /** Pledge receipts per power for this game. */
+  ledger: z.record(z.string(), z.object({ kept: z.number().int(), broken: z.number().int(), void: z.number().int() })),
+  seats: z.array(
+    z.object({
+      power: PowerName,
+      kind: SeatKind,
+      name: z.string().nullable(),
+      centers: z.number().int().min(0),
+      eliminated: z.boolean(),
+    }),
+  ),
+});
+export type GameRecord = z.infer<typeof GameRecord>;
 
 // ---------- scoring ----------
 

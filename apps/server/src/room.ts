@@ -843,7 +843,8 @@ export class GameRoom extends DurableObject<Env> {
       const whispers = this.sql
         .exec<{ n: number }>("SELECT COUNT(*) AS n FROM press WHERE sender = ? AND phase = ? AND recipient <> 'ALL'", from, phase)
         .one().n;
-      if (whispers >= this.meta!.settings.whisperBudget) {
+      const budget = this.meta!.settings.whisperBudget;
+      if (budget !== null && whispers >= budget) {
         return this.send(ws, { t: "error", id, p: { code: "whisper_budget", message: `at most ${this.meta!.settings.whisperBudget} private messages per phase` } });
       }
     }
