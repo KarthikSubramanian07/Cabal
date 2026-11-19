@@ -182,6 +182,21 @@ export function NotifyOffer({ moment }: { moment: "seated" | "ready" }) {
   const push = usePush();
   const [hidden, setHidden] = useState(offerDismissed);
   const [done, setDone] = useState(false);
+  // Only offer what this server can send.
+  const [serverOn, setServerOn] = useState(false);
+  useEffect(() => {
+    if (hidden || !push.player) return;
+    let live = true;
+    loadApi()
+      .then(({ api }) => api.pushKey())
+      .then(
+        (key) => live && setServerOn(key !== null),
+        () => undefined,
+      );
+    return () => {
+      live = false;
+    };
+  }, [hidden, push.player]);
   if (done) {
     return (
       <p className="notify-offer done" role="status">
@@ -189,7 +204,7 @@ export function NotifyOffer({ moment }: { moment: "seated" | "ready" }) {
       </p>
     );
   }
-  if (!push.player || push.state !== "off" || hidden) return null;
+  if (!push.player || push.state !== "off" || hidden || !serverOn) return null;
   return (
     <aside className="notify-offer" aria-label="Notifications">
       <p>
