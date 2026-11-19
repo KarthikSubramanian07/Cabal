@@ -4,7 +4,8 @@
  */
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { Client, POWERS, create, join, nextIp, sleep, sql, start, summary } from "./helpers.js";
+import worker from "../src/index.js";
+import { Client, POWERS, create, join, nextIp, serverEnv, sleep, sql, start, summary } from "./helpers.js";
 
 describe("privacy", () => {
   it("never delivers private press to a third power or a spectator: live, in a welcome, or through sync", async () => {
@@ -204,5 +205,30 @@ describe("abuse limits", () => {
     expect(options.status).toBe(204);
     expect((await SELF.fetch("http://cabal/api/games/abc234", { headers: { "cf-connecting-ip": nextIp() } })).status).toBe(404);
     expect(POWERS).toHaveLength(7);
+  });
+});
+
+describe("a player secret sent to a game route", () => {
+  it("is never forwarded to the room, while a seat token is", async () => {
+    const seen: (string | null)[] = [];
+    const rooms = {
+      idFromName: (name: string) => name,
+      get: () => ({
+        fetch: async (request: Request) => {
+          seen.push(request.headers.get("authorization"));
+          return new Response("{}", { headers: { "content-type": "application/json" } });
+        },
+      }),
+    } as never;
+    const env = { ...serverEnv, GAME_ROOM: rooms };
+    const secret = `cps_${"a".repeat(48)}`;
+    for (const path of ["ledger", "replay", "press"]) {
+      await worker.fetch(new Request(`http://cabal/api/games/ABCDEF/${path}`, { headers: { authorization: `Bearer ${secret}` } }), env);
+    }
+    await worker.fetch(new Request("http://cabal/api/games/ABCDEF/start", { method: "POST", headers: { authorization: `Bearer ${secret}` } }), env);
+    expect(seen).toHaveLength(4);
+    for (const header of seen) expect(header ?? "").not.toContain("cps_");
+    await worker.fetch(new Request("http://cabal/api/games/ABCDEF/ledger", { headers: { authorization: "Bearer ABCDEF.FRANCE.seatsecret" } }), env);
+    expect(seen.at(-1)).toBe("Bearer ABCDEF.FRANCE.seatsecret");
   });
 });

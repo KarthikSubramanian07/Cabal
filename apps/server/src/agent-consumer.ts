@@ -20,6 +20,7 @@ import { type Brain, BrainFailure, ClaudeBrain, PERSONAS, Player } from "@cabal/
 import type { PowerName } from "@cabal/protocol";
 import { Game, engineReady, mapInfo } from "./engine.js";
 import type { AgentTurn, Env } from "./env.js";
+import { currentRequestId, log, requestIdFrom, withLogContext } from "./log.js";
 import { type AgentReport, CLAUDE_MODEL } from "./room.js";
 
 export { CLAUDE_MODEL };
@@ -38,11 +39,6 @@ export const agentRuntime: { makeBrain: (env: Env, turn: AgentTurn) => Brain | n
       : null,
 };
 
-function log(event: string, fields: Record<string, unknown>, level: "info" | "error" = "info"): void {
-  const line = JSON.stringify({ event, ...fields });
-  if (level === "error") console.error(line);
-  else console.info(line);
-}
 
 const UNBILLED: AgentReport = { model: null, usage: null, billed: "no" };
 
@@ -54,14 +50,14 @@ export async function playTurn(turn: AgentTurn, env: Env): Promise<string> {
   const power = turn.power as PowerName;
   const step = turn.step ?? "order";
   const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(turn.gameId));
-  const brief = await room.agentBrief(power, turn.phase, step);
+  const brief = await room.agentBrief(power, turn.phase, step, currentRequestId());
   if (!brief) return "stale";
   // From here on the step is claimed: every path must close it with the room, and none may retry.
   let report: AgentReport = { ...UNBILLED };
   try {
     const brain = agentRuntime.makeBrain(env, turn);
     if (!brain) {
-      await room.agentSubmit(power, turn.phase, step, null, UNBILLED);
+      await room.agentSubmit(power, turn.phase, step, null, UNBILLED, currentRequestId());
       return "no_model";
     }
     await engineReady();
@@ -98,6 +94,7 @@ export async function playTurn(turn: AgentTurn, env: Env): Promise<string> {
       step,
       played.fallback ? null : { orders: played.validated.orders, messages: played.decision.messages, pledge: played.decision.pledge },
       report,
+      currentRequestId(),
     );
     if (played.failure) log("agent_model_failed", { ...turn, status: played.failure.status, billed: played.failure.billed, error: played.failure.message }, "error");
     return played.fallback ? "model_failed" : outcome.reason;
@@ -106,22 +103,25 @@ export async function playTurn(turn: AgentTurn, env: Env): Promise<string> {
     // the model was never reached that is nothing, and if it was the room charges for it.
     log("agent_turn_failed", { ...turn, error: String(error) }, "error");
     const known: AgentReport = report.billed === "no" && error instanceof BrainFailure ? { model: error.model, usage: error.usage, billed: error.billed } : report;
-    await room.agentSubmit(power, turn.phase, step, null, { ...known, failure: { status: null, message: String(error) } }).catch(() => undefined);
+    await room.agentSubmit(power, turn.phase, step, null, { ...known, failure: { status: null, message: String(error) } }, currentRequestId()).catch(() => undefined);
     return "failed";
   }
 }
 
 export async function consumeTurns(batch: MessageBatch<AgentTurn>, env: Env): Promise<void> {
   for (const message of batch.messages) {
-    try {
-      const outcome = await playTurn(message.body, env);
-      log("agent_turn", { ...message.body, outcome });
-      message.ack();
-    } catch (error) {
-      // Only reachable before the brief was claimed (the room could not be reached): safe to retry,
-      // and the queue's max_retries bounds it. After that the dead-letter queue has the message.
-      log("agent_turn_retry", { ...message.body, attempts: message.attempts, error: String(error) }, "error");
-      message.retry({ delaySeconds: 10 });
-    }
+    // One message, one id: the room's lines about this turn carry it too.
+    await withLogContext({ service: "queue", requestId: requestIdFrom(`q-${message.id}`, "q") }, async () => {
+      try {
+        const outcome = await playTurn(message.body, env);
+        log("agent_turn", { ...message.body, outcome });
+        message.ack();
+      } catch (error) {
+        // Only reachable before the brief was claimed (the room could not be reached): safe to retry,
+        // and the queue's max_retries bounds it. After that the dead-letter queue has the message.
+        log("agent_turn_retry", { ...message.body, attempts: message.attempts, error: String(error) }, "error");
+        message.retry({ delaySeconds: 10 });
+      }
+    });
   }
 }

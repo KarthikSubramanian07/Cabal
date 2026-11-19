@@ -78,6 +78,8 @@ export interface Clock {
   pausedUntil: number | null;
   /** Next Registry hand-off attempt, in any status. */
   outboxAt: number | null;
+  /** While active: when to remind the players who have not ordered yet (push notices). */
+  reminderAt?: number | null;
 }
 
 /** The earliest instant this room needs to wake, or null when nothing is pending. */
@@ -90,6 +92,7 @@ export function nextAlarmAt(clock: Clock): number | null {
     if (clock.retryAt !== null) due.push(clock.retryAt);
     else if (clock.deadlineAt !== null) due.push(clock.deadlineAt);
     if (clock.aiDueAt !== null) due.push(clock.aiDueAt);
+    if (clock.reminderAt != null && clock.retryAt === null) due.push(clock.reminderAt);
   }
   return due.length === 0 ? null : Math.min(...due);
 }

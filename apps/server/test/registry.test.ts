@@ -1,8 +1,8 @@
-import { runInDurableObject, SELF } from "cloudflare:test";
+import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { type GameRecord, GameSettings } from "@cabal/protocol";
 import { MIGRATIONS, type Registry } from "../src/registry.js";
-import { Client, create, fireAlarm, inRoom, join, nextIp, registry, serverEnv, sleep, start, summary, until, untilIndexed } from "./helpers.js";
+import { Client, create, fireAlarm, inRoom, index, join, registry, serverEnv, sleep, start, summary, until, untilIndexed } from "./helpers.js";
 
 const record = (gameId: string, over: Partial<GameRecord> = {}): GameRecord => ({
   gameId,
@@ -62,11 +62,12 @@ describe("Registry", () => {
     expect((await registry().listGames({ limit: 3 })).map((g) => g.gameId)).toEqual(["LISTA3", "LISTA2", "LISTA1"]);
     expect((await registry().listGames({ limit: 2, before: far + 3 })).map((g) => g.gameId)).toEqual(["LISTA2", "LISTA1"]);
     expect((await registry().listGames({ limit: 5, result: "abandoned" }))[0]!.gameId).toBe("LISTA2");
-    const res = await SELF.fetch("http://cabal/api/games?limit=2", { headers: { "cf-connecting-ip": nextIp() } });
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as { games: GameRecord[] }).games.map((g) => g.gameId)).toEqual(["LISTA3", "LISTA2"]);
   });
 });
+
+/** A D1 database whose every write fails the way `fail` says. */
+const failingDb = (fail: () => Promise<never>) =>
+  ({ prepare: () => ({ bind: () => ({}) }), batch: fail }) as unknown as D1Database;
 
 describe("hand-off from a room", () => {
   async function drawnGame() {
@@ -81,7 +82,7 @@ describe("hand-off from a room", () => {
   }
   const outbox = (gameId: string) => inRoom(gameId, (room) => room.kv.get<{ attempts: number; nextAt: number; gaveUp?: boolean }>("registry-outbox"));
 
-  it("hands a finished game to the Registry and then clears its outbox and its alarm", async () => {
+  it("hands a finished game to the index and then clears its outbox and its alarm", async () => {
     const { ann, a, b } = await drawnGame();
     a.send({ t: "vote", p: { kind: "draw", value: true } });
     b.send({ t: "vote", p: { kind: "draw", value: true } });
@@ -95,23 +96,18 @@ describe("hand-off from a room", () => {
     await until(async () => (await inRoom(ann.gameId, (_room, state) => state.storage.getAlarm())) === null, "the alarm to clear");
   });
 
-  it("C3: a Registry that is down never delays the finished frame, and the hand-off backs off and then lands", async () => {
+  it("C3: an index that is down never delays the finished frame, and the hand-off backs off and then lands", async () => {
     const { ann, a, b } = await drawnGame();
     let calls = 0;
-    // The Registry hangs for seconds on the first call, and fails every time.
+    // The index hangs for seconds on the first call, and fails every time.
     await inRoom(ann.gameId, (room) => {
       room.env = {
         ...room.env,
-        REGISTRY: {
-          idFromName: () => "id",
-          get: () => ({
-            recordGame: async () => {
-              calls++;
-              if (calls === 1) await sleep(3_000);
-              throw new Error("registry unavailable");
-            },
-          }),
-        } as never,
+        DB: failingDb(async () => {
+          calls++;
+          if (calls === 1) await sleep(3_000);
+          throw new Error("index unavailable");
+        }),
       };
     });
     const asked = Date.now();
@@ -144,11 +140,11 @@ describe("hand-off from a room", () => {
       expect(waits[i]).toBeLessThanOrEqual(want);
       expect(waits[i]).toBeGreaterThan(want - 4_000);
     }
-    expect(await serverEnv.REGISTRY!.get(serverEnv.REGISTRY!.idFromName("global")).getGame(ann.gameId)).toBeNull();
+    expect(await index().getGame(ann.gameId)).toBeNull();
 
-    // The Registry comes back. The next attempt delivers the record and the room goes quiet.
+    // The index comes back. The next attempt delivers the record and the room goes quiet.
     await inRoom(ann.gameId, (room) => {
-      room.env = { ...room.env, REGISTRY: serverEnv.REGISTRY! };
+      room.env = { ...room.env, DB: serverEnv.DB! };
       room.outboxAt = Date.now() - 1;
     });
     await fireAlarm(ann.gameId);
@@ -162,7 +158,7 @@ describe("hand-off from a room", () => {
     await inRoom(ann.gameId, (room) => {
       room.env = {
         ...room.env,
-        REGISTRY: { idFromName: () => "id", get: () => ({ recordGame: async () => Promise.reject(new Error("down")) }) } as never,
+        DB: failingDb(async () => Promise.reject(new Error("down"))),
       };
     });
     a.send({ t: "vote", p: { kind: "draw", value: true } });

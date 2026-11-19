@@ -1,0 +1,10 @@
+{
+  "$comment": "Ceilings on the median of scripts/cold-start.mjs, in milliseconds, for a CI runner. About ten times what a laptop measures (docs/PERFORMANCE.md): they catch a start-up that has gone badly wrong; the comparison with the base commit catches the gradual kind.",
+  "ceilingsMs": {
+    "instantiateMs": 50,
+    "firstGameMs": 100,
+    "firstProcessMs": 150,
+    "createMs": 2000,
+    "firstAdjudicationMs": 1500
+  }
+}

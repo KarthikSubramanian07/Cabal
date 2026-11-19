@@ -16,7 +16,15 @@ export interface AgentTurn {
 
 export interface Env {
   GAME_ROOM: DurableObjectNamespace<GameRoom>;
-  /** Singleton global index of finished and abandoned games (`idFromName("global")`). */
+  /**
+   * The cross-game index (database `cabal`): finished games, public listings, players, ratings and
+   * the trust ledger. Without it the router falls back to the Registry for games and has no players.
+   */
+  DB?: D1Database;
+  /**
+   * Singleton (`idFromName("global")`) that keeps the deployment-wide Claude budget, which needs
+   * strict serial order, and the games index written before D1 (copied across once).
+   */
   REGISTRY?: DurableObjectNamespace<Registry>;
   /** Claude turns for games that opted into `aiBrain: "claude"`. The built-in bot needs no queue. */
   AGENT_QUEUE?: Queue<AgentTurn>;
@@ -34,12 +42,28 @@ export interface Env {
   BUILD_ID?: string;
   /** Worker version metadata: the build id when `BUILD_ID` is not set. */
   CF_VERSION_METADATA?: { id: string; tag: string; timestamp: string };
+  /** Web Push: the VAPID public key (config), base64url. Push is off without it and the private key. */
+  VAPID_PUBLIC_KEY?: string;
+  /** Secret. The VAPID private key, base64url (32 bytes). */
+  VAPID_PRIVATE_KEY?: string;
+  /** Who runs this server, for push services: an https URL or a mailto address. */
+  VAPID_SUBJECT?: string;
+  /** Minutes before a deadline a player with no orders in is reminded. Defaults to 60. */
+  PUSH_REMINDER_MINUTES?: string;
+  /** Secret. The bearer token for `GET /api/metrics` and `POST /api/metrics/datc`; they answer 404 without it. */
+  ADMIN_TOKEN?: string;
   /** Per-seat limit on press. */
   PRESS_LIMITER?: RateLimit;
   /** Per-IP limit on creating games. Optional so tests and local dev run without it. */
   CREATE_LIMITER?: RateLimit;
   /** Per-IP limit on joining games and issuing substitute invites. */
   JOIN_LIMITER?: RateLimit;
+  /** Per-IP limit on anonymous metric beacons: each one is a D1 write. */
+  METRICS_LIMITER?: RateLimit;
   /** Per-IP limit on reads, starts and socket upgrades: each one can wake a room. */
   READ_LIMITER?: RateLimit;
+  /** Per-IP limit on creating guest accounts and restoring them from a recovery code. */
+  ACCOUNT_LIMITER?: RateLimit;
+  /** Per-player limit on changing an account: rename, new recovery code, sign out. */
+  PROFILE_LIMITER?: RateLimit;
 }
