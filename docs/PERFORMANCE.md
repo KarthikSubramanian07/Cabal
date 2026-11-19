@@ -209,27 +209,31 @@ workerd's clock moves in whole milliseconds, so the engine's own figures are int
 
 ### Numbers
 
-Apple M1, Node 24.14.0, engine 0.1.0, commit `a582be1`, a quiet machine, two runs:
+Medians of seven fresh workerd processes, engine 0.1.0, Node 24.14.0, on this change (`e3e5b93`):
 
-| Step | Median ms | Range |
-|---|---:|---|
-| Engine instantiation | 1.5 | 1 to 2 |
-| First game | 6 | 2 to 10 |
-| First adjudication, engine only | 9 | 7 to 11 |
-| First request: create a game | 176 | 143 to 210 |
-| Start with AI seats | 86 | 74 to 98 |
-| Ready to results | 78 | 78 |
+| Step | Apple M1, quiet | Range | GitHub runner (ubuntu-latest) | Range |
+|---|---:|---|---:|---|
+| Engine instantiation | 1 | 1 to 2 | 1 | 0 to 1 |
+| First game | 3 | 2 to 3 | 1 | 1 |
+| First adjudication, engine only | 8 | 7 to 11 | 2 | 2 to 4 |
+| First request: create a game | 89 | 84 to 238 | 49 | 44 to 115 |
+| Start with AI seats | 83 | 65 to 103 | 43 | 41 to 68 |
+| Ready to results | 59 | 47 to 76 | 31 | 30 to 41 |
+
+All figures in milliseconds. The runner figures are from the `cold-start` job of PR #84's CI run;
+each run of the job prints its own table in the run summary and keeps the JSON as the `cold-start`
+artefact.
 
 The same harness on the same laptop while dozens of other builds were running gave medians of 8, 10
 and 9 ms for the three engine parts and 1,175 ms for the first request: the engine barely moves under
 load, the request path (workerd, Durable Object creation, local SQLite) moves a lot. That is why CI
 compares the change with its base commit on one runner instead of with a number from elsewhere, and
-why the ceilings in `cold-start-budget.json` are about ten times a laptop's figures: they catch a
-start-up that has gone badly wrong, the comparison catches the gradual kind. The CI job writes its
-own table to the run summary and keeps the JSON of both runs as the `cold-start` artefact.
+why the ceilings in `cold-start-budget.json` sit far above these figures: they catch a start-up that
+has gone badly wrong, the comparison with the base commit catches the gradual kind. Until `main`
+carries the harness, the job has no base to compare with and only the ceilings apply.
 
-Engine start-up is not the expensive part of a fresh room: together the three parts are about 15 ms
-of a first request that takes ten times that locally. The JavaScript bundle (zod above all) and
+Engine start-up is not the expensive part of a fresh room: together the three parts are about 12 ms
+of a first request that takes about 90 locally. The JavaScript bundle (zod above all) and
 Durable Object creation are larger, which is what the Worker bundle gate watches.
 
 ### In production
