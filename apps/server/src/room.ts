@@ -27,6 +27,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   type GameListing,
+  type GamePlayerRecord,
   type GameRecord,
   type GameResult,
   type GameSettings as Settings,
@@ -40,6 +41,7 @@ import {
   type PledgeView,
   type PowerName,
   type PressView,
+  type Receipt,
   type ReplayExtension,
   type SeatView,
   type ServerMessage,
@@ -80,6 +82,7 @@ import {
 } from "./engine.js";
 import { gameIndex } from "./game-index.js";
 import { hashToken, mintToken, parseToken, randomId, sameHash } from "./tokens.js";
+import { countsForLedger } from "./ratings.js";
 import { judgeOrders, legalOrders } from "./validate.js";
 
 type Status = "lobby" | "active" | "paused" | "finished" | "abandoned";
@@ -109,6 +112,8 @@ export const LIMITS = {
   spectators: 200,
   /** Sockets one seat may hold open (several tabs and devices). */
   socketsPerSeat: 8,
+  /** Extra seat tokens a signed-in player may hold for one seat (one per device). */
+  tokensPerSeat: 8,
   /** Stored broadcast frames kept for `sync`: frames numbered this far behind the newest are gone. */
   eventsKept: 4000,
   /** Times one seat may change its ready flag or its ballot in one phase. */
@@ -174,6 +179,8 @@ interface Meta {
   pausedMsThisPhase: number;
   /** The phase whose one-off grace period has been used. */
   gracePhase: string | null;
+  /** When that grace period began: orders filed after it were late. */
+  graceFrom: number | null;
   /** Consecutive movement phases in which no human submitted an order. */
   idlePhases: number;
   /** Set while a failed adjudication waits for its next attempt. */
@@ -221,6 +228,28 @@ interface SeatRow extends Record<string, SqlStorageValue> {
   ready: number;
   missed: number;
   eliminated: number;
+  /** The signed-in player holding the seat; null for anonymous play and AI. */
+  player_id: string | null;
+}
+
+/** One holder's time at a seat. A seat that changed hands has one row per holder. */
+interface StintRow extends Record<string, SqlStorageValue> {
+  power: PowerName;
+  stint: number;
+  player_id: string | null;
+  name: string | null;
+  joined_at: number;
+  substitute: number;
+  left_reason: string | null;
+  due: number;
+  on_time: number;
+  late: number;
+}
+
+/** A signed-in player, as the router vouches for them. Rooms are reachable only through the router. */
+interface Signed {
+  id: string;
+  handle: string;
 }
 
 interface Attachment {
@@ -393,6 +422,24 @@ CREATE TABLE IF NOT EXISTS seat_changes (
   phase TEXT NOT NULL,
   n INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS stints (
+  power TEXT NOT NULL,
+  stint INTEGER NOT NULL,
+  player_id TEXT,
+  name TEXT,
+  joined_at INTEGER NOT NULL,
+  substitute INTEGER NOT NULL DEFAULT 0,
+  left_reason TEXT,
+  due INTEGER NOT NULL DEFAULT 0,
+  on_time INTEGER NOT NULL DEFAULT 0,
+  late INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (power, stint)
+);
+CREATE TABLE IF NOT EXISTS seat_tokens (
+  token_hash TEXT PRIMARY KEY,
+  power TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 `;
 
 function json(data: unknown, status = 200): Response {
@@ -461,6 +508,7 @@ export class GameRoom extends DurableObject<Env> {
         pause: stored.pause ?? null,
         pausedMsThisPhase: stored.pausedMsThisPhase ?? 0,
         gracePhase: stored.gracePhase ?? null,
+        graceFrom: stored.graceFrom ?? null,
         idlePhases: stored.idlePhases ?? 0,
         retry: stored.retry ?? null,
         aiDueAt: stored.aiDueAt ?? null,
@@ -507,6 +555,9 @@ export class GameRoom extends DurableObject<Env> {
     if (!has("votes", "include_json")) this.sql.exec("ALTER TABLE votes ADD COLUMN include_json TEXT");
     if (!has("phases", "summary_json")) this.sql.exec("ALTER TABLE phases ADD COLUMN summary_json TEXT");
     if (!has("events", "snapshot")) this.sql.exec("ALTER TABLE events ADD COLUMN snapshot TEXT");
+    if (!has("seats", "player_id")) this.sql.exec("ALTER TABLE seats ADD COLUMN player_id TEXT");
+    if (!has("pledges", "pledger_player")) this.sql.exec("ALTER TABLE pledges ADD COLUMN pledger_player TEXT");
+    if (!has("pledges", "audience_player")) this.sql.exec("ALTER TABLE pledges ADD COLUMN audience_player TEXT");
     this.sql.exec("CREATE INDEX IF NOT EXISTS events_snapshot ON events(snapshot, audience) WHERE snapshot IS NOT NULL");
     // AI seats no longer hold bearer tokens: the Durable Object binding is the credential.
     this.sql.exec("DROP TABLE IF EXISTS agent_tokens");
@@ -689,6 +740,7 @@ export class GameRoom extends DurableObject<Env> {
       if (request.method === "POST" && path === "/join") return await this.join(request);
       if (request.method === "POST" && path === "/start") return await this.start(request);
       if (request.method === "POST" && path === "/substitute") return await this.inviteSubstitute(request);
+      if (request.method === "POST" && path === "/seat") return await this.seatToken(request);
       if (request.method === "GET" && path === "/summary") {
         if (!this.meta) return bad("no such game", 404);
         return json(this.summary());
@@ -716,10 +768,13 @@ export class GameRoom extends DurableObject<Env> {
   private async create(request: Request): Promise<Response> {
     if (this.meta) return bad("game exists", 409);
     // The router has already validated and resolved the settings.
-    const body = (await request.json()) as { id: string; name: string; settings: Settings };
+    const body = (await request.json()) as { id: string; name: string; settings: Settings; player?: Signed };
     const settings = GameSettings.parse(body.settings);
     const creator = POWERS[Math.floor(Math.random() * POWERS.length)] as PowerName;
     const token = mintToken(body.id, creator);
+    // A signed-in player always sits under their handle.
+    const player = body.player ?? null;
+    const name = player?.handle ?? body.name;
     this.atomic(() => {
       this.migrate();
       this.meta = {
@@ -734,6 +789,7 @@ export class GameRoom extends DurableObject<Env> {
         pause: null,
         pausedMsThisPhase: 0,
         gracePhase: null,
+        graceFrom: null,
         idlePhases: 0,
         retry: null,
         aiDueAt: null,
@@ -748,9 +804,11 @@ export class GameRoom extends DurableObject<Env> {
       };
       this.game = new Game(settings.rulebook);
       for (const p of POWERS) this.sql.exec("INSERT INTO seats (power, kind) VALUES (?, 'open')", p);
-      this.sql.exec("UPDATE seats SET kind = 'human', name = ?, token_hash = ? WHERE power = ?", body.name, hashToken(token), creator);
+      this.sql.exec("UPDATE seats SET kind = 'human', name = ?, token_hash = ?, player_id = ? WHERE power = ?", name, hashToken(token), player?.id ?? null, creator);
+      this.openStint(creator, player, name, false);
       this.kv.put("saved", this.game.toSaved(body.id));
     });
+    this.noteSeat(creator, player, name, false);
     this.touchListing();
     this.log("game_created", { pacing: settings.pacing, press: settings.press, aiBrain: settings.aiBrain, visibility: settings.visibility });
     return json({ gameId: body.id, token, power: creator });
@@ -759,9 +817,13 @@ export class GameRoom extends DurableObject<Env> {
   private async join(request: Request): Promise<Response> {
     if (!this.meta) return bad("no such game", 404);
     let meta = this.meta;
-    const body = (await request.json()) as { name: string; power?: PowerName; invite?: string };
-    // One player, one seat: a caller who already holds a seat here cannot take another.
+    const body = (await request.json()) as { name: string; power?: PowerName; invite?: string; player?: Signed };
+    const player = body.player ?? null;
+    const name = player?.handle ?? body.name;
+    // One player, one seat: a caller who already holds a seat here cannot take another. A signed-in
+    // player is known by who they are, whatever token they send, and a seat once left stays left.
     if (this.authorise(bearer(request))) return bad("you already hold a seat in this game", 409);
+    if (player && this.playedHere(player.id)) return bad("you already hold, or have held, a seat in this game", 409);
     // The join that fills the table starts the game, so the Claude budget is asked first.
     if (meta.status === "lobby" && this.seats().filter((s) => s.kind === "open").length === 1) await this.admitClaude();
     // The room may have moved on during the awaits above: read it again.
@@ -775,14 +837,17 @@ export class GameRoom extends DurableObject<Env> {
       const token = mintToken(meta.id, chosen.power);
       this.atomic(() => {
         this.sql.exec(
-          "UPDATE seats SET kind = 'human', name = ?, token_hash = ?, missed = 0, ready = 0 WHERE power = ?",
-          body.name,
+          "UPDATE seats SET kind = 'human', name = ?, token_hash = ?, player_id = ?, missed = 0, ready = 0 WHERE power = ?",
+          name,
           hashToken(token),
+          player?.id ?? null,
           chosen.power,
         );
+        this.openStint(chosen.power, player, name, false);
         this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
         if (this.seats().every((s) => s.kind !== "open")) this.begin();
       });
+      this.noteSeat(chosen.power, player, name, false);
       this.touchListing();
       this.log("seat_joined", { power: chosen.power });
       return json({ gameId: meta.id, token, power: chosen.power });
@@ -802,14 +867,19 @@ export class GameRoom extends DurableObject<Env> {
     const token = mintToken(meta.id, seat.power);
     this.atomic(() => {
       this.sql.exec(
-        "UPDATE seats SET kind = 'human', name = ?, token_hash = ?, missed = 0, ready = 0 WHERE power = ?",
-        body.name,
+        "UPDATE seats SET kind = 'human', name = ?, token_hash = ?, player_id = ?, missed = 0, ready = 0 WHERE power = ?",
+        name,
         hashToken(token),
+        player?.id ?? null,
         seat.power,
       );
       this.sql.exec("DELETE FROM substitute_invites WHERE power = ?", seat.power);
+      // Every token the previous holder had, on any device, dies with the seat.
+      this.sql.exec("DELETE FROM seat_tokens WHERE power = ?", seat.power);
+      this.openStint(seat.power, player, name, true);
       this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
     });
+    this.noteSeat(seat.power, player, name, true);
     // The previous owner's token is dead, so their open sockets must go with it.
     this.closeSeatSockets(seat.power, 4001, "seat reassigned");
     this.touchListing();
@@ -842,6 +912,65 @@ export class GameRoom extends DurableObject<Env> {
     );
     this.log("substitute_invited", { power: seat.power, by: issuerSeat.power });
     return json({ gameId: this.meta.id, power: seat.power, invite });
+  }
+
+  /**
+   * A fresh seat token for a signed-in player's own seat, for another device or after a cleared
+   * browser. Tokens the seat already has keep working; the oldest make way past the cap.
+   */
+  private async seatToken(request: Request): Promise<Response> {
+    if (!this.meta) return bad("no such game", 404);
+    const body = (await request.json()) as { player?: Signed };
+    const player = body.player;
+    if (!player) return bad("sign in to recover a seat", 401);
+    const seat = this.seats().find((s) => s.player_id === player.id && (s.kind === "human" || s.kind === "civil_disorder"));
+    if (!seat) return bad("you hold no seat in this game", 404);
+    const token = mintToken(this.meta.id, seat.power);
+    this.atomic(() => {
+      this.sql.exec("INSERT INTO seat_tokens (token_hash, power, created_at) VALUES (?, ?, ?)", hashToken(token), seat.power, Date.now());
+      this.sql.exec(
+        "DELETE FROM seat_tokens WHERE power = ? AND token_hash NOT IN (SELECT token_hash FROM seat_tokens WHERE power = ? ORDER BY created_at DESC, token_hash LIMIT ?)",
+        seat.power,
+        seat.power,
+        LIMITS.tokensPerSeat,
+      );
+    });
+    this.log("seat_token_issued", { power: seat.power });
+    return json({ gameId: this.meta.id, token, power: seat.power });
+  }
+
+  /** True when this player holds or has held any seat in this game. */
+  private playedHere(playerId: string): boolean {
+    return (
+      this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM stints WHERE player_id = ?", playerId).one().n > 0 ||
+      this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM seats WHERE player_id = ?", playerId).one().n > 0
+    );
+  }
+
+  /** Start a holder's stint at a seat, closing the previous holder's. Runs inside the caller's transaction. */
+  private openStint(power: PowerName, player: Signed | null, name: string, substitute: boolean): number {
+    const next = this.sql.exec<{ n: number | null }>("SELECT MAX(stint) AS n FROM stints WHERE power = ?", power).one().n;
+    const stint = next === null ? 0 : next + 1;
+    this.sql.exec("UPDATE stints SET left_reason = 'replaced' WHERE power = ? AND left_reason IS NULL", power);
+    this.sql.exec(
+      "INSERT INTO stints (power, stint, player_id, name, joined_at, substitute) VALUES (?, ?, ?, ?, ?, ?)",
+      power,
+      stint,
+      player?.id ?? null,
+      name,
+      Date.now(),
+      substitute ? 1 : 0,
+    );
+    return stint;
+  }
+
+  /** Tell the index a signed-in player took a seat, so it shows on their games list. Best effort. */
+  private noteSeat(power: PowerName, player: Signed | null, name: string, substitute: boolean): void {
+    const index = gameIndex(this.env);
+    if (!player || !index || !this.meta) return;
+    const stint = this.sql.exec<{ n: number | null }>("SELECT MAX(stint) AS n FROM stints WHERE power = ?", power).one().n ?? 0;
+    const claim = { gameId: this.meta.id, power, stint, playerId: player.id, name, joinedAt: Date.now(), substitute };
+    this.ctx.waitUntil(index.recordSeat(claim).catch((error) => this.log("seat_note_failed", { error: String(error) }, "error")));
   }
 
   /** The creator starts early; open seats become AI seats when `aiFill` is on. */
@@ -1070,6 +1199,7 @@ export class GameRoom extends DurableObject<Env> {
         missed: s.missed,
         autopilot,
         brain: s.kind === "ai" ? aiBrain : autopilot ? "bot" : null,
+        handle: s.player_id !== null ? s.name : null,
         present: s.kind === "ai" || present.has(s.power),
         submitted: submitted.has(s.power),
         canAct: running && s.eliminated === 0 && s.kind !== "open" && this.actable(s.power),
@@ -1088,7 +1218,11 @@ export class GameRoom extends DurableObject<Env> {
     if (!parsed || !this.meta || parsed.gameId !== this.meta.id) return null;
     const seat = this.seat(parsed.power as PowerName);
     if (!seat?.token_hash) return null;
-    return sameHash(hashToken(token), seat.token_hash) ? seat.power : null;
+    const hash = hashToken(token);
+    if (sameHash(hash, seat.token_hash)) return seat.power;
+    // A token issued to the seat's signed-in player for another device.
+    const extra = this.sql.exec<{ power: string }>("SELECT power FROM seat_tokens WHERE token_hash = ?", hash).toArray()[0];
+    return extra?.power === seat.power ? seat.power : null;
   }
 
   // ---------- WebSockets ----------
@@ -1517,11 +1651,11 @@ export class GameRoom extends DurableObject<Env> {
     return canonicalOrder(text, kind, power);
   }
 
-  private storedOrders(phase: string, power: PowerName): { orders: string[]; source: string } | undefined {
+  private storedOrders(phase: string, power: PowerName): { orders: string[]; source: string; submittedAt: number } | undefined {
     const row = this.sql
-      .exec<{ orders_json: string; source: string }>("SELECT orders_json, source FROM orders WHERE phase = ? AND power = ?", phase, power)
+      .exec<{ orders_json: string; source: string; submitted_at: number }>("SELECT orders_json, source, submitted_at FROM orders WHERE phase = ? AND power = ?", phase, power)
       .toArray()[0];
-    return row ? { orders: this.parseOrderList(row.orders_json), source: row.source } : undefined;
+    return row ? { orders: this.parseOrderList(row.orders_json), source: row.source, submittedAt: row.submitted_at } : undefined;
   }
 
   private writeOrders(phase: string, power: PowerName, orders: string[], source: "human" | "bot" | "claude"): void {
@@ -1922,8 +2056,9 @@ export class GameRoom extends DurableObject<Env> {
       let pledgeId: string | null = null;
       if (pledge && canonical && seal) {
         pledgeId = randomId(8);
+        // Who made the promise and to whom, as they stood when it was made: the trust ledger follows people, not seats.
         this.sql.exec(
-          "INSERT INTO pledges (id, pledger, audience, phase, sealed, commitment, nonce, orders_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO pledges (id, pledger, audience, phase, sealed, commitment, nonce, orders_json, pledger_player, audience_player) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           pledgeId,
           from,
           to,
@@ -1932,6 +2067,8 @@ export class GameRoom extends DurableObject<Env> {
           seal.commitment,
           seal.nonce,
           JSON.stringify(canonical),
+          this.seat(from)?.player_id ?? null,
+          to === "ALL" ? null : (this.seat(to)?.player_id ?? null),
         );
       }
       const pressId = randomId(8);
@@ -2405,6 +2542,7 @@ export class GameRoom extends DurableObject<Env> {
       if (late.length > 0) {
         this.atomic(() => {
           meta.gracePhase = phase;
+          meta.graceFrom = Date.now();
           meta.deadlineAt = Date.now() + meta.settings.graceSeconds * 1000;
           this.broadcast({ t: "deadline", p: { serverTime: Date.now(), phase, deadlineAt: meta.deadlineAt, grace: true } }, "ALL");
         });
@@ -2453,6 +2591,9 @@ export class GameRoom extends DurableObject<Env> {
     const orders: Record<string, string[]> = {};
     /** Human seats that ordered at least one unit themselves this phase. */
     const moved = new Set<PowerName>();
+    /** Of those, the ones whose orders came in only during the grace period. */
+    const late = new Set<PowerName>();
+    const graceFrom = meta.gracePhase === phase ? meta.graceFrom : null;
     /** Human seats that had something to order. */
     const expected = new Set<PowerName>();
     for (const seat of seats) {
@@ -2475,14 +2616,17 @@ export class GameRoom extends DurableObject<Env> {
       orders[seat.power] = valid;
       if (seat.kind === "human" || seat.kind === "civil_disorder") {
         if (canAct(game, seat.power)) expected.add(seat.power);
-        if (stored?.source === "human" && valid.length > 0) moved.add(seat.power);
+        if (stored?.source === "human" && valid.length > 0) {
+          moved.add(seat.power);
+          if (graceFrom !== null && stored.submittedAt > graceFrom) late.add(seat.power);
+        }
       }
     }
     const snapshot = game.toSaved(meta.id);
     try {
       this.atomic(() => {
         const outcome = holdEverything ? game.process({ orders: {} }) : this.resolvePhase(game, orders);
-        this.applyOutcome(phase, kind, seats, orders, moved, expected, outcome, holdEverything);
+        this.applyOutcome(phase, kind, seats, orders, moved, expected, outcome, holdEverything, late);
       });
     } catch (error) {
       // `process` may have advanced the game before the throw. Put it back exactly as it was.
@@ -2538,11 +2682,23 @@ export class GameRoom extends DurableObject<Env> {
     expected: Set<PowerName>,
     outcome: ReturnType<Game["process"]>,
     heldEverything: boolean,
+    late: Set<PowerName> = new Set(),
   ): void {
     const meta = this.meta!;
     meta.retry = null;
     meta.aiDueAt = null;
     meta.ai = null;
+
+    // Reliability, per holder: every phase a seat had something to order, whether its player did.
+    for (const power of expected) {
+      const onTime = moved.has(power) && !late.has(power) ? 1 : 0;
+      this.sql.exec(
+        "UPDATE stints SET due = due + 1, on_time = on_time + ?, late = late + ? WHERE power = ? AND left_reason IS NULL",
+        onTime,
+        late.has(power) ? 1 : 0,
+        power,
+      );
+    }
 
     // No-moves-received: only movement phases count, and only for seats that had units to order.
     if (kind === "M") {
@@ -2685,6 +2841,8 @@ export class GameRoom extends DurableObject<Env> {
           centers: centers[s.power] ?? 0,
           eliminated: s.eliminated === 1,
         })),
+        players: this.playersRecord(),
+        movementPhases: this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM phases WHERE name LIKE '%M'").one().n,
       };
       // Whatever is still reserved may yet be billed, so it counts as spent when the place is handed back.
       const claude = meta.claudeAdmission === "admitted" ? { claude: { committedMicros: this.claudeCommittedMicros() } } : {};
@@ -2700,7 +2858,64 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   /**
-   * Hand the final summary to the Registry. The entry stays in storage until the Registry has
+   * Every stint at every seat, for the index: who held it, how reliably, and which of their
+   * pledges count towards their trust ledger. AI seats are listed without a player. Seats from
+   * before stints were kept get one stint with what the seat itself remembers.
+   */
+  private playersRecord(): GamePlayerRecord[] {
+    const seats = this.seats();
+    const stints = this.sql.exec<StintRow>("SELECT * FROM stints ORDER BY power, stint").toArray();
+    const distinct = new Set(stints.map((s) => s.player_id).filter((id) => id !== null)).size;
+    const pledges = this.sql
+      .exec<{ pledger: string; audience: string; receipt: Receipt; pledger_player: string | null; audience_player: string | null }>(
+        "SELECT pledger, audience, receipt, pledger_player, audience_player FROM pledges WHERE receipt IS NOT NULL",
+      )
+      .toArray();
+    const out: GamePlayerRecord[] = [];
+    for (const seat of seats) {
+      if (seat.kind === "open") continue;
+      const held = stints.filter((s) => s.power === seat.power);
+      if (seat.kind === "ai" && held.length === 0) {
+        out.push({
+          power: seat.power, stint: 0, kind: "ai", playerId: null, name: seat.name, joinedAt: this.meta!.createdAt, substitute: false,
+          leftReason: null, civilDisorder: false, phasesDue: 0, phasesOnTime: 0, phasesLate: 0, ledger: { kept: 0, broken: 0, void: 0 },
+        });
+        continue;
+      }
+      const rows: StintRow[] = held.length > 0
+        ? held
+        : [{ power: seat.power, stint: 0, player_id: seat.player_id, name: seat.name, joined_at: this.meta!.createdAt, substitute: 0, left_reason: null, due: 0, on_time: 0, late: 0 }];
+      for (const row of rows) {
+        const ledger = { kept: 0, broken: 0, void: 0 };
+        if (row.player_id !== null) {
+          for (const p of pledges) {
+            if (p.pledger !== seat.power || p.pledger_player !== row.player_id) continue;
+            if (countsForLedger({ pledgerPlayer: p.pledger_player, audience: p.audience, audiencePlayer: p.audience_player }, distinct)) ledger[p.receipt] += 1;
+          }
+        }
+        const current = row.left_reason === null;
+        out.push({
+          power: seat.power,
+          stint: row.stint,
+          kind: "human",
+          playerId: row.player_id,
+          name: row.name,
+          joinedAt: row.joined_at,
+          substitute: row.substitute === 1,
+          leftReason: current ? null : "replaced",
+          civilDisorder: current && seat.kind === "civil_disorder" && seat.eliminated === 0,
+          phasesDue: row.due,
+          phasesOnTime: row.on_time,
+          phasesLate: row.late,
+          ledger,
+        });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Hand the final summary to the index. The entry stays in storage until the index has
    * confirmed it; failures back off exponentially to an hourly ceiling and then stop with a log
    * line. Called from the alarm, never from the path that broadcasts the result.
    */

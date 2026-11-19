@@ -201,6 +201,8 @@ export const SeatView = z.object({
   kind: SeatKind,
   /** Display name; null for open seats. */
   name: z.string().nullable(),
+  /** The holder's handle when they are signed in (their profile is `/api/players/:handle`); null otherwise. */
+  handle: z.string().nullable().optional(),
   ready: z.boolean(),
   eliminated: z.boolean(),
   /** Consecutive missed movement phases. */
