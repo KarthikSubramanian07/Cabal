@@ -23,8 +23,8 @@ use cabal_engine::parse::parse;
 use cabal_engine::rulebook::Rulebook;
 use cabal_engine::state::{GameState, PhaseKind, Position};
 use cabal_engine::text::{
-    OrderTexts, adjust_text, describe_outcome_in, explain_sentence, order_text, outcome_actors,
-    outcome_code, retreat_text, retreat_text_in, unit_text,
+    OrderTexts, adjust_text, describe_outcome, describe_outcome_in, explain_sentence, order_text,
+    outcome_actors, outcome_code, retreat_text, retreat_text_in, unit_text,
 };
 use cabal_engine::validate::{Verdict, validate_orders};
 use cabal_engine::{Game as EngineGame, PhaseResult, ProvinceId, Status};
@@ -327,6 +327,9 @@ pub struct OrdersByPower {
     pub orders: HashMap<String, Vec<String>>,
 }
 
+/// One order's result. `summary`, `by`, `illegal` and `submitted` are always present on results the
+/// engine returns. They are optional in the type so a host may still build a
+/// result by hand (in a test, or from a wire format that predates them).
 #[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
 #[tsify(missing_as_null)]
 pub struct OrderResult {
@@ -345,16 +348,25 @@ pub struct OrderResult {
     /// `illegal`. Retreats: `ok`, `bounce`, `illegal`, `disband`.
     /// Adjustments: `ok`, `illegal`.
     pub code: String,
-    /// Short human readable reason naming the other units in full
-    /// (`bounced with A MUN`).
+    /// The terse reason in its original log form, kept stable because hosts
+    /// match on it: other units by province (`bounced with MUN`), illegal
+    /// orders by the engine's own name (`illegal (Unreachable), holds`). New
+    /// code should read `code`, `by`, `illegal` and `summary` instead.
     pub reason: String,
+    /// The same reason for people: units named in full (`bounced with A MUN`)
+    /// and illegal orders explained in words.
+    #[tsify(optional)]
+    pub summary: String,
     /// The units behind a failure, in full (`["A MUN"]`): what the move bounced
     /// with, the unit that repelled it, cut the support or dislodged the unit.
+    #[tsify(optional)]
     pub by: Vec<String>,
     /// `illegal` only: why, as a code (`unreachable`, `duplicate_order`,
     /// `attacker_origin`, `allowance_used`, ...).
+    #[tsify(optional)]
     pub illegal: Option<String>,
     /// `illegal` movement orders only: the order as it was submitted.
+    #[tsify(optional)]
     pub submitted: Option<String>,
 }
 
@@ -433,6 +445,7 @@ pub struct PhaseOutcome {
     pub standoffs: Vec<String>,
     /// Orders that were submitted but could not be adjudicated at all. Kept for
     /// the life of this `Game` object; a game restored from storage has none.
+    #[tsify(optional)]
     pub rejected: Vec<RejectedOrder>,
     /// Units removed by the civil disorder rule (adjustment phases).
     pub civil_disorder: Vec<String>,
@@ -855,6 +868,23 @@ fn submitted_text(
     (!texts.is_empty()).then(|| texts.join(" / "))
 }
 
+/// The movement reason exactly as hosts have always received it.
+fn legacy_reason(map: &Map, out: &OrderOutcome) -> String {
+    match out {
+        OrderOutcome::Illegal {
+            reason,
+            dislodged_by,
+        } => match dislodged_by {
+            Some(by) => format!(
+                "illegal ({reason:?}), holds, dislodged by {}",
+                province_code(map, *by)
+            ),
+            None => format!("illegal ({reason:?}), holds"),
+        },
+        other => describe_outcome(map, other),
+    }
+}
+
 fn movement_result(
     map: &Map,
     pos: &Position,
@@ -878,7 +908,8 @@ fn movement_result(
         order: order_text(map, pos, order),
         ok: out.succeeds(),
         code: outcome_code(out).to_string(),
-        reason: describe_outcome_in(map, pos, out),
+        reason: legacy_reason(map, out),
+        summary: describe_outcome_in(map, pos, out),
         by: outcome_actors(order, out)
             .into_iter()
             .map(|p| unit_name(map, pos, p))
@@ -1313,14 +1344,20 @@ fn outcome_of(
                     .unwrap_or_default();
                 let mut by = Vec::new();
                 let mut illegal = None;
-                let (ok, code, reason) = match out {
-                    RetreatOutcome::Succeeds => (true, "ok", "retreats".to_string()),
+                let plain = |text: &str| (text.to_string(), text.to_string());
+                let (ok, code, (reason, summary)) = match out {
+                    RetreatOutcome::Succeeds => (true, "ok", plain("retreats")),
                     RetreatOutcome::Bounced { with } => {
                         by = with.iter().map(|&p| dislodged_name(p)).collect();
+                        let provinces: Vec<String> =
+                            with.iter().map(|&p| province_code(map, p)).collect();
                         (
                             false,
                             "bounce",
-                            format!("bounced with {}, disbanded", by.join(", ")),
+                            (
+                                format!("bounced with {}", provinces.join(", ")),
+                                format!("bounced with {}, disbanded", by.join(", ")),
+                            ),
                         )
                     }
                     RetreatOutcome::Illegal { reason } => {
@@ -1328,10 +1365,13 @@ fn outcome_of(
                         (
                             false,
                             "illegal",
-                            format!("illegal retreat ({}), disbanded", reason.message()),
+                            (
+                                format!("illegal retreat ({reason:?}), disbanded"),
+                                format!("illegal retreat ({}), disbanded", reason.message()),
+                            ),
                         )
                     }
-                    RetreatOutcome::Disbanded => (false, "disband", "disbanded".to_string()),
+                    RetreatOutcome::Disbanded => (false, "disband", plain("disbanded")),
                 };
                 results.push(OrderResult {
                     power: power_name(o.power),
@@ -1340,6 +1380,7 @@ fn outcome_of(
                     ok,
                     code: code.to_string(),
                     reason,
+                    summary,
                     by,
                     illegal,
                     submitted: None,
@@ -1349,13 +1390,14 @@ fn outcome_of(
         PhaseResult::Adjustment(r) => {
             for (o, out) in r.orders.iter().zip(&r.outcomes) {
                 let mut illegal = None;
-                let (ok, code, reason) = match out {
-                    AdjustOutcome::Succeeds => (true, "ok", "done".to_string()),
+                let (ok, code, reason, summary) = match out {
+                    AdjustOutcome::Succeeds => (true, "ok", "done".to_string(), "done".to_string()),
                     AdjustOutcome::Illegal { reason } => {
                         illegal = Some(reason.code().to_string());
                         (
                             false,
                             "illegal",
+                            format!("illegal ({reason:?})"),
                             format!("illegal order ({})", reason.message()),
                         )
                     }
@@ -1367,6 +1409,7 @@ fn outcome_of(
                     ok,
                     code: code.to_string(),
                     reason,
+                    summary,
                     by: Vec::new(),
                     illegal,
                     submitted: None,

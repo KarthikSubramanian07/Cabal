@@ -178,14 +178,14 @@ describe("process", () => {
       },
     });
     expect(outcome.phase).toBe("S1901M");
-    expect(outcome.rejected.map((r) => [r.power, r.input, r.code])).toEqual([
+    expect((outcome.rejected ?? []).map((r) => [r.power, r.input, r.code])).toEqual([
       ["ATLANTIS", "A PAR H", "unknown_power"],
       ["FRANCE", "complete garbage", "unparseable"],
       ["FRANCE", "A MUN - RUH", "foreign_unit"],
       ["FRANCE", "A PAR B", "wrong_phase"],
       ["GERMANY", "FRA: A MAR - SPA", "wrong_power"],
     ]);
-    for (const r of outcome.rejected) expect(r.reason).toMatch(/\.$/);
+    for (const r of outcome.rejected ?? []) expect(r.reason).toMatch(/\.$/);
     // the readable orders were still judged: Paris and Munich bounce in Burgundy
     expect(outcome.results.find((r) => r.unit === "A PAR")).toMatchObject({ code: "bounce", by: ["A MUN"] });
     expect(outcome.results.find((r) => r.unit === "A MUN")).toMatchObject({ code: "bounce", by: ["A PAR"] });
@@ -198,7 +198,7 @@ describe("process", () => {
     const game = new Game();
     const outcome = game.process({ orders: { GERMANY: ["A MUN - RUH"], FRANCE: ["A MUN - BUR", "A MUN H"] } });
     expect(outcome.results.find((r) => r.unit === "A MUN")).toMatchObject({ ok: true, order: "A MUN - RUH" });
-    expect(outcome.rejected.map((r) => r.code)).toEqual(["foreign_unit", "foreign_unit"]);
+    expect((outcome.rejected ?? []).map((r) => r.code)).toEqual(["foreign_unit", "foreign_unit"]);
   });
 
   it("keeps what was submitted when an order is thrown out as illegal", () => {
@@ -215,7 +215,9 @@ describe("process", () => {
     const mar = outcome.results.find((r) => r.unit === "A MAR");
     expect(mar).toMatchObject({ code: "illegal", illegal: "duplicate_order" });
     expect(mar?.submitted).toBe("A MAR - SPA / A MAR - BUR");
-    expect(mar?.reason).not.toMatch(/[A-Z][a-z]+[A-Z]/); // no Rust enum names
+    // the log form hosts already match on is unchanged; the words are in `summary`
+    expect(mar?.reason).toBe("illegal (DuplicateOrder), holds");
+    expect(mar?.summary).toBe("illegal order (the unit was given more than one order), the unit holds");
     expect(outcome.results.find((r) => r.unit === "F BRE")).toMatchObject({ illegal: null, submitted: null, by: [] });
   });
 
@@ -224,7 +226,8 @@ describe("process", () => {
       preview(board(units), { orders }).results.find((r) => r.unit === unit);
     expect(codeOf({ FRANCE: ["A PAR"], GERMANY: ["A MUN"] }, { FRANCE: ["A PAR - BUR"], GERMANY: ["A MUN - BUR"] }, "A PAR")).toMatchObject({
       code: "bounce",
-      reason: "bounced with A MUN",
+      reason: "bounced with MUN",
+      summary: "bounced with A MUN",
       by: ["A MUN"],
     });
     expect(codeOf({ FRANCE: ["A PAR"], GERMANY: ["A BUR"] }, { FRANCE: ["A PAR - BUR"] }, "A PAR")).toMatchObject({
@@ -252,7 +255,8 @@ describe("process", () => {
       unit: "A MUN",
       code: "illegal",
       illegal: "attacker_origin",
-      reason: "illegal retreat (a unit cannot retreat to the province its attacker came from), disbanded",
+      reason: "illegal retreat (AttackerOrigin), disbanded",
+      summary: "illegal retreat (a unit cannot retreat to the province its attacker came from), disbanded",
     });
   });
 });
@@ -274,7 +278,7 @@ describe("preview", () => {
     const viaState = preview(game.state(), guess);
     expect(viaGame).toEqual(viaState);
     expect(viaGame.phase).toBe("F1901M");
-    expect(viaGame.rejected.map((r) => r.code)).toEqual(["unparseable"]);
+    expect((viaGame.rejected ?? []).map((r) => r.code)).toEqual(["unparseable"]);
     expect(viaGame.results.find((r) => r.unit === "A BUR")?.code).toBe("head_to_head");
     expect(viaGame.results.find((r) => r.unit === "A MUN")?.code).toBe("head_to_head");
     // twice gives the same answer, and the game has not moved

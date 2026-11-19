@@ -167,8 +167,8 @@ describe("Game", () => {
       orders: { FRANCE: ["A PAR - NOWHERE", "A MAR - SPA"], GERMANY: ["A MUN - BUR"] },
     });
     expect(outcome.rejected).toHaveLength(1);
-    expect(outcome.rejected[0]).toMatchObject({ power: "FRANCE", input: "A PAR - NOWHERE", code: "unparseable" });
-    expect(outcome.rejected[0]?.reason).toContain("NOWHERE");
+    expect(outcome.rejected?.[0]).toMatchObject({ power: "FRANCE", input: "A PAR - NOWHERE", code: "unparseable" });
+    expect(outcome.rejected?.[0]?.reason).toContain("NOWHERE");
     expect(outcome.next.units["FRANCE"]).toContain("A SPA");
     expect(outcome.next.units["GERMANY"]).toContain("A BUR");
     expect(outcome.results.find((r) => r.unit === "A PAR")?.code).toBe("ok");
