@@ -127,12 +127,21 @@ export function HowToPlay({
             device as you play.
           </p>
           <p className="fine">
+            You can also write orders in MILA under the orders list (Write an order
+            <span className="keys-only">
+              , or press <kbd>/</kbd>
+            </span>
+            ): <code>A PAR - BUR</code>, <code>F BRE S A PAR - PIC</code>, <code>F NTH C A LON - NWY</code>. Legal
+            orders are suggested as you type, words like supports and arrows like -&gt; are understood, and several
+            orders can go in at once separated by semicolons.
+          </p>
+          <p className="fine">
             Without a mouse, use the choices under the map: pick a unit, then where it goes. The same orders are
             offered there as on the map, and the board is also listed as text under Board as text.
           </p>
           <label className="setting">
             <input type="checkbox" checked={shortcuts} onChange={(e) => onShortcuts(e.target.checked)} />
-            Single-key shortcuts (<kbd>M</kbd> <kbd>S</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>D</kbd>). Turn them off if
+            Single-key shortcuts (<kbd>M</kbd> <kbd>S</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>D</kbd> <kbd>/</kbd>). Turn them off if
             you use speech input or they get in your way.
           </label>
         </section>
