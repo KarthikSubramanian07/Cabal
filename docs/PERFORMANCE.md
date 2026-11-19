@@ -266,3 +266,31 @@ These have not been recorded yet: they need a deploy that includes this harness 
 `tools/check-bench-regression.py` falls back to when it is run without a
 same-machine baseline. They are for local sanity checks only; CI never
 compares against them.
+
+## Board motion (web, November 2026)
+
+A resolved phase plays on the board: pieces march, bounce, are knocked aside and are built, the
+order marks ink in and failures are stamped. The budget is 60 frames a second on a mid-range
+phone, with no layout thrash. `apps/web/scripts/motion-perf.mjs` measures it: a Pixel 7 page in
+headless Chromium, the CPU throttled through the DevTools protocol, a busy spring phase (twenty
+orders across all seven powers, with bounces, a support and a standoff), frames timed with
+`requestAnimationFrame` from the frame after the click to 2.6 seconds.
+
+| Run (2026-11-19, Apple Silicon, headless Chromium 158) | fps | median frame | p95 frame | frames over 25 ms | forced layouts |
+|---|---|---|---|---|---|
+| 4x CPU throttling | 57.5 | 16.7 ms | 16.8 ms | 3 of 116 | |
+| No throttling, traced | 56.5 | 16.7 ms | 16.8 ms | 2 of 96 | 0 |
+| 4x CPU throttling, reduced motion | 54 | 16.7 ms | 16.7 ms | 2 of 108 | |
+
+What made it fast:
+
+- Pieces and marks live on their own composited layer (`svg.board-live`) over the map, so a
+  frame repaints a few dozen small shapes, never the 380 KB of province outlines.
+- Pieces move by Web Animations on `transform` and `opacity` only. The SVG still lays out its own
+  small subtree each frame (about 0.7 ms at 4x throttling); nothing reads layout from script while
+  they run, and the trace shows no forced layouts.
+- Each mark's ink mask covers only the mark. The first version gave every mask the whole board,
+  one full-size offscreen surface per order: the same phase ran at 12.7 fps at 4x throttling,
+  with a 95th percentile frame of 217 ms.
+- The click that adjudicates costs one long frame (about 170 ms at 4x throttling: the engine,
+  React rendering the results and the choreography being planned). Everything after it is steady.
