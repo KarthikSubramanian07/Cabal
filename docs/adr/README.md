@@ -9,3 +9,4 @@
 | [0005](0005-storage-do-sqlite-per-game-d1-cross-game.md) | Durable Object SQLite per game, D1 for cross-game data |
 | [0006](0006-mila-order-notation.md) | MILA / Cicero order notation and saved game format |
 | [0007](0007-pledges-commit-reveal.md) | Pledges as BLAKE3 commit-reveal verified by the server |
+| [0008](0008-manual-wrangler-deploys.md) | Manual wrangler deploys by a maintainer, with a credential-free dry run in CI |
