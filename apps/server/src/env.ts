@@ -42,6 +42,16 @@ export interface Env {
   BUILD_ID?: string;
   /** Worker version metadata: the build id when `BUILD_ID` is not set. */
   CF_VERSION_METADATA?: { id: string; tag: string; timestamp: string };
+  /** Web Push: the VAPID public key (config), base64url. Push is off without it and the private key. */
+  VAPID_PUBLIC_KEY?: string;
+  /** Secret. The VAPID private key, base64url (32 bytes). */
+  VAPID_PRIVATE_KEY?: string;
+  /** Who runs this server, for push services: an https URL or a mailto address. */
+  VAPID_SUBJECT?: string;
+  /** Minutes before a deadline a player with no orders in is reminded. Defaults to 60. */
+  PUSH_REMINDER_MINUTES?: string;
+  /** Secret. The bearer token for `GET /api/metrics` and `POST /api/metrics/datc`; they answer 404 without it. */
+  ADMIN_TOKEN?: string;
   /** Per-seat limit on press. */
   PRESS_LIMITER?: RateLimit;
   /** Per-IP limit on creating games. Optional so tests and local dev run without it. */

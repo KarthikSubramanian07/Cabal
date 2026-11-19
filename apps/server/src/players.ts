@@ -11,6 +11,10 @@
  *   GET   /api/me/games           the player's own games, live and ended, listed or not
  *   GET   /api/leaderboard        established ratings, best first, paged by `offset`
  *   GET   /api/ledger             the global trust ledger, paged by `offset`
+ *   POST  /api/me/push            subscribe this browser to push (a `PushSubscription.toJSON()`)
+ *   DELETE /api/me/push           forget one browser's subscription
+ *   GET   /api/me/notifications   which notices the player wants, and how many devices hear them
+ *   PATCH /api/me/notifications   turn kinds of notice on or off
  *
  * A player authenticates with `Authorization: Bearer <secret>`. Secrets never travel in a URL and
  * only their hashes are stored. Without a D1 database these routes answer 503.
@@ -18,14 +22,20 @@
 import {
   CreatePlayerRequest,
   LogoutRequest,
+  type NotificationsResponse,
   type PlayerSummary,
+  PushSubscriptionRequest,
+  PushUnsubscribeRequest,
   RecoverPlayerRequest,
   UpdateMeRequest,
+  UpdateNotificationPreferences,
 } from "@cabal/protocol";
 import type { PlayerStore, RenameOutcome } from "./d1-index.js";
 import type { Env } from "./env.js";
 import { playerStore } from "./game-index.js";
 import { json, limited, limitedKey, readJson, tooMany, withCors } from "./http.js";
+import { reminderMinutes } from "./notify.js";
+import { pushStore, subscriptionProblem } from "./push-store.js";
 import { isPlayerSecret } from "./tokens.js";
 
 const PLAYER_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})$/;
@@ -110,12 +120,12 @@ export async function playerRoute(request: Request, env: Env, url: URL): Promise
     const player = isPlayerSecret(bearer) ? await store.authenticate(bearer, now) : null;
     if (!player) return unauthorised();
     if (request.method !== "GET" && (await limitedKey(env.PROFILE_LIMITER, `profile:${player.id}`))) return tooMany();
-    return withCors(await me(request, store, player, bearer, path, now));
+    return withCors(await me(request, env, store, player, bearer, path, now));
   }
   return withCors(json({ error: "not found" }, 404));
 }
 
-async function me(request: Request, store: PlayerStore, player: PlayerSummary, bearer: string, path: string, now: number): Promise<Response> {
+async function me(request: Request, env: Env, store: PlayerStore, player: PlayerSummary, bearer: string, path: string, now: number): Promise<Response> {
   if (path === "/api/me" && request.method === "GET") return privateJson(await store.me(player.id, now));
   if (path === "/api/me" && request.method === "PATCH") {
     const body = UpdateMeRequest.safeParse(await readJson(request));
@@ -131,5 +141,35 @@ async function me(request: Request, store: PlayerStore, player: PlayerSummary, b
     return new Response(null, { status: 204 });
   }
   if (path === "/api/me/games" && request.method === "GET") return privateJson({ games: await store.myGames(player.id) });
+  if (path === "/api/me/push" || path === "/api/me/notifications") return notifications(request, env, player, bearer, path, now);
+  return json({ error: "not found" }, 404);
+}
+
+/** The player's push subscriptions and notification switches. */
+async function notifications(request: Request, env: Env, player: PlayerSummary, bearer: string, path: string, now: number): Promise<Response> {
+  const push = pushStore(env)!;
+  const answer = async (status = 200) =>
+    privateJson({ preferences: await push.preferences(player.id), devices: await push.devices(player.id), reminderMinutes: reminderMinutes(env) } satisfies NotificationsResponse, status);
+  if (path === "/api/me/push" && request.method === "POST") {
+    const body = PushSubscriptionRequest.safeParse(await readJson(request));
+    if (!body.success) return json({ error: "invalid request", issues: body.error.issues }, 400);
+    const problem = subscriptionProblem(body.data);
+    if (problem === "endpoint") return json({ error: "that endpoint is not a push service this server sends to", code: "bad_endpoint" }, 400);
+    if (problem === "keys") return json({ error: "the subscription keys are not a P-256 key and a 16-byte secret", code: "bad_keys" }, 400);
+    return privateJson({ devices: await push.subscribe(player.id, bearer, body.data, now) }, 201);
+  }
+  if (path === "/api/me/push" && request.method === "DELETE") {
+    const body = PushUnsubscribeRequest.safeParse(await readJson(request));
+    if (!body.success) return json({ error: "invalid request", issues: body.error.issues }, 400);
+    await push.unsubscribe(player.id, body.data.endpoint);
+    return new Response(null, { status: 204 });
+  }
+  if (path === "/api/me/notifications" && request.method === "GET") return answer();
+  if (path === "/api/me/notifications" && request.method === "PATCH") {
+    const body = UpdateNotificationPreferences.safeParse(await readJson(request));
+    if (!body.success) return json({ error: "invalid request", issues: body.error.issues }, 400);
+    await push.setPreferences(player.id, body.data, now);
+    return answer();
+  }
   return json({ error: "not found" }, 404);
 }

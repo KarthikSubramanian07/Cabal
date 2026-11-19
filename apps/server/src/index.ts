@@ -13,6 +13,7 @@
  *   GET  /api/games/:id/press         one page of press history (`before`, `with`, `limit`)
  *   GET  /api/games/:id/ws            WebSocket; a player then sends `hello { token }`
  *   GET  /health                      liveness, engine version, build id, index reachability
+ *   GET  /api/push/key                the VAPID public key a browser subscribes with (null when push is off)
  *
  * Players, profiles, the leaderboard and the trust ledger are served by players.ts. A signed-in
  * player sends their player secret as the bearer on create and join; they then sit under their
@@ -39,6 +40,7 @@ import { copyRegistryOnce, gameIndex, indexBackend, registrySchema } from "./gam
 import { REQUEST_ID_HEADER, currentRequestId, describeError, log, requestIdFrom, withLogContext } from "./log.js";
 import { gameCode } from "./tokens.js";
 import { CORS, json, limited, readJson, tooMany, withCors } from "./http.js";
+import { vapidKeys } from "./notify.js";
 import { playerRoute, resolvePlayer } from "./players.js";
 
 export { GameRoom } from "./room.js";
@@ -117,6 +119,12 @@ async function route(request: Request, env: Env): Promise<Response> {
     // Unauthenticated and it reaches the one index object, so it is limited like any other read.
     if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
     return withCors(json(await health(env)));
+  }
+
+  if (url.pathname === "/api/push/key" && request.method === "GET") {
+    const res = json({ publicKey: vapidKeys(env)?.publicKey ?? null });
+    res.headers.set("cache-control", "public, max-age=300");
+    return withCors(res);
   }
 
   const players = await playerRoute(request, env, url);
