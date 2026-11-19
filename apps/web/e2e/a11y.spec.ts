@@ -15,6 +15,7 @@ async function scan(page: Page, state: string) {
 
 test.describe("accessibility scan", () => {
   test("the board through a whole year of play", async ({ page }) => {
+    test.slow(); // nine full-page scans around a three-phase game
     await ready(page);
     await scan(page, "opening position");
 

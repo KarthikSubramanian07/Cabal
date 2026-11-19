@@ -16,7 +16,7 @@ export default defineConfig({
     command: `pnpm build && pnpm exec vite preview --port ${port} --strictPort`,
     url: origin,
     reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
+    timeout: 300_000,
   },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"] } },

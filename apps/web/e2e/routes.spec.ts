@@ -49,6 +49,8 @@ test.describe("routes", () => {
       });
       expect(bar).toEqual({ background: "rgb(18, 17, 16)", rule: "rgb(217, 79, 48)" });
       await expect(banner.getByRole("link", { name: "Sandbox" })).toBeVisible();
+      // A static page, not the app: no script runs here.
+      expect(await page.locator("script[src]").count()).toBe(0);
       const heading = page.getByRole("heading", { level: 1 });
       await expect(heading).toBeVisible();
       // The brand faces are really loaded, not just named in a font stack.

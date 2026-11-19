@@ -61,8 +61,28 @@ function firstLoad(): Plugin {
   };
 }
 
+/**
+ * `vite preview` falls back to the app shell for any path without a file. In production the
+ * Pages worker serves the static trust pages at their clean URLs, so do the same here: the
+ * end-to-end suite then meets the pages a visitor would.
+ */
+function trustPages(): Plugin {
+  return {
+    name: "cabal:trust-pages",
+    configurePreviewServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        const [path, query] = (req.url ?? "").split("?");
+        if (/^\/(about|contact|privacy)\/?$/.test(path ?? "")) {
+          req.url = `${path!.replace(/\/$/, "")}/index.html${query ? `?${query}` : ""}`;
+        }
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), firstLoad()],
+  plugins: [react(), firstLoad(), trustPages()],
   build: { target: "esnext" },
   server: { port: 5173, strictPort: true, proxy: api },
   preview: { proxy: api },
