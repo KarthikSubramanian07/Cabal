@@ -23,8 +23,8 @@ use cabal_engine::parse::parse;
 use cabal_engine::rulebook::Rulebook;
 use cabal_engine::state::{GameState, PhaseKind, Position};
 use cabal_engine::text::{
-    adjust_text, describe_outcome_in, explain_sentence, order_text, outcome_actors, outcome_code,
-    retreat_text, retreat_text_in, unit_text,
+    OrderTexts, adjust_text, describe_outcome_in, explain_sentence, order_text, outcome_actors,
+    outcome_code, retreat_text, retreat_text_in, unit_text,
 };
 use cabal_engine::validate::{Verdict, validate_orders};
 use cabal_engine::{Game as EngineGame, PhaseResult, ProvinceId, Status};
@@ -350,14 +350,11 @@ pub struct OrderResult {
     pub reason: String,
     /// The units behind a failure, in full (`["A MUN"]`): what the move bounced
     /// with, the unit that repelled it, cut the support or dislodged the unit.
-    #[serde(default)]
     pub by: Vec<String>,
     /// `illegal` only: why, as a code (`unreachable`, `duplicate_order`,
     /// `attacker_origin`, `allowance_used`, ...).
-    #[serde(default)]
     pub illegal: Option<String>,
     /// `illegal` movement orders only: the order as it was submitted.
-    #[serde(default)]
     pub submitted: Option<String>,
 }
 
@@ -436,7 +433,6 @@ pub struct PhaseOutcome {
     pub standoffs: Vec<String>,
     /// Orders that were submitted but could not be adjudicated at all. Kept for
     /// the life of this `Game` object; a game restored from storage has none.
-    #[serde(default)]
     pub rejected: Vec<RejectedOrder>,
     /// Units removed by the civil disorder rule (adjustment phases).
     pub civil_disorder: Vec<String>,
@@ -649,10 +645,8 @@ pub struct Explanation {
     /// Standalone Graphviz DOT of the same graph, labelled with orders and outcomes.
     pub dot: String,
     /// One entry per result, in the same order.
-    #[serde(default)]
     pub orders: Vec<OrderExplanation>,
     /// Dependency cycles settled by a backup rule (circular movement, convoy paradox).
-    #[serde(default)]
     pub cycles: Vec<CycleInfo>,
 }
 
@@ -680,20 +674,22 @@ pub struct MoveOption {
     pub via_convoy: bool,
 }
 
-/// A move by another unit that this unit may support.
+/// Moves into one province that this unit may support.
 #[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
 pub struct SupportOption {
-    /// Province of the unit being supported.
-    pub unit: String,
+    /// The province being moved into.
     pub to: String,
+    /// Provinces of the units whose move there may be supported.
+    pub units: Vec<String>,
 }
 
-/// A convoy this fleet may be part of.
+/// Convoys of one army that this fleet may be part of.
 #[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
 pub struct ConvoyOption {
     /// Province of the army.
     pub army: String,
-    pub to: String,
+    /// Provinces the army may be convoyed to through this fleet.
+    pub to: Vec<String>,
 }
 
 /// Everything one unit may be ordered to do, as data for a board to highlight.
@@ -745,6 +741,17 @@ pub struct LegalMoves {
     pub units: Vec<UnitMoves>,
     /// Adjustment phases: options per power name.
     pub adjustments: HashMap<String, AdjustOptions>,
+}
+
+/// Hand a large result to JavaScript as one JSON string and let the host parse
+/// it, instead of building it object by object across the boundary. For the
+/// legal-order lists (thousands of short strings) that is several times faster.
+/// Only for types whose JSON form is their declared TypeScript form: maps as
+/// objects, absent values as `null`.
+fn via_json<T: Tsify + Serialize>(value: &T) -> Result<Ts<T>, JsError> {
+    let text = serde_json::to_string(value).map_err(|e| JsError::new(&e.to_string()))?;
+    let parsed = js_sys::JSON::parse(&text).map_err(|_| JsError::new("result is not JSON"))?;
+    Ok(Ts::new_unchecked(parsed))
 }
 
 fn status_text(map: &Map, s: Status) -> String {
@@ -1045,8 +1052,14 @@ fn legal_moves_of(game: &EngineGame, only: Option<cabal_engine::Power>) -> Legal
     let map = game.map();
     let state: &GameState = &game.state;
     let pos = &state.position;
-    let code = |p: ProvinceId| province_code(map, p);
-    let power_name = |p: cabal_engine::Power| map.power(p).name.to_ascii_uppercase();
+    let texts = OrderTexts::new(map, pos);
+    let code = |p: ProvinceId| texts.place(p).to_string();
+    let powers: Vec<String> = map
+        .powers()
+        .iter()
+        .map(|p| p.name.to_ascii_uppercase())
+        .collect();
+    let power_name = |p: cabal_engine::Power| powers[p.0 as usize].clone();
     let wanted = |p: cabal_engine::Power| only.is_none_or(|o| o == p);
     let mut out = LegalMoves {
         phase: state.phase.to_string(),
@@ -1069,31 +1082,31 @@ fn legal_moves_of(game: &EngineGame, only: Option<cabal_engine::Power>) -> Legal
             for o in options {
                 out.units.push(UnitMoves {
                     power: power_name(o.unit.power),
-                    unit: unit_text(map, &o.unit),
+                    unit: texts.unit(o.unit.province()).to_string(),
                     province: code(o.unit.province()),
                     moves: o
                         .moves
                         .iter()
                         .map(|&(r, via_convoy)| MoveOption {
-                            to: map.region_name(r),
+                            to: texts.region(r),
                             via_convoy,
                         })
                         .collect(),
                     support_holds: o.support_holds.iter().map(|&p| code(p)).collect(),
                     support_moves: o
                         .support_moves
-                        .iter()
-                        .map(|&(unit, to)| SupportOption {
-                            unit: code(unit),
-                            to: code(to),
+                        .chunk_by(|a, b| a.1 == b.1)
+                        .map(|group| SupportOption {
+                            to: code(group[0].1),
+                            units: group.iter().map(|&(unit, _)| code(unit)).collect(),
                         })
                         .collect(),
                     convoys: o
                         .convoys
-                        .iter()
-                        .map(|&(army, to)| ConvoyOption {
-                            army: code(army),
-                            to: code(to),
+                        .chunk_by(|a, b| a.0 == b.0)
+                        .map(|group| ConvoyOption {
+                            army: code(group[0].0),
+                            to: group.iter().map(|&(_, to)| code(to)).collect(),
                         })
                         .collect(),
                     retreats: Vec::new(),
@@ -1185,14 +1198,16 @@ fn legal_text_of(
                 Some(p) => cabal_engine::legal::legal_movement(map, pos, p),
                 None => cabal_engine::legal::legal_movement_all(map, pos),
             };
+            // thousands of orders on a crowded board: format them in one batch
+            let texts = OrderTexts::new(map, pos);
             for (province, orders) in all {
                 let Some(unit) = pos.unit_at(province) else {
                     continue;
                 };
                 if let Some(legal) = out.get_mut(&unit.power) {
                     legal.by_unit.insert(
-                        unit_text(map, unit),
-                        orders.iter().map(|o| order_text(map, pos, o)).collect(),
+                        texts.unit(province).to_string(),
+                        orders.iter().map(|o| texts.order(o)).collect(),
                     );
                 }
             }
@@ -1756,7 +1771,7 @@ impl Game {
         let legal = legal_text_of(&self.inner, Some(p))
             .remove(&p)
             .unwrap_or_default();
-        Ok(legal.into_ts()?)
+        via_json(&legal)
     }
 
     /// Legal orders for every power at once, keyed by power name. One convoy
@@ -1769,7 +1784,7 @@ impl Game {
             .into_iter()
             .map(|(p, legal)| (map.power(p).name.to_ascii_uppercase(), legal))
             .collect();
-        Ok(LegalOrdersByPower(all).into_ts()?)
+        via_json(&LegalOrdersByPower(all))
     }
 
     /// The legal orders of the current phase as data rather than text: for
@@ -1780,7 +1795,7 @@ impl Game {
     #[wasm_bindgen(js_name = legalMoves)]
     pub fn legal_moves(&self, power: Option<String>) -> Result<Ts<LegalMoves>, JsError> {
         let only = power.as_deref().map(|p| self.power(p)).transpose()?;
-        Ok(legal_moves_of(&self.inner, only).into_ts()?)
+        via_json(&legal_moves_of(&self.inner, only))
     }
 
     /// Adjudicate the current phase with the given orders and advance.
@@ -1801,7 +1816,7 @@ impl Game {
         }
         let outcome =
             outcome_of(&self.inner, last, self.rejected.get(&last)).expect("phase recorded");
-        Ok(outcome.into_ts()?)
+        via_json(&outcome)
     }
 
     /// What-if: the outcome these orders would have in the current phase. The
@@ -1815,7 +1830,7 @@ impl Game {
     /// the current movement phase, without touching the game.
     #[wasm_bindgen(js_name = explainPreview)]
     pub fn explain_preview(&self, orders: Ts<OrdersByPower>) -> Result<Ts<Explanation>, JsError> {
-        Ok(self.explain_orders(orders)?.into_ts()?)
+        via_json(&self.explain_orders(orders)?)
     }
 
     /// Outcome of a past phase by index into the history. `next` and `status`
@@ -1823,7 +1838,7 @@ impl Game {
     pub fn outcome(&self, index: usize) -> Result<Ts<PhaseOutcome>, JsError> {
         let outcome = outcome_of(&self.inner, index, self.rejected.get(&index))
             .ok_or_else(|| JsError::new("no such phase"))?;
-        Ok(outcome.into_ts()?)
+        via_json(&outcome)
     }
 
     /// Why the movement phase at `index` in the history resolved as it did.

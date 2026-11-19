@@ -482,9 +482,15 @@ describe("legal moves", () => {
       expect(mine.map((u) => u.unit).sort()).toEqual(Object.keys(text).sort());
       expect(mine).toEqual(moves.units.filter((u) => u.power === power));
       for (const u of mine) {
-        const count = 1 + u.moves.length + u.support_holds.length + u.support_moves.length + u.convoys.length;
+        const count =
+          1 +
+          u.moves.length +
+          u.support_holds.length +
+          u.support_moves.reduce((n, s) => n + s.units.length, 0) +
+          u.convoys.reduce((n, c) => n + c.to.length, 0);
         expect(count).toBe(text[u.unit]?.length);
         for (const m of u.moves) expect(text[u.unit]).toContain(`${u.unit} - ${m.to}${m.via_convoy ? " VIA" : ""}`);
+        for (const s of u.support_moves) expect(s.units.length).toBeGreaterThan(0);
       }
     }
     expect(() => game.legalMoves("ATLANTIS")).toThrow(/unknown power/);
@@ -507,12 +513,17 @@ describe("legal moves", () => {
     const moves = game.legalMoves();
     expect(moves.units).toHaveLength(34);
     const nth = moves.units.find((u) => u.unit === "F NTH");
-    expect(nth?.convoys).toContainEqual({ army: "LON", to: "BEL" });
+    expect(nth?.convoys.find((c) => c.army === "LON")?.to).toContain("BEL");
     const lon = moves.units.find((u) => u.unit === "A LON");
     expect(lon?.moves).toContainEqual({ to: "BEL", via_convoy: true });
     const mao = moves.units.find((u) => u.unit === "F MAO");
     expect(mao?.moves.map((m) => m.to)).toEqual(expect.arrayContaining(["SPA/NC", "SPA/SC"]));
-    expect(nth?.support_moves).toContainEqual({ unit: "LON", to: "YOR" });
+    expect(nth?.support_moves.find((s) => s.to === "YOR")?.units).toContain("LON");
+    // one entry per destination and per army, never a repeated key
+    for (const u of moves.units) {
+      expect(new Set(u.support_moves.map((s) => s.to)).size).toBe(u.support_moves.length);
+      expect(new Set(u.convoys.map((c) => c.army)).size).toBe(u.convoys.length);
+    }
   });
 
   it("gives retreat destinations and build options as data", () => {

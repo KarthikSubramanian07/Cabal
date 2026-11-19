@@ -125,6 +125,7 @@ version = "0.1.0"
 dependencies = [
  "cabal-engine",
  "hex",
+ "js-sys",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
