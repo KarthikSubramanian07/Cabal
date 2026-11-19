@@ -106,12 +106,13 @@ flowchart LR
 - **Algorithm.** DATC v3.0 chapter 5 partial information resolver: every order is a Boolean equation over attack, hold, defend and prevent strengths; `resolve` memoises, detects dependency cycles and applies the two backup rules (circular movement succeeds, convoy paradoxes fail the convoys per Szykman). No "cut supports first" heuristics anywhere.
 - **Explanations, not Booleans.** Every outcome says why: `bounced by A Mun`, `support cut by F Kie`, `no convoy path`, `friendly fire`, `paradox`. The UI renders the dependency graph.
 - **Editions as data.** 1971, 1982, 2023 and DPTG rulebooks differ only in `Rulebook` fields (convoy intent, civil disorder distance).
-- **Tests.** 171 DATC v3.0 cases across movement, retreat and build phases, vendored with attribution from the MIT `diplomacy` crate; property tests for order-independence and no-panic; snapshot tests on explanations; criterion benches; fuzz targets on the parser.
+- **Tests.** 171 DATC v3.0 cases across movement, retreat and build phases, vendored with attribution from the MIT `diplomacy` crate, checked for dislodgements, standoffs and retreats as well as order outcomes; property tests for order-independence, no-panic and whole-game round trips; replay fixtures in three tiers, including a complete 35-phase published Cicero game; criterion benches; fuzz targets on the parser.
+- **Verifiable saves.** A saved game records its rulebook, outcome, press and pledges. `cabal replay` and `verifySaved` report every divergence from a record; `Game.resume` and snapshots restore a game without adjudicating its past, so a corrected ruling never breaks a game in flight.
 - **Interop.** Orders and saved games use the MILA / Cicero notation, so every published AI Diplomacy harness understands Cabal games.
 
 ```sh
-cargo run -p cabal-cli -- datc            # run the DATC corpus and print a section report
-cargo run -p cabal-cli -- adjudicate game.json
+cargo run -p cabal-cli -- datc --report   # adjudicate the DATC corpus: pass, fail and skip totals per section
+cargo run -p cabal-cli -- replay crates/cabal-engine/tests/data/games   # replay saved games, report every divergence
 cargo run -p cabal-cli -- explain "ENG: F NTH - HOL" "ENG: A BEL S F NTH - HOL" "GER: A HOL H"
 ```
 
@@ -119,8 +120,8 @@ cargo run -p cabal-cli -- explain "ENG: F NTH - HOL" "ENG: A BEL S F NTH - HOL" 
 
 | Piece | State |
 |---|---|
-| `cabal-engine` | 171 of 171 DATC v3.0 cases, property tests, benches, MILA saved games, seals and receipts |
-| `cabal-wasm`, `@cabal/engine` | one 201 KB gzipped module for browser and Workers, generated TypeScript types |
+| `cabal-engine` | 171 of 171 DATC v3.0 cases, property tests, benches, verifiable MILA saved games, lossless snapshots, seals and receipts |
+| `cabal-wasm`, `@cabal/engine` | one module under 300 KB gzipped for browser and Workers, generated TypeScript types |
 | `@cabal/protocol` | zod schemas for every frame, settings, pledges and scoring |
 | `apps/server` | GameRoom Durable Object: seats, deadlines, orders, press, sealed pledges with receipts, replay export |
 | `apps/web` | the classic board sandbox: click-to-order from the legal list, coast picker, receipts with reasons, phase replay, undo, MILA import and export, phone and desktop |
@@ -132,7 +133,7 @@ cargo run -p cabal-cli -- explain "ENG: F NTH - HOL" "ENG: A BEL S F NTH - HOL" 
 ```
 crates/cabal-engine   Rust rules engine (geo, orders, parser, resolver, phases, json, pledges)
 crates/cabal-wasm     wasm-bindgen + tsify bindings, TypeScript types generated from Rust
-crates/cabal-cli      cabal CLI: datc, adjudicate, explain, bench
+crates/cabal-cli      cabal CLI: datc, explain, legal, replay
 packages/engine       @cabal/engine   npm wrapper for the wasm build
 packages/protocol     @cabal/protocol zod schemas for the WebSocket and HTTP protocol
 packages/agents       @cabal/agents   Claude powered player harness

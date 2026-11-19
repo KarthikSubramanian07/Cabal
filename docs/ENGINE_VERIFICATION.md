@@ -101,3 +101,58 @@ permutation invariance, conservation, ownership, and unique occupation.
 `fuzz/Cargo.toml` isolates nightly fuzz dependencies from the stable workspace.
 The scheduled stress workflow has separate parser/movement matrix jobs, each
 with `-max_total_time=600`, `fail-fast: false`, and crash artifact upload.
+
+## Saved games, replay and restore
+
+A saved game is the MILA / Cicero layout plus two optional `cabal` blocks that
+other readers ignore. On the game: engine version, the full rulebook, the
+outcome (a solo, or a draw with its members) and the pledges with their
+receipts. On each retreat-phase state: where every dislodged unit was attacked
+from, whether by convoy, and which provinces saw a standoff. Press travels in
+each phase's `messages`, as in MILA. Files without the blocks still load.
+
+There are three ways to load one, and they differ in how much they trust it.
+
+| Operation | Rust | WebAssembly | Adjudicates | Use it for |
+|---|---|---|---|---|
+| Verify | `Game::verify_saved` | `verifySaved(json)` | every phase | Auditing a record. Returns a report listing every divergence; never fails because of one. |
+| Replay | `Game::from_saved` | `Game.fromSaved(json)` | every phase | Importing someone else's file. Fails at the first phase whose units or centres differ. |
+| Resume | `Game::resume`, `Game::from_snapshot` | `Game.resume(json)`, `Game.fromSnapshot(snapshot, saved?)` | nothing (a snapshot replays only a tail recorded after it) | Restoring your own storage. |
+
+Resume exists because replay couples every stored game to today's rulings. A
+Durable Object used to wake by replaying its whole history, so shipping a
+corrected ruling could stop a game in flight from ever loading again. A resumed
+game keeps earlier phases verbatim as an archive and continues from the last
+recorded state. `Game.snapshot()` is the constant-size form of that state for
+hosts that do not want to parse the whole save to wake.
+
+`verify_saved` compares, per phase: the orders as adjudicated, result codes,
+dislodged units with attacker origins and standoffs, phase names, units,
+centres, retreat options, build allowances, and finally the outcome. After a
+difference in the board it continues from the recorded state, so one bad phase
+is reported once. Files with the `cabal` block are held to an exact standard
+that ends with comparing the re-exported game with the file. Files from other
+tools are compared on what they record: they may omit implicit holds, order
+their lists differently, leave results empty, and count builds the MILA way
+(capped at the free build sites).
+
+`cabal replay <file or directory>...` runs it from the command line and exits 1
+on any divergence; CI runs it over `crates/cabal-engine/tests/data/games`. That
+directory and its three fixture tiers are described in its own `README.md`.
+
+## What the DATC harness checks
+
+A DATC case states, per order, whether it succeeds. Checking only that let a
+wrong standoff list through, because nothing looked at the lists.
+`tests/datc_harness` (shared by `cargo test` and `cabal datc`) now also checks
+the dislodgements those expectations imply, that the dislodged list, attacker
+origins, standoff list and resulting position follow from the outcomes, and in
+retreat cases that `legal_retreats` and the resolver agree and that a successful
+retreat actually lands. 171 cases produce 1,639 assertions; 336 orders have no
+expectation in the corpus and are counted as skipped. The same consistency
+check runs as a property test over random crowded boards.
+
+`tests/data/cabal_cases.json` holds Cabal's own cases in the same layout with
+explicit `dislodged`, `standoffs` and `retreats` lists, starting with the
+ruling that was wrong: when two units bounce in a province and both are
+dislodged from elsewhere, that province is still a standoff.

@@ -53,7 +53,7 @@ cabal/
   crates/
     cabal-engine/    pure Rust: geo, orders, parser, resolver, phases, legality, json, pledges
     cabal-wasm/      wasm-bindgen + tsify bindings, generates TypeScript types
-    cabal-cli/       `cabal` CLI: adjudicate, datc, bench, explain, replay
+    cabal-cli/       `cabal` CLI: datc, explain, legal, replay
   packages/
     engine/          @cabal/engine  npm wrapper around the wasm-pack output
     protocol/        @cabal/protocol  zod schemas for WebSocket and HTTP messages

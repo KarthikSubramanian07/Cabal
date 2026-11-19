@@ -18,7 +18,7 @@ env:
 
 jobs:
   rust:
-    name: "Rust: fmt, clippy, tests, DATC"
+    name: "Rust: fmt, clippy, tests, DATC, replay"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -36,8 +36,13 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - run: cargo test --workspace
+      # Adjudicates all 171 DATC cases plus Cabal's own and prints pass, fail and
+      # skip totals; exits 1 if any case fails.
       - name: DATC report
         run: cargo run -p cabal-cli -- datc --report
+      # Every committed saved game must replay with zero divergences.
+      - name: Replay fixtures
+        run: cargo run -p cabal-cli -- replay crates/cabal-engine/tests/data/games
 
   bench:
     name: "Bench: opening adjudication gate"
