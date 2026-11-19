@@ -1,23 +1,30 @@
 /**
  * The sandbox: a whole game driven by the in-browser engine. Every power can be
- * ordered from one screen, every phase is kept for replay, and games can be
- * exported and imported in the MILA saved game format.
+ * ordered from one screen, every phase is kept for replay, the game is saved on this
+ * device as it is played, and games can be exported and imported in the MILA saved
+ * game format.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Game, type PhaseOutcome, type State, engineReady } from "../engine.js";
 import { type Board, loadBoard } from "../map/boardData.js";
+import { type OrderBook, eraseOrder, flatten, keepLegal, waiveBuild, writeOrder } from "./book.js";
 import type { Piece } from "./compose.js";
 import { POWER_NAMES, type PhaseKind, parseUnit, phaseKind } from "./notation.js";
+import { clearSave, readSave, writeSave } from "./persist.js";
+import { type Loaded, type PhaseRecord, loadSaved, replay, tidyLegal, tidyOutcome } from "./saved.js";
+import { type TrackedHistory, trackUnits } from "./unitIds.js";
 
-/** Orders keyed by power, then by unit (or `B:PAR` / `D:PAR` / `WAIVE:n` in adjustments). */
-export type OrderBook = Record<string, Record<string, string>>;
+export type { OrderBook } from "./book.js";
+export type { PhaseRecord } from "./saved.js";
 
-export interface PhaseRecord {
+/** A saved game that has been read and checked but not put on the board yet. */
+export interface OpenedGame {
+  /** The phase it would resume at. */
   phase: string;
-  /** The board as the phase began. */
-  state: State;
-  orders: OrderBook;
-  outcome: PhaseOutcome;
+  /** How many phases it has resolved. */
+  resolved: number;
+  /** Replace the game on the board with this one. */
+  load: () => void;
 }
 
 export interface PowerSummary {
@@ -32,6 +39,12 @@ export interface PowerSummary {
   allowance: number;
 }
 
+/** The power to open: the one already open if it has orders to give, else the first that has. */
+export function powerWithOrders(powers: readonly { power: string; due: number }[], open: string): string {
+  if (powers.some((p) => p.power === open && p.due > 0)) return open;
+  return powers.find((p) => p.due > 0)?.power ?? open;
+}
+
 export interface Sandbox {
   board: Board;
   phase: string;
@@ -40,9 +53,18 @@ export interface Sandbox {
   state: State;
   pieces: Piece[];
   legal: Record<string, Record<string, string[]>>;
+  /** Adjustment phases: builds (positive) or disbands (negative) owed, by power. */
+  allowance: Record<string, number>;
   powers: PowerSummary[];
   orders: OrderBook;
   history: PhaseRecord[];
+  /** Stable unit identities for every recorded position and the live one. */
+  units: TrackedHistory;
+  /** Set when this visit began by restoring a saved game: the phase it was restored at. */
+  resumed: string | null;
+  dismissResumed: () => void;
+  /** The power that was open when the game was saved, if it was restored. */
+  resumedActive: string | null;
   setOrder: (power: string, key: string, text: string) => void;
   removeOrder: (power: string, key: string) => void;
   clearOrders: (power?: string) => void;
@@ -52,58 +74,82 @@ export interface Sandbox {
   undo: () => void;
   reset: () => void;
   exportSaved: () => string;
-  importSaved: (json: string) => void;
+  /**
+   * Read a saved game without touching the one on the board, so the caller can ask before
+   * replacing a game in progress. Throws `ImportError` with a message fit to show when the
+   * text is not a saved game.
+   */
+  openSaved: (json: string) => OpenedGame;
+  /** Remember which power is open, for the autosave. */
+  noteActive: (power: string) => void;
 }
 
-function toBook(orders: Record<string, string[]>, kind: PhaseKind): OrderBook {
-  const book: OrderBook = {};
-  for (const [power, list] of Object.entries(orders)) {
-    const entries: Record<string, string> = {};
-    list.forEach((text, i) => {
-      if (kind === "A") {
-        const unit = parseUnit(text);
-        const key = text === "WAIVE" ? `WAIVE:${i}` : `${text.trim().endsWith(" D") ? "D" : "B"}:${unit?.province}`;
-        entries[key] = text;
-      } else {
-        const unit = parseUnit(text);
-        if (unit) entries[unit.unit] = text;
-      }
-    });
-    book[power] = entries;
-  }
-  return book;
-}
+export type SandboxLoad =
+  | { status: "loading" }
+  | { status: "error"; error: Error; retry: () => void }
+  | { status: "ready"; sandbox: Sandbox };
 
-function flatten(book: OrderBook): Record<string, string[]> {
-  const out: Record<string, string[]> = {};
-  for (const [power, entries] of Object.entries(book)) out[power] = Object.values(entries);
-  return out;
-}
-
-export function useSandbox(): Sandbox | null {
+export function useSandbox(): SandboxLoad {
   const [board, setBoard] = useState<Board | null>(null);
   const [game, setGame] = useState<Game | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [version, setVersion] = useState(0);
   const [orders, setOrders] = useState<OrderBook>({});
   const [history, setHistory] = useState<PhaseRecord[]>([]);
+  const [resumed, setResumed] = useState<string | null>(null);
+  const [resumedActive, setResumedActive] = useState<string | null>(null);
+  /** The power whose orders are open. Kept here so that choosing one is saved like any other change. */
+  const [active, setActive] = useState<string>("FRANCE");
 
   useEffect(() => {
     let live = true;
-    Promise.all([engineReady(), loadBoard()]).then(([, b]) => {
-      if (!live) return;
-      setBoard(b);
-      setGame(new Game());
-    });
+    setError(null);
+    Promise.all([engineReady(), loadBoard()]).then(
+      ([, b]) => {
+        if (!live) return;
+        // Pick up the game saved on this device, if there is one this build can read.
+        let loaded: Loaded | null = null;
+        const save = readSave();
+        if (save) {
+          try {
+            loaded = loadSaved(save.game, save.written);
+          } catch {
+            // A save that no longer loads is worth less than a working board.
+            clearSave();
+          }
+        }
+        const game = loaded?.game ?? new Game();
+        // Drawing the board for the first time is the heaviest render there is. As a
+        // transition React does it in slices, so the page stays responsive meanwhile.
+        startTransition(() => {
+          setBoard(b);
+          setGame(game);
+          if (loaded && save) {
+            setHistory(loaded.history);
+            setOrders(save.orders);
+            setActive(save.active);
+            setResumedActive(save.active);
+            setResumed(game.phase());
+          }
+        });
+      },
+      (err: unknown) => {
+        if (live) setError(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
     return () => {
       live = false;
     };
-  }, []);
+  }, [attempt]);
 
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
   const bump = () => setVersion((v) => v + 1);
 
-  // biome-ignore lint: version is the invalidation signal for the mutable engine object
+  // `version` is the invalidation signal for the mutable engine object.
   const snapshot = useMemo(() => {
     if (!game) return null;
+    void version;
     const phase = game.phase();
     const status = game.status();
     const state = game.state();
@@ -113,12 +159,23 @@ export function useSandbox(): Sandbox | null {
     if (status === "active") {
       for (const power of POWER_NAMES) {
         const l = game.legal(power);
-        legal[power] = l.by_unit;
+        legal[power] = tidyLegal(l.by_unit, kind);
         allowance[power] = l.allowance;
       }
     }
     return { phase, status, state, kind, legal, allowance };
   }, [game, version]);
+
+  // Orders restored from a save are only as good as the phase they were written for.
+  const checked = useRef<Game | null>(null);
+  useEffect(() => {
+    if (!snapshot || !game || checked.current === game) return;
+    checked.current = game;
+    setOrders((o) => {
+      const kept = keepLegal(o, snapshot.legal, snapshot.kind);
+      return JSON.stringify(kept) === JSON.stringify(o) ? o : kept;
+    });
+  }, [snapshot, game]);
 
   const pieces = useMemo<Piece[]>(() => {
     if (!snapshot) return [];
@@ -140,23 +197,44 @@ export function useSandbox(): Sandbox | null {
       const legal = snapshot.legal[power] ?? {};
       const allowance = snapshot.allowance[power] ?? 0;
       const given = Object.keys(orders[power] ?? {}).length;
-      let due = 0;
-      if (snapshot.kind === "A") due = Math.abs(allowance);
-      else due = Object.keys(legal).length;
+      const due = snapshot.kind === "A" ? Math.abs(allowance) : Object.keys(legal).length;
       return { power, centers, units, due, given, allowance };
     });
   }, [snapshot, pieces, orders]);
 
-  const setOrder = useCallback((power: string, key: string, text: string) => {
-    setOrders((o) => ({ ...o, [power]: { ...o[power], [key]: text } }));
-  }, []);
+  const units = useMemo<TrackedHistory>(
+    () => (snapshot ? trackUnits(history, snapshot.state) : { phases: [], live: {} }),
+    [history, snapshot],
+  );
+
+  // Save after every change. A board nobody has touched is not worth a save.
+  useEffect(() => {
+    if (!game || !snapshot) return;
+    const touched = history.length > 0 || Object.values(orders).some((o) => Object.keys(o).length > 0);
+    if (!touched) {
+      clearSave();
+      return;
+    }
+    writeSave({
+      savedAt: Date.now(),
+      game: game.toSaved("cabal-sandbox"),
+      written: history.map((h) => h.orders),
+      orders,
+      active,
+    });
+  }, [game, snapshot, orders, history, active]);
+
+  const setOrder = useCallback(
+    (power: string, key: string, text: string) => {
+      if (!snapshot) return;
+      const cap = { kind: snapshot.kind, allowance: snapshot.allowance[power] ?? 0 };
+      setOrders((o) => writeOrder(o, power, key, text, cap));
+    },
+    [snapshot],
+  );
 
   const removeOrder = useCallback((power: string, key: string) => {
-    setOrders((o) => {
-      const next = { ...o[power] };
-      delete next[key];
-      return { ...o, [power]: next };
-    });
+    setOrders((o) => eraseOrder(o, power, key));
   }, []);
 
   const clearOrders = useCallback((power?: string) => {
@@ -179,42 +257,27 @@ export function useSandbox(): Sandbox | null {
   const waive = useCallback(
     (power: string) => {
       if (!snapshot || snapshot.kind !== "A") return;
-      setOrders((o) => {
-        const current = o[power] ?? {};
-        const used = Object.keys(current).length;
-        if (used >= (snapshot.allowance[power] ?? 0)) return o;
-        return { ...o, [power]: { ...current, [`WAIVE:${used}`]: "WAIVE" } };
-      });
+      setOrders((o) => waiveBuild(o, power, snapshot.allowance[power] ?? 0));
     },
     [snapshot],
   );
 
   const adjudicate = useCallback((): PhaseOutcome | null => {
     if (!game || !snapshot || snapshot.status !== "active") return null;
-    const outcome = game.process(game.normaliseOrders({ orders: flatten(orders) }));
+    const outcome = tidyOutcome(game.process(game.normaliseOrders({ orders: flatten(orders) })));
     setHistory((h) => [...h, { phase: snapshot.phase, state: snapshot.state, orders, outcome }]);
     setOrders({});
+    setResumed(null);
     bump();
     return outcome;
   }, [game, snapshot, orders]);
 
-  const replay = (records: PhaseRecord[], origin: State) => {
-    const g = Game.fromState(origin);
-    const rebuilt: PhaseRecord[] = [];
-    for (const r of records) {
-      const state = g.state();
-      const outcome = g.process(g.normaliseOrders({ orders: flatten(r.orders) }));
-      rebuilt.push({ phase: r.phase, state, orders: r.orders, outcome });
-    }
-    return { g, rebuilt };
-  };
-
   const undo = useCallback(() => {
     if (history.length === 0) return;
     const last = history.at(-1)!;
-    const { g, rebuilt } = replay(history.slice(0, -1), history[0]!.state);
-    setGame(g);
-    setHistory(rebuilt);
+    const rebuilt = replay(history.slice(0, -1), history[0]!.state);
+    setGame(rebuilt.game);
+    setHistory(rebuilt.history);
     setOrders(last.orders);
     bump();
   }, [history]);
@@ -223,47 +286,62 @@ export function useSandbox(): Sandbox | null {
     setGame(new Game());
     setHistory([]);
     setOrders({});
+    setResumed(null);
+    clearSave();
     bump();
   }, []);
 
   const exportSaved = useCallback(() => game?.toSaved("cabal-sandbox") ?? "", [game]);
 
-  const importSaved = useCallback((json: string) => {
-    const saved = JSON.parse(json) as { phases: { name: string; state: State; orders: Record<string, string[]> }[] };
-    const g = Game.fromSaved(json);
-    const records: PhaseRecord[] = saved.phases.slice(0, g.historyLength()).map((p, i) => ({
-      phase: p.name,
-      state: p.state,
-      orders: toBook(p.orders, phaseKind(p.name)),
-      outcome: g.outcome(i),
-    }));
-    setGame(g);
-    setHistory(records);
-    setOrders({});
-    bump();
+  const openSaved = useCallback((json: string): OpenedGame => {
+    const loaded = loadSaved(json);
+    return {
+      phase: loaded.game.phase(),
+      resolved: loaded.history.length,
+      load: () => {
+        setGame(loaded.game);
+        setHistory(loaded.history);
+        setOrders({});
+        setResumed(null);
+        bump();
+      },
+    };
   }, []);
 
-  if (!board || !game || !snapshot) return null;
+  const dismissResumed = useCallback(() => setResumed(null), []);
+  const noteActive = useCallback((power: string) => setActive(power), []);
+
+  if (error) return { status: "error", error, retry };
+  if (!board || !game || !snapshot) return { status: "loading" };
   return {
-    board,
-    phase: snapshot.phase,
-    kind: snapshot.kind,
-    status: snapshot.status,
-    state: snapshot.state,
-    pieces,
-    legal: snapshot.legal,
-    powers,
-    orders,
-    history,
-    setOrder,
-    removeOrder,
-    clearOrders,
-    holdAll,
-    waive,
-    adjudicate,
-    undo,
-    reset,
-    exportSaved,
-    importSaved,
+    status: "ready",
+    sandbox: {
+      board,
+      phase: snapshot.phase,
+      kind: snapshot.kind,
+      status: snapshot.status,
+      state: snapshot.state,
+      pieces,
+      legal: snapshot.legal,
+      allowance: snapshot.allowance,
+      powers,
+      orders,
+      history,
+      units,
+      resumed,
+      dismissResumed,
+      resumedActive,
+      setOrder,
+      removeOrder,
+      clearOrders,
+      holdAll,
+      waive,
+      adjudicate,
+      undo,
+      reset,
+      exportSaved,
+      openSaved,
+      noteActive,
+    },
   };
 }

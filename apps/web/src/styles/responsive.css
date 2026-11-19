@@ -1,0 +1,537 @@
+/*
+ * Narrow and touch screens. Loaded last so it can override any feature sheet.
+ *
+ *   up to 1000px wide   the board fills the first screen and the sidebar becomes a sheet
+ *                       docked to the bottom, with the phase's main action always in reach
+ *   up to 640px wide    the top bar's links fold into a menu
+ *   short and wide      (a phone on its side) board and sidebar sit side by side
+ *   coarse pointers     every control is at least 44px
+ */
+
+/* ---------------------------------------------------------------- board first, orders in a sheet */
+
+@media (max-width: 1000px) {
+  .topbar {
+    height: var(--topbar-h);
+    padding-block: 0;
+  }
+
+  .table {
+    display: block;
+  }
+
+  .board-wrap {
+    padding: 0 0 10px;
+  }
+
+  .stage {
+    display: flex;
+    flex-direction: column;
+    height: calc(100dvh - var(--topbar-h) - var(--sheet-h) - env(safe-area-inset-bottom, 0px));
+    min-height: 320px;
+  }
+
+  .board-frame {
+    flex: 1 1 0;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    aspect-ratio: auto;
+    border-width: 0 0 1px;
+    box-shadow: none;
+  }
+
+  /* The hint sits against the map, the tools under the thumb. Two lines are reserved so the
+     map does not jump as the hint changes. */
+  .toolbar {
+    flex: none;
+    padding: 6px 10px 8px;
+    gap: 6px;
+  }
+
+  .toolbar .hint {
+    order: -1;
+    flex: 1 0 100%;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    min-height: 2.9em;
+    margin: 0;
+  }
+
+  .choices,
+  .board-text {
+    padding-inline: 10px;
+  }
+
+  .resume {
+    top: 10px;
+    left: 10px;
+    right: 62px;
+    max-width: calc(100% - 72px);
+  }
+
+  .sidebar {
+    position: fixed;
+    z-index: var(--z-sheet);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-height: calc(100dvh - var(--topbar-h) - 48px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    border-left: 0;
+    border-top: 2px solid var(--ink);
+  }
+
+  .sheet-bar {
+    flex: none;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "title toggle" "note toggle";
+    align-items: center;
+    column-gap: 12px;
+    width: 100%;
+    min-height: 48px;
+    padding: 5px 14px 4px;
+    border: 0;
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .sheet-title {
+    grid-area: title;
+    font-family: var(--font-display);
+    font-size: 15px;
+    line-height: 1.15;
+    text-transform: uppercase;
+  }
+
+  .sheet-note {
+    grid-area: note;
+    color: var(--ink-3);
+    font-size: var(--text-sm);
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sheet-chevron {
+    grid-area: toggle;
+    padding: 5px 10px;
+    border: 1px solid var(--ink);
+    border-radius: var(--radius);
+    font-size: var(--text-md);
+    font-weight: 550;
+  }
+
+  .sheet-bar[aria-expanded="true"] .sheet-chevron {
+    box-shadow: inset 0 -2px 0 var(--brass);
+  }
+
+  .sheet-body {
+    display: none;
+  }
+
+  .sidebar[data-open="true"] .sheet-body {
+    display: block;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* The handle already says the season and year. */
+  .sidebar .phase-title {
+    display: none;
+  }
+
+  .sidebar .phase-header {
+    padding-top: 10px;
+  }
+
+  .sidebar .phase-meta {
+    margin-top: 0;
+  }
+
+  .sidebar .actions {
+    flex: none;
+    padding: 8px 14px;
+    border-bottom: 0;
+  }
+
+  .sidebar .actions .btn.primary {
+    min-height: 48px;
+  }
+
+  .sidebar .game-tools {
+    display: none;
+  }
+
+  .sidebar[data-open="true"] .game-tools {
+    display: grid;
+    flex: none;
+    grid-template-columns: repeat(4, 1fr);
+    padding: 0 14px 8px;
+    border-bottom: 0;
+  }
+
+  .sidebar .game-tools .btn.small {
+    padding-inline: 4px;
+  }
+
+  /* Leave room under the page for the docked sheet. */
+  .app[data-route="sandbox"] .footer {
+    padding-bottom: calc(var(--sheet-h) + env(safe-area-inset-bottom, 0px) + 16px);
+  }
+}
+
+/* ---------------------------------------------------------------- top bar menu */
+
+@media (max-width: 640px) {
+  .topbar {
+    position: relative;
+    justify-content: space-between;
+    gap: 14px;
+    padding-inline: 14px 6px;
+  }
+
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--hit);
+    padding: 0 12px;
+    opacity: 1;
+  }
+
+  .nav-toggle[aria-expanded="true"] {
+    box-shadow: inset 0 -2px 0 var(--brass);
+    border-radius: 0;
+  }
+
+  /* The links fold into a panel under the bar, opened with the Menu button. */
+  .topbar nav {
+    display: none;
+    position: absolute;
+    z-index: var(--z-topbar);
+    top: 100%;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    padding: 4px 0 8px;
+    background: var(--ink);
+    /* The vermilion rule under the bar is above this panel; it gets a quiet edge of its own. */
+    border-bottom: 3px solid var(--ink-3);
+  }
+
+  .topbar nav[data-open="true"] {
+    display: flex;
+  }
+
+  /* The static pages have no script, so no menu: their links wrap into a row under the mark. */
+  .topbar.static {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 0;
+    padding: 6px 6px 4px 14px;
+  }
+
+  .topbar.static nav {
+    display: flex;
+    position: static;
+    flex: 1 0 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-left: -12px;
+    padding: 0;
+    border: 0;
+  }
+
+  .topbar.static nav > * {
+    padding: 0 12px;
+  }
+
+  .topbar nav > * {
+    display: flex;
+    align-items: center;
+    min-height: var(--hit);
+    padding: 0 18px;
+    opacity: 1;
+    text-align: left;
+    border-radius: 0;
+    white-space: nowrap;
+  }
+
+  .topbar nav .nav-end {
+    margin-left: 0;
+  }
+
+  .sidebar .phase-title {
+    font-size: 22px;
+  }
+
+  .footer-links {
+    margin-left: 0;
+  }
+
+  .status-card {
+    padding: var(--space-6) var(--space-5) var(--space-5);
+  }
+
+  .status-page {
+    padding: var(--space-6) var(--space-3);
+    align-items: start;
+  }
+}
+
+/* ---------------------------------------------------------------- a phone on its side */
+
+@media (max-height: 520px) and (min-width: 560px) {
+  :root {
+    --topbar-h: 46px;
+  }
+
+  .topbar {
+    height: var(--topbar-h);
+    padding-block: 0;
+  }
+
+  .table {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(250px, 34%);
+    align-items: stretch;
+  }
+
+  .board-wrap {
+    padding: 0;
+    min-width: 0;
+  }
+
+  .stage {
+    display: flex;
+    flex-direction: column;
+    height: calc(100dvh - var(--topbar-h));
+    min-height: 240px;
+  }
+
+  .board-frame {
+    flex: 1 1 0;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    aspect-ratio: auto;
+    border-width: 0 1px 1px 0;
+    box-shadow: none;
+  }
+
+  /* One line each, to leave the map every pixel of height it can have. */
+  .toolbar {
+    flex: none;
+    flex-wrap: nowrap;
+    padding: 4px 8px;
+    gap: 4px;
+    overflow-x: auto;
+  }
+
+  .toolbar .hint {
+    order: 0;
+    flex: 1 1 140px;
+    min-width: 140px;
+    min-height: 0;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    font-size: var(--text-sm);
+    line-height: 1.25;
+  }
+
+  /* The sidebar scrolls as one column; the phase's main action stays pinned to its foot. */
+  .sidebar {
+    position: sticky;
+    top: 0;
+    display: block;
+    height: calc(100dvh - var(--topbar-h));
+    max-height: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: 0;
+    border-top: 0;
+    border-left: 1px solid var(--rule);
+  }
+
+  .sheet-bar {
+    display: none;
+  }
+
+  .sheet-body,
+  .sidebar[data-open="true"] .sheet-body {
+    display: block;
+    overflow: visible;
+    min-height: calc(100dvh - var(--topbar-h) - 61px);
+  }
+
+  .sidebar .phase-header {
+    padding: 8px 14px;
+  }
+
+  .sidebar .phase-title {
+    display: block;
+    font-size: 20px;
+  }
+
+  .sidebar .phase-meta {
+    margin-top: 6px;
+  }
+
+  .sidebar .actions {
+    position: sticky;
+    bottom: 0;
+    padding: 6px 10px;
+    border-top: 1px solid var(--ink);
+    border-bottom: 0;
+    background: var(--paper);
+  }
+
+  .sidebar .game-tools,
+  .sidebar[data-open="true"] .game-tools {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--rule);
+    border-bottom: 0;
+  }
+
+  .app[data-route="sandbox"] .footer {
+    padding-bottom: 12px;
+  }
+}
+
+/* ---------------------------------------------------------------- touch: every target 44px */
+
+@media (pointer: coarse), (max-width: 1000px) {
+  .tool kbd {
+    display: none;
+  }
+
+  /* On a phone the docked sheet covers the bottom of the window. */
+  .tool.choice {
+    scroll-margin-bottom: calc(var(--sheet-h) + 12px);
+  }
+
+  .tool {
+    min-height: var(--hit);
+    padding: 0 12px;
+  }
+
+  .zoom button,
+  .pan button {
+    width: var(--hit);
+    height: var(--hit);
+    font-size: 18px;
+  }
+
+  /* Seven 44px buttons would cover a good part of a small map. The four arrows are for
+     players who cannot drag, so they wait behind one button until they are asked for. */
+  .zoom .pan-toggle {
+    display: grid;
+    place-items: center;
+    padding: 0;
+  }
+
+  .pan:not([data-open="true"]) {
+    display: none;
+  }
+
+  .btn,
+  .btn.small {
+    min-height: var(--hit);
+  }
+
+  .picker button {
+    min-height: var(--hit);
+    padding: 0 10px;
+  }
+
+  .stepper button {
+    flex: none;
+    width: var(--hit);
+    min-height: var(--hit);
+  }
+
+  .stepper select {
+    min-height: var(--hit);
+    font-size: 16px; /* below this iOS zooms the page when the control is focused */
+  }
+
+  table.powers tbody th button {
+    min-height: var(--hit);
+  }
+
+  .orders .row {
+    min-height: 48px;
+  }
+
+  .orders .row .remove {
+    width: var(--hit);
+    height: var(--hit);
+    font-size: 20px;
+  }
+
+  .orders .row .via {
+    min-height: var(--hit);
+    padding: 0 10px;
+  }
+
+  .board-text summary,
+  .import-error summary {
+    display: flex;
+    align-items: center;
+    min-height: var(--hit);
+  }
+
+  .brand {
+    min-height: var(--hit);
+  }
+
+  .topbar nav > * {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--hit);
+  }
+
+  .footer a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--hit);
+    min-width: var(--hit);
+  }
+
+  .footer-links {
+    gap: 0 14px;
+  }
+
+  dialog.how .icon {
+    width: var(--hit);
+    height: var(--hit);
+  }
+
+  .setting {
+    align-items: center;
+    min-height: var(--hit);
+  }
+
+  .setting input {
+    width: 24px;
+    height: 24px;
+    margin: 0;
+  }
+}
