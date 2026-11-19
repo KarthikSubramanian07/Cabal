@@ -80,6 +80,12 @@ export function duration(minutes: number): string {
 
 const DAY_S = 24 * 3600;
 
+/** Why a game was abandoned, in a player's words, by the room's reason code. */
+const ABANDONED_BECAUSE: Record<string, string> = {
+  no_orders: "Nobody ordered for three movement phases.",
+  adjudication_failed: "The server could not resolve a phase, so the game was stopped.",
+};
+
 export const notices = {
   started: (gameId: string, playerId: string, power: PowerName, phase: string): Notice => ({
     kind: "started",
@@ -125,12 +131,12 @@ export const notices = {
     urgency: "normal",
     ttlSeconds: DAY_S,
   }),
-  finished: (gameId: string, playerIds: string[], result: "solo" | "draw" | "abandoned", winners: PowerName[]): Notice => ({
+  finished: (gameId: string, playerIds: string[], result: "solo" | "draw" | "abandoned", winners: PowerName[], reason: string | null = null): Notice => ({
     kind: "finished",
     gameId,
     playerIds,
     title: result === "solo" && winners[0] ? `${powerName(winners[0])} takes Europe` : result === "draw" ? "The game ends in a draw" : "The game was abandoned",
-    body: result === "abandoned" ? `Game ${gameId}. Nobody ordered for three movement phases.` : `Game ${gameId}. The final board and the ledger are in.`,
+    body: result === "abandoned" ? `Game ${gameId}. ${ABANDONED_BECAUSE[reason ?? ""] ?? "It ended without a result."}` : `Game ${gameId}. The final board and the ledger are in.`,
     topic: `${gameId}-finished`,
     urgency: "normal",
     ttlSeconds: 7 * DAY_S,

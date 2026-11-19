@@ -2962,7 +2962,7 @@ export class GameRoom extends DurableObject<Env> {
     // A lobby that never started has nothing to report.
     if (reason !== "lobby_expired") {
       const away = this.awayPlayers().map((seat) => seat.player_id!);
-      if (away.length > 0) this.notices.push(notices.finished(meta.id, away, result, winners));
+      if (away.length > 0) this.notices.push(notices.finished(meta.id, away, result, winners, reason));
     }
   }
 

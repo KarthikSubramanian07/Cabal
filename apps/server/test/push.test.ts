@@ -288,6 +288,15 @@ describe("what a room tells players who are away", () => {
   });
 });
 
+describe("what a notice says", () => {
+  it("gives the reason a game was abandoned, never a reason it was not", () => {
+    expect(notices.finished("ABCDEF", ["p"], "abandoned", [], "no_orders").body).toBe("Game ABCDEF. Nobody ordered for three movement phases.");
+    expect(notices.finished("ABCDEF", ["p"], "abandoned", [], "adjudication_failed").body).toBe("Game ABCDEF. The server could not resolve a phase, so the game was stopped.");
+    expect(notices.finished("ABCDEF", ["p"], "abandoned", [], "something_new").body).toBe("Game ABCDEF. It ended without a result.");
+    expect(notices.finished("ABCDEF", ["p"], "solo", ["FRANCE"], "solo")).toMatchObject({ title: "France takes Europe", body: "Game ABCDEF. The final board and the ledger are in." });
+  });
+});
+
 describe("delivery", () => {
   it("forgets a subscription the push service says is gone, and counts other failures", async () => {
     const ann = await newPlayer();
