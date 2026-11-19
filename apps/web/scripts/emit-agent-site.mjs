@@ -80,8 +80,9 @@ function mdToHtmlBody(markdown) {
 /** The app's stylesheet, as Vite named it: the trust pages share its tokens, fonts and top bar. */
 function appStylesheet() {
   const html = readFileSync(join(dist, "index.html"), "utf8");
-  const href = html.match(/<link rel="stylesheet"[^>]*href="([^"]+\.css)"/)?.[1];
-  if (!href) throw new Error("dist/index.html has no stylesheet link; cannot style the trust pages");
+  // The app shell inlines its stylesheet (vite.config.ts) and records where the file is.
+  const href = html.match(/<style data-href="([^"]+\.css)"/)?.[1] ?? html.match(/<link rel="stylesheet"[^>]*href="([^"]+\.css)"/)?.[1];
+  if (!href) throw new Error("dist/index.html names no stylesheet; cannot style the trust pages");
   return href;
 }
 

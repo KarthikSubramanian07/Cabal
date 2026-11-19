@@ -89,3 +89,37 @@ kbd {
 .skip-link:focus {
   transform: none;
 }
+
+/*
+ * Before the app mounts, #root holds the page's text for crawlers and readers without
+ * script (scripts/emit-agent-site.mjs). It is set in system faces on purpose: nothing in
+ * it waits for a web font, so nothing shifts when one arrives. The bar above it stands
+ * where the app's top bar will be.
+ */
+#root:has(> .agent-static)::before {
+  content: "";
+  display: block;
+  height: 49px;
+  background: var(--ink);
+  border-bottom: 3px solid var(--vermilion);
+}
+
+.agent-static {
+  width: min(100%, 44rem);
+  margin: 0 auto;
+  padding: 28px 20px;
+  font-family: system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.agent-static h1 {
+  margin: 0 0 12px;
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.agent-static h2 {
+  margin: 24px 0 6px;
+  font-size: 17px;
+}
