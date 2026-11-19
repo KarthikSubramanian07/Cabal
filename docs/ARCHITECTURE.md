@@ -51,7 +51,8 @@ cabal/
   crates/
     cabal-engine/    pure Rust: geo, orders, parser, resolver, phases, legality, json, pledges
     cabal-wasm/      wasm-bindgen + tsify bindings, generates TypeScript types
-    cabal-cli/       `cabal` CLI: datc, explain, legal, replay, version
+    cabal-bot/       the heuristic player: value maps, greedy planner, search over the real adjudicator
+    cabal-cli/       `cabal` CLI: datc, explain, legal, replay, arena, version
   packages/
     engine/          @cabal/engine  npm wrapper around the wasm-pack output
     protocol/        @cabal/protocol  zod schemas for WebSocket and HTTP messages
@@ -190,7 +191,7 @@ The WebSocket protocol is specified in [PROTOCOL.md](PROTOCOL.md) and enforced w
 
 ## 7. Agents (`packages/agents`)
 
-AI seats always play and never block a phase. The default brain is a deterministic heuristic bot written in Rust (`crates/cabal-bot`, exposed through `@cabal/engine`) that runs inside the `GameRoom`: no cost, no latency, no network. A game can opt in to Claude brains (`settings.aiBrain: 'claude'`) when `ANTHROPIC_API_KEY` is set; their turns go through the `cabal-agent-turns` queue (dead letters to `cabal-agent-turns-dlq`) under a hard per-game spend cap, and any failure falls back to the bot. A game with no active human seats ends instead of playing itself forever. Status: being built in phase 1 (issues #8 and #11); on `main` today an AI or abandoned seat holds.
+AI seats always play and never block a phase. The default brain is a deterministic heuristic bot written in Rust (`crates/cabal-bot`, exposed through `@cabal/engine`) that runs inside the `GameRoom`: no cost, no latency, no network. A game can opt in to Claude brains (`settings.aiBrain: 'claude'`) when `ANTHROPIC_API_KEY` is set; their turns go through the `cabal-agent-turns` queue (dead letters to `cabal-agent-turns-dlq`) under a hard per-game spend cap, and any failure falls back to the bot. A game with no active human seats ends instead of playing itself forever. Status: the bot, its WebAssembly export (`botOrders`) and the native arena exist and are described in [BOT.md](BOT.md); wiring it into the `GameRoom` and the Claude path are being built in phase 1 (issues #8 and #11), so on `main` today an AI or abandoned seat still holds.
 
 A Claude agent (`@cabal/agents`) is just another client. It receives the same state and message stream, builds a narrative prompt (board story, legal orders, diary, relationships), asks Claude for reasoning plus structured output, validates orders against the legal list with a repair pass, and submits through the protocol. Pledges are first class: the agent can seal commitments and reads the trust ledger of opponents.
 
@@ -209,7 +210,7 @@ A Claude agent (`@cabal/agents`) is just another client. It receives the same st
 - `pnpm deploy:server` builds the engine and runs `wrangler deploy` for `apps/server`. Durable Object migrations are declared in `wrangler.jsonc`.
 - `pnpm deploy:all` does both (a bare `pnpm deploy` is a built-in pnpm command, not this script). Run it from an up to date `main` after CI is green.
 - CI (`.github/workflows/ci.yml`): Rust fmt, clippy, docs, tests and the DATC report; an adjudication benchmark gate; the wasm build with a gzip size budget; Node typecheck, lint, unit and workerd tests; Playwright; dependency and workflow audits; and a deploy dry run that bundles `cabal-server` with `wrangler deploy --dry-run` (no credentials) under a gzip size budget. The full deploy runbook is in [CONTRIBUTING.md](../CONTRIBUTING.md#deploying) and the decision in [ADR 0008](adr/0008-manual-wrangler-deploys.md).
-- Nightly (`stress.yml`): fuzzing, property tests with a larger case budget, and an AI arena game.
+- Nightly (`stress.yml`): fuzzing, property tests with a larger case budget, and a bot arena: 300 seeded games between the three levels of the heuristic bot (`cabal arena`), failing on any illegal order, incomplete decision, panic, replay divergence or strength-order regression, with the summary and every saved game uploaded as an artifact. No model is called and no secret is needed.
 
 ## 10. Security and fairness
 
