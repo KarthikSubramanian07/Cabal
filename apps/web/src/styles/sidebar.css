@@ -145,6 +145,96 @@
   background: var(--ink-2);
 }
 
+/* The timeline the scrubber runs along: a tick per phase, a glyph where something happened,
+   the year under each spring. Drawn behind the slider to the same geometry (ReplayScrubber.tsx). */
+.timeline {
+  --scrub-h: 26px;
+  --track-y: calc(12px + var(--scrub-h) / 2);
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  padding: 12px 0 12px;
+}
+
+.timeline .scrubber {
+  position: relative;
+  z-index: 1;
+  height: var(--scrub-h);
+}
+
+.timeline-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.timeline-phase {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+}
+
+.timeline-phase .tick {
+  position: absolute;
+  left: -0.5px;
+  top: calc(var(--track-y) - 6px);
+  width: 1px;
+  height: 12px;
+  background: var(--ink-4);
+}
+
+.timeline-phase.kind-M .tick {
+  height: 14px;
+  top: calc(var(--track-y) - 7px);
+  background: var(--ink-2);
+}
+
+.timeline-phase .glyph {
+  position: absolute;
+  left: -4px;
+  top: calc(var(--track-y) - 23px);
+  fill: none;
+  stroke: var(--ink-2);
+  stroke-width: 1.5;
+  stroke-linecap: square;
+  overflow: visible;
+}
+
+.timeline-phase .glyph.dislodged,
+.timeline-phase .glyph.eliminated {
+  stroke: var(--vermilion-deep);
+}
+
+.timeline-phase .glyph.captures {
+  fill: var(--brass);
+  stroke: var(--brass-ink);
+  stroke-width: 1;
+}
+
+.timeline-phase .glyph.builds {
+  fill: var(--ink-2);
+  stroke-width: 1;
+}
+
+.timeline-phase .glyph.ended {
+  fill: var(--ink);
+  stroke: var(--ink);
+  stroke-width: 1;
+}
+
+.timeline-phase .year {
+  position: absolute;
+  top: calc(var(--track-y) + 8px);
+  left: 0;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--ink-3);
+}
+
 /* The scrubber: a ruled track filled with brass up to the phase on the board, a square seal for a thumb. */
 .scrubber {
   flex: 1;

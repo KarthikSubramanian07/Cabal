@@ -1,4 +1,6 @@
-import type { CSSProperties } from "react";
+import { type CSSProperties, useMemo } from "react";
+import { ReplayScrubber } from "../motion/ReplayScrubber.jsx";
+import { timeline } from "../motion/timeline.js";
 import type { PhaseRecord, PowerSummary } from "../game/useSandbox.js";
 import { type PhaseKind, describePhase, parseOrder, titleCase } from "../game/notation.js";
 import { receiptFor } from "../game/receipts.js";
@@ -301,6 +303,7 @@ export function PhaseStepper({
   onPause: () => void;
   onSpeed: (speed: Speed) => void;
 }) {
+  const marks = useMemo(() => timeline(history), [history]);
   if (history.length === 0) return null;
   const index = viewing ?? history.length;
   const go = (i: number) => onView(i >= history.length ? null : Math.max(0, i));
@@ -342,17 +345,12 @@ export function PhaseStepper({
         </button>
       </div>
       <div className="stepper-row scrub">
-        <input
-          type="range"
-          className="scrubber"
-          min={0}
-          max={history.length}
-          step={1}
-          value={index}
-          onChange={(e) => go(Number(e.target.value))}
-          aria-label="Scrub through the game"
-          aria-valuetext={name(index)}
-          style={{ "--at": `${(index / history.length) * 100}%` } as CSSProperties}
+        <ReplayScrubber
+          marks={marks}
+          index={index}
+          onSeek={go}
+          liveLabel={name(history.length)}
+          phaseLabel={(m) => `${phaseLine(m.phase)} results`}
         />
         <div className="speeds" role="group" aria-label="Replay speed">
           {SPEEDS.map((s) => (
