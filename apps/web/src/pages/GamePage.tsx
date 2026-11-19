@@ -125,7 +125,7 @@ function JoinPanel({ view, selected, onJoin }: { view: RoomView; selected: Power
       <h2>Take a seat</h2>
       <p className="fine">
         Choose an open seat above, or leave it to chance.{" "}
-        {player ? `You sit as ${player.handle}.` : "You choose a handle as you sit down."}
+        {player ? `You join as ${player.handle}.` : "You choose a handle as you sit down."}
       </p>
       <div className="join-row">
         <button type="submit" className="btn brass big" disabled={busy}>
