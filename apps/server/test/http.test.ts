@@ -6,7 +6,7 @@ import { version as engineVersion } from "@cabal/engine";
 import worker from "../src/index.js";
 import { gameIndex } from "../src/game-index.js";
 import { MIGRATIONS } from "../src/registry.js";
-import { Client, create, deadlineIn, join, nextIp, registry, serverEnv, start, summary, until, untilIndexed } from "./helpers.js";
+import { Client, D1_SCHEMA, create, deadlineIn, join, nextIp, serverEnv, start, summary, until, untilIndexed } from "./helpers.js";
 
 const get = (path: string) => SELF.fetch(`http://cabal${path}`, { headers: { "cf-connecting-ip": nextIp() } });
 const live = async (status: "open" | "active") => ((await (await get(`/api/games?status=${status}&limit=100`)).json()) as { games: GameListing[] }).games;
@@ -102,7 +102,7 @@ describe("listing games", () => {
     expect((await live("open")).some((g) => g.gameId === "STALE1")).toBe(false);
     // A refresh that arrives after the game was recorded must not resurrect it.
     const settings = (await summary(pub.gameId)).settings;
-    await registry().recordGame({
+    await index.recordGame({
       gameId: "ENDED1", result: "draw", reason: "vote", winners: [], scores: {}, settings, cluster: "standard:full:async",
       phaseCount: 1, createdAt: 1, finishedAt: 2, ledger: {}, seats: [],
     });
@@ -116,7 +116,13 @@ describe("listing games", () => {
 describe("health and failure", () => {
   it("reports the engine version, the build and whether the index answers", async () => {
     const health = HealthResponse.parse(await (await get("/health")).json());
-    expect(health).toMatchObject({ ok: true, protocol: PROTOCOL_VERSION, engine: engineVersion(), registry: { reachable: true, schema: MIGRATIONS.at(-1)!.version } });
+    expect(health).toMatchObject({
+      ok: true,
+      protocol: PROTOCOL_VERSION,
+      engine: engineVersion(),
+      registry: { reachable: true, schema: MIGRATIONS.at(-1)!.version },
+      index: { backend: "d1", reachable: true, schema: D1_SCHEMA },
+    });
     // Asked again at once, it answers from memory: the index is probed at most once every few seconds.
     let probes = 0;
     const counting = { idFromName: () => "id", get: () => ({ schemaVersion: async () => (probes++, 9) }) } as never;
@@ -138,6 +144,14 @@ describe("health and failure", () => {
     expect(((await down.json()) as HealthResponse).registry).toEqual({ reachable: false, schema: null });
     const none = await worker.fetch(new Request("http://cabal/health"), { ...serverEnv, REGISTRY: undefined as never });
     expect(((await none.json()) as HealthResponse).registry.reachable).toBe(false);
+    // The same for the D1 index; without one the Registry serves the games index, as before D1.
+    const d1Down = await worker.fetch(new Request("http://cabal/health"), {
+      ...serverEnv,
+      DB: { prepare: () => ({ first: async () => Promise.reject(new Error("down")) }) } as never,
+    });
+    expect(((await d1Down.json()) as HealthResponse).index).toEqual({ backend: "d1", reachable: false, schema: null });
+    const noD1 = await worker.fetch(new Request("http://cabal/health"), { ...serverEnv, DB: undefined as never });
+    expect(((await noD1.json()) as HealthResponse).index).toEqual({ backend: "registry", reachable: true, schema: MIGRATIONS.at(-1)!.version });
     error.mockRestore();
   });
 

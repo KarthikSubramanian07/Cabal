@@ -686,6 +686,8 @@ export const HealthResponse = z.object({
   build: z.string(),
   /** The Registry Durable Object (the Claude budget, and the index from before D1). */
   registry: z.object({ reachable: z.boolean(), schema: z.number().int().nullable() }),
+  /** The cross-game index: `d1` in production, `registry` where no D1 database is bound. */
+  index: z.object({ backend: z.enum(["d1", "registry", "none"]), reachable: z.boolean(), schema: z.number().int().nullable() }),
   time: z.number().int(),
 });
 export type HealthResponse = z.infer<typeof HealthResponse>;

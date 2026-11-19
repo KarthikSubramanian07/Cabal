@@ -5,6 +5,7 @@ import type { GameRecord, GameSettings, ServerMessage } from "@cabal/protocol";
 import { botOrders } from "../src/bot.js";
 import { botRuntime } from "../src/brain.js";
 import type { Env as ServerEnv } from "../src/env.js";
+import { gameIndex } from "../src/game-index.js";
 import type { GameRoom } from "../src/room.js";
 import { peacefulOrders } from "./peaceful-bot.js";
 
@@ -199,8 +200,14 @@ export const untilPhase = (gameId: string, want: string | ((phase: string) => bo
 
 export const registry = () => serverEnv.REGISTRY!.get(serverEnv.REGISTRY!.idFromName("global"));
 
+/** The number of the newest file in migrations/: the schema version D1 reports. */
+export const D1_SCHEMA = Number.parseInt((env as unknown as { TEST_MIGRATIONS: { name: string }[] }).TEST_MIGRATIONS.at(-1)!.name, 10);
+
+/** The deployment's games index (D1 in tests, as in production). */
+export const index = () => gameIndex(serverEnv)!;
+
 export const untilIndexed = (gameId: string) =>
-  until<GameRecord>(async () => registry().getGame(gameId), `registry record for ${gameId}`);
+  until<GameRecord>(async () => index().getGame(gameId), `index record for ${gameId}`);
 
 type Frame<T extends ServerMessage["t"]> = Extract<ServerMessage, { t: T }>;
 

@@ -30,7 +30,7 @@ import {
 import { consumeTurns } from "./agent-consumer.js";
 import { engineReady, version as engineVersion } from "./engine.js";
 import type { AgentTurn, Env } from "./env.js";
-import { gameIndex } from "./game-index.js";
+import { copyRegistryOnce, gameIndex, indexBackend, registrySchema } from "./game-index.js";
 import { describeError, log } from "./log.js";
 import { gameCode, randomId } from "./tokens.js";
 
@@ -69,36 +69,45 @@ export function buildId(env: Env): string {
 
 /** `/health` asks the index at most this often per isolate; in between it answers from memory. */
 const HEALTH_CACHE_MS = 5000;
-let probed: { at: number; schema: number | null; registry: unknown } | null = null;
+let probed: { at: number; index: number | null; registry: number | null; stores: [unknown, unknown] } | null = null;
+
+/** A probe that gives up after `HEALTH_TIMEOUT_MS`: null when unreachable, logged as such. */
+async function probe(what: string, ask: () => Promise<number | null>): Promise<number | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      ask(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timed out")), HEALTH_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    log("health_index_unreachable", { store: what, ...describeError(error) }, "error");
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function health(env: Env): Promise<HealthResponse> {
   await engineReady();
-  const index = gameIndex(env);
-  let schema: number | null = null;
-  const fresh = probed !== null && probed.registry === env.REGISTRY && Date.now() - probed.at < HEALTH_CACHE_MS;
-  if (fresh) schema = probed!.schema;
-  if (index && !fresh) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      schema = await Promise.race([
-        index.schemaVersion(),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error("timed out")), HEALTH_TIMEOUT_MS);
-        }),
-      ]);
-    } catch (error) {
-      log("health_index_unreachable", describeError(error), "error");
-    } finally {
-      clearTimeout(timer);
-    }
-    probed = { at: Date.now(), schema, registry: env.REGISTRY };
+  const backend = indexBackend(env);
+  const fresh = probed !== null && probed.stores[0] === env.DB && probed.stores[1] === env.REGISTRY && Date.now() - probed.at < HEALTH_CACHE_MS;
+  if (!fresh) {
+    const index = gameIndex(env);
+    const [indexSchema, registry] = await Promise.all([
+      index ? probe(backend, () => index.schemaVersion()) : Promise.resolve(null),
+      env.REGISTRY ? probe("registry", () => registrySchema(env)) : Promise.resolve(null),
+    ]);
+    probed = { at: Date.now(), index: indexSchema, registry, stores: [env.DB, env.REGISTRY] };
   }
   return {
     ok: true,
     protocol: PROTOCOL_VERSION,
     engine: engineVersion(),
     build: buildId(env),
-    registry: { reachable: schema !== null, schema },
+    registry: { reachable: probed!.registry !== null, schema: probed!.registry },
+    index: { backend, reachable: probed!.index !== null, schema: probed!.index },
     time: Date.now(),
   };
 }
@@ -242,8 +251,11 @@ function routeLabel(request: Request): string {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     try {
+      // The games index moved from the Registry to D1: its rows are copied across once, in the background.
+      const copy = copyRegistryOnce(env);
+      if (copy && ctx) ctx.waitUntil(copy.catch((error) => log("registry_copy_failed", describeError(error), "error")));
       return await route(request, env);
     } catch (error) {
       // The error boundary: whatever broke, the caller gets JSON with CORS and the log gets one line.

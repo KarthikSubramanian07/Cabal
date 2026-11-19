@@ -1,12 +1,12 @@
 /**
- * Registry: the one global index of games, a singleton SQLite-backed Durable Object
- * (`env.REGISTRY`, `idFromName("global")`).
+ * Registry: a singleton SQLite-backed Durable Object (`env.REGISTRY`, `idFromName("global")`).
  *
- * Game rooms hand their final summary here when a game is finished or abandoned, and public games
- * keep a live listing here while they are open or running. Nothing calls these methods directly:
- * callers go through the `GameIndex` port (game-index.ts), of which this class is the SQLite
- * adapter. The schema lives in numbered SQL files under `migrations/` and is brought up to date in
- * the constructor, so a deploy never needs a separate migration step.
+ * It keeps the deployment-wide Claude budget, where admitting a game must be one serial step: two
+ * games asking at once may never both take the last place. It also holds the games index from
+ * before the index moved to D1 (d1-index.ts copies it across once), and serves that index where no
+ * D1 database is bound. Nothing calls these methods directly: callers go through the `GameIndex`
+ * port (game-index.ts). The schema lives in numbered SQL files under `migrations/` and is brought
+ * up to date in the constructor. The Registry stops at migration 5; later files are D1 only.
  */
 import { DurableObject } from "cloudflare:workers";
 import { GameListing, GameRecord } from "@cabal/protocol";
@@ -265,6 +265,19 @@ export class Registry extends DurableObject<Env> {
           limit,
         );
     return rows.toArray().map(toRecord);
+  }
+
+  // ---------- the one-time copy into D1 ----------
+
+  /** Every recorded game, public or not, in pages ordered by code: what D1 copies across once. */
+  exportGames(after: string, limit: number): GameRecord[] {
+    const n = Math.max(1, Math.min(100, Math.floor(limit)));
+    return this.sql.exec<GameRow>("SELECT * FROM games_index WHERE game_id > ? ORDER BY game_id LIMIT ?", after, n).toArray().map(toRecord);
+  }
+
+  /** Every live listing, stale or not: D1 applies its own freshness rules when it lists them. */
+  exportListings(): GameListing[] {
+    return this.sql.exec<LiveRow>("SELECT * FROM games_live ORDER BY game_id").toArray().map(toListing);
   }
 
   // ---------- the deployment-wide Claude budget ----------
