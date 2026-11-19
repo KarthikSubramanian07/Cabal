@@ -65,6 +65,8 @@ export interface UnitTrack {
   kind: "A" | "F";
   /** Where the piece stands once the phase has played. */
   end: Point;
+  /** The region it ends on (or left from, for a piece that is gone). */
+  region: string;
   /** Drawn as dislodged once the phase has played. */
   dislodged: boolean;
   /** When a piece that ends dislodged turns so (its dashed vermilion outline). */
@@ -349,6 +351,7 @@ function track(piece: Piece, later: Piece, role: Role, end: Point, frames: Frame
     power: piece.power,
     kind: piece.kind,
     end,
+    region: gone ? piece.region : later.region,
     dislodged: later.dislodged,
     gone,
     role,
