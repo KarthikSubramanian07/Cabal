@@ -3,20 +3,21 @@
  * dependably they order, their trust ledger (promises kept, broken and void across every game),
  * and their recent games, each with a link to its replay. Public: anyone may look anyone up.
  */
-import type { PlayerProfile } from "@cabal/protocol";
+import type { MyGame, PlayerProfile } from "@cabal/protocol";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { PageLoading } from "../app/PageLoading.jsx";
 import { StatusPage } from "../app/StatusPage.jsx";
 import { Link } from "../app/router.jsx";
 import { powerLabel } from "../lobby/terms.js";
 import { ApiError, api, failureText } from "../net/api.js";
+import { spacedCode } from "../net/code.js";
 import { useIdentity } from "../profile/Identity.jsx";
 import { PlayerSeal } from "../profile/ProfileMenu.jsx";
 import { RatingChart } from "../profile/RatingChart.jsx";
 import { readPlayer } from "../net/player.js";
 import { percent, ratingPath, reliabilityLine, resultWord, signed, trustLine, withOwnCodes } from "../profile/record.js";
 
-type Load = { kind: "loading" } | { kind: "missing" } | { kind: "failed"; message: string } | { kind: "ready"; profile: PlayerProfile };
+type Load = { kind: "loading" } | { kind: "missing" } | { kind: "failed"; message: string } | { kind: "ready"; profile: PlayerProfile; own: MyGame[] | null };
 
 function month(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { month: "long", year: "numeric" });
@@ -100,6 +101,53 @@ function Trust({ profile }: { profile: PlayerProfile }) {
   );
 }
 
+function OwnTables({ games }: { games: MyGame[] }) {
+  if (games.length === 0) return null;
+  return (
+    <section className="file-recent file-own" aria-labelledby="own-title">
+      <h2 id="own-title">Your tables</h2>
+      <p className="fine">Only you see this list: every table you sit at, listed or unlisted, on any device signed in to your account.</p>
+      <table className="ledger-table">
+        <caption className="sr-only">Your tables, most recently joined first</caption>
+        <thead>
+          <tr>
+            <th scope="col">Table</th>
+            <th scope="col">Power</th>
+            <th scope="col">State</th>
+            <th scope="col">
+              <span className="sr-only">Action</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {games.map((g) => (
+            <tr key={g.gameId}>
+              <th scope="row">{spacedCode(g.gameId)}</th>
+              <td data-label="Power">
+                <span className="power-mark" style={{ background: `var(--p-${g.power.toLowerCase()})` } as CSSProperties} aria-hidden="true" /> {powerLabel(g.power)}
+              </td>
+              <td data-label="State">
+                {g.status === "playing" ? "In play" : g.status === "left" ? "Seat handed on" : g.status === "abandoned" ? "Abandoned" : g.result === "solo" ? (g.score ? "Won" : "Lost") : "Drawn"}
+              </td>
+              <td className="action-cell">
+                {g.status === "playing" ? (
+                  <Link className="btn small" href={`/g/${g.gameId}`} aria-label={`Return to table ${spacedCode(g.gameId)}`}>
+                    Return
+                  </Link>
+                ) : (
+                  <Link className="btn small" href={`/replay/${g.gameId}`} aria-label={`Replay the game ${g.gameId}`}>
+                    Replay
+                  </Link>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 function Recent({ profile }: { profile: PlayerProfile }) {
   if (profile.recent.length === 0) {
     return (
@@ -167,15 +215,15 @@ export default function ProfilePage({ handle }: { handle: string }) {
     setLoad({ kind: "loading" });
     (async () => {
       const profile = await api.profile(handle);
-      // On their own record a player sees their unlisted games' codes too.
+      // On their own record a player also sees every table they sit at, listed or not.
       const me = readPlayer();
       if (me && me.id === profile.player.id) {
-        const mine = await api.myGames(me.secret).catch(() => []);
-        return { ...profile, recent: withOwnCodes(profile.recent, mine) };
+        const own = await api.myGames(me.secret).catch(() => [] as MyGame[]);
+        return { profile: { ...profile, recent: withOwnCodes(profile.recent, own) }, own };
       }
-      return profile;
+      return { profile, own: null };
     })().then(
-      (profile) => live && setLoad({ kind: "ready", profile }),
+      ({ profile, own }) => live && setLoad({ kind: "ready", profile, own }),
       (error: unknown) => {
         if (!live) return;
         if (error instanceof ApiError && error.status === 404) setLoad({ kind: "missing" });
@@ -263,6 +311,7 @@ export default function ProfilePage({ handle }: { handle: string }) {
         <Reliability profile={p} />
         <Trust profile={p} />
       </div>
+      {load.own ? <OwnTables games={load.own} /> : null}
       <Recent profile={p} />
     </main>
   );
