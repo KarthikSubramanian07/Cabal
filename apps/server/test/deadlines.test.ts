@@ -39,6 +39,13 @@ describe("room clock", () => {
     expect(nextAlarmAt(clock({ deadlineAt: 600_000, aiDueAt: 90_000 }))).toBe(90_000);
   });
 
+  it("wakes before the deadline to remind the players, but not while paused or retrying", () => {
+    expect(nextAlarmAt(clock({ deadlineAt: 86_400_000, reminderAt: 82_800_000 }))).toBe(82_800_000);
+    expect(nextAlarmAt(clock({ deadlineAt: 86_400_000, reminderAt: null }))).toBe(86_400_000);
+    expect(nextAlarmAt(clock({ status: "paused", deadlineAt: null, pausedUntil: 42_000_000, reminderAt: 1_000 }))).toBe(42_000_000);
+    expect(nextAlarmAt(clock({ deadlineAt: 1_000, retryAt: 6_000, reminderAt: 500 }))).toBe(6_000);
+  });
+
   it("lets an adjudication retry replace the deadline it missed", () => {
     expect(nextAlarmAt(clock({ deadlineAt: 1_000, retryAt: 6_000 }))).toBe(6_000);
   });

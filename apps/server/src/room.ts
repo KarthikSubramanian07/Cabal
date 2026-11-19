@@ -82,6 +82,7 @@ import {
 } from "./engine.js";
 import { gameIndex } from "./game-index.js";
 import { REQUEST_ID_HEADER, log, requestIdFrom, withLogContext } from "./log.js";
+import { type Notice, deliver, notices, pushEnabled, reminderMinutes } from "./notify.js";
 import { hashToken, mintToken, parseToken, randomId, sameHash } from "./tokens.js";
 import { countsForLedger } from "./ratings.js";
 import { checkPledge, judgeOrders } from "./validate.js";
@@ -210,6 +211,8 @@ interface Meta {
    * it has been asked. No model call is ever reserved without `admitted`.
    */
   claudeAdmission: "admitted" | "refused" | null;
+  /** The phase whose deadline reminder has gone out, so a player is reminded once per phase. */
+  remindedPhase: string | null;
 }
 
 interface Outbox {
@@ -472,6 +475,8 @@ export class GameRoom extends DurableObject<Env> {
   private pending: { payload: string; audience: PowerName | "ALL"; only?: WebSocket }[] = [];
   /** Claude turns to put on the queue once the current change has committed. */
   private turns: AgentTurn[] = [];
+  /** Push notices to deliver once the current change has committed. */
+  private notices: Notice[] = [];
   /** The game's public listing is out of date and is refreshed once the current change has committed. */
   private listingDirty = false;
   /** Which seats can act, worked out once per position. */
@@ -521,6 +526,7 @@ export class GameRoom extends DurableObject<Env> {
         claudeStrikes: stored.claudeStrikes ?? 0,
         claudeOff: stored.claudeOff ?? null,
         claudeAdmission: stored.claudeAdmission ?? null,
+        remindedPhase: stored.remindedPhase ?? null,
       };
       this.meta = meta;
       const saved = this.kv.get<string>("saved");
@@ -585,6 +591,7 @@ export class GameRoom extends DurableObject<Env> {
     const metaBefore = this.meta ? structuredClone(this.meta) : null;
     const framesBefore = this.pending.length;
     const turnsBefore = this.turns.length;
+    const noticesBefore = this.notices.length;
     const outboxBefore = this.outboxAt;
     try {
       return this.ctx.storage.transactionSync(() => {
@@ -596,6 +603,7 @@ export class GameRoom extends DurableObject<Env> {
       this.meta = metaBefore;
       this.pending.length = framesBefore;
       this.turns.length = turnsBefore;
+      this.notices.length = noticesBefore;
       this.outboxAt = outboxBefore;
       throw error;
     }
@@ -611,9 +619,26 @@ export class GameRoom extends DurableObject<Env> {
       aiDueAt: this.meta.aiDueAt,
       pausedUntil: this.meta.pause?.until ?? null,
       outboxAt: this.outboxAt,
+      reminderAt: this.reminderAt(),
     });
     // After a failed alarm the next one waits out its backoff, however overdue the work is.
     return at !== null && this.alarmNotBefore !== null ? Math.max(at, this.alarmNotBefore) : at;
+  }
+
+  /**
+   * When to remind the players who have not ordered yet: `PUSH_REMINDER_MINUTES` before the
+   * deadline, once per phase, and only for phases at least twice that long (in a short phase the
+   * players have only just been told it opened). Null when push is not configured.
+   */
+  private reminderAt(): number | null {
+    const meta = this.meta;
+    const game = this.game;
+    if (!meta || !game || meta.status !== "active" || meta.retry || meta.deadlineAt === null || !pushEnabled(this.env)) return null;
+    const phase = game.phase();
+    if (meta.remindedPhase === phase || meta.gracePhase === phase) return null;
+    const leadMs = reminderMinutes(this.env) * 60_000;
+    if (phaseSeconds(phase, meta.settings) * 1000 < 2 * leadMs) return null;
+    return meta.deadlineAt - leadMs;
   }
 
   /** Point the room's single alarm at whatever is due next. */
@@ -643,6 +668,8 @@ export class GameRoom extends DurableObject<Env> {
         }
       }
     }
+    const told = this.notices.splice(0);
+    if (told.length > 0) this.ctx.waitUntil(deliver(this.env, told));
     const turns = this.turns.splice(0);
     if (turns.length > 0) this.ctx.waitUntil(this.dispatchTurns(turns));
     if (this.listingDirty) {
@@ -723,6 +750,9 @@ export class GameRoom extends DurableObject<Env> {
           if (now >= this.meta.retry.at) this.adjudicate();
         } else if (this.meta.deadlineAt !== null && now >= this.meta.deadlineAt) {
           this.onDeadline();
+        } else {
+          const remindAt = this.reminderAt();
+          if (remindAt !== null && now >= remindAt) this.atomic(() => this.remind());
         }
       }
       this.alarmFailures = 0;
@@ -813,6 +843,7 @@ export class GameRoom extends DurableObject<Env> {
         claudeStrikes: 0,
         claudeOff: null,
         claudeAdmission: null,
+        remindedPhase: null,
       };
       this.game = timedFirst("firstGameMs", () => new Game(settings.rulebook));
       for (const p of POWERS) this.sql.exec("INSERT INTO seats (power, kind) VALUES (?, 'open')", p);
@@ -1015,6 +1046,42 @@ export class GameRoom extends DurableObject<Env> {
     this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
     this.broadcastState();
     this.log("game_started", { humans: this.activeHumans().length });
+    const phase = this.game!.phase();
+    for (const seat of this.awayPlayers()) this.notices.push(notices.started(meta.id, seat.player_id!, seat.power, phase));
+  }
+
+  // ---------- push notices ----------
+
+  /**
+   * Signed-in players at a seat who are away from the game (no socket open for it): the only ones
+   * a push is for. Someone with the game open sees what happened already.
+   */
+  private awayPlayers(options: { survivingOnly?: boolean } = {}): SeatRow[] {
+    if (!pushEnabled(this.env)) return [];
+    return this.seats().filter(
+      (seat) =>
+        seat.player_id !== null &&
+        (seat.kind === "human" || seat.kind === "civil_disorder") &&
+        !(options.survivingOnly && seat.eliminated === 1) &&
+        this.socketsOf(seat.power).length === 0,
+    );
+  }
+
+  /** The deadline is near: tell each away player who can act and has handed in nothing. Runs inside the caller's transaction. */
+  private remind(): void {
+    const meta = this.meta!;
+    const game = this.game!;
+    const phase = game.phase();
+    meta.remindedPhase = phase;
+    const now = Date.now();
+    if (meta.deadlineAt === null || now >= meta.deadlineAt) return;
+    const late = this.awayPlayers({ survivingOnly: true }).filter((seat) => {
+      if (seat.ready === 1 || !canAct(game, seat.power)) return false;
+      const stored = this.storedOrders(phase, seat.power);
+      return !(stored?.source === "human" && stored.orders.length > 0);
+    });
+    for (const seat of late) this.notices.push(notices.deadline(meta.id, seat.player_id!, seat.power, phase, meta.deadlineAt, now));
+    this.log("deadline_reminder", { reminded: late.map((s) => s.power), deadlineAt: meta.deadlineAt });
   }
 
   private summary(): GameSummary {
@@ -2120,6 +2187,9 @@ export class GameRoom extends DurableObject<Env> {
       } else {
         this.broadcast({ t: "press", p: view(to) }, to);
         if (to !== from) this.broadcast({ t: "press", id: origin?.id, p: view(from) }, from);
+        // A private dispatch to someone away: tell them it came, never what it says.
+        const recipient = to !== from ? this.awayPlayers().find((seat) => seat.power === to) : undefined;
+        if (recipient) this.notices.push(notices.press(this.meta!.id, recipient.player_id!, from));
       }
     });
     return null;
@@ -2802,6 +2872,10 @@ export class GameRoom extends DurableObject<Env> {
       this.conclude("abandoned", [], "no_orders");
     } else {
       this.startPhase();
+      const next = this.game!.phase();
+      for (const seat of this.awayPlayers({ survivingOnly: true })) {
+        if (canAct(this.game!, seat.power)) this.notices.push(notices.phase(meta.id, seat.player_id!, seat.power, phase, next, meta.deadlineAt, Date.now()));
+      }
       this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
       if (hadVotes) this.broadcastVotes();
       this.broadcastState();
@@ -2873,6 +2947,11 @@ export class GameRoom extends DurableObject<Env> {
     this.broadcast({ t: "finished", p: { result, winners, scores, reason } }, "ALL");
     this.broadcastState();
     this.log(result === "abandoned" ? "game_abandoned" : "game_finished", { result, reason, winners });
+    // A lobby that never started has nothing to report.
+    if (reason !== "lobby_expired") {
+      const away = this.awayPlayers().map((seat) => seat.player_id!);
+      if (away.length > 0) this.notices.push(notices.finished(meta.id, away, result, winners));
+    }
   }
 
   /**
