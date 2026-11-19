@@ -1,4 +1,5 @@
 import { Suspense, lazy, useLayoutEffect } from "react";
+import { IdentityProvider } from "../profile/Identity.jsx";
 import { ErrorBoundary } from "./ErrorBoundary.jsx";
 import { PageLoading } from "./PageLoading.jsx";
 import { Shell } from "./Shell.jsx";
@@ -19,22 +20,24 @@ export function App() {
   // precisely once its data arrives (a player's handle as they wrote it) has the last word.
   useLayoutEffect(() => applyHead(metaForRoute(matchRoute(path), path)), [path]);
   return (
-    <Shell>
-      <ErrorBoundary key={route ? `${route.name}:${Object.values(route.params).join("/")}` : "missing"}>
-        <Suspense fallback={<PageLoading />}>
-          {!route ? (
-            <NotFoundPage />
-          ) : route.name === "sandbox" || route.name === "home" ? (
-            <SandboxPage />
-          ) : route.name === "games" ? (
-            <GamesPage />
-          ) : route.name === "game" ? (
-            <GamePage code={route.params["code"] ?? ""} />
-          ) : (
-            <NotYetPage route={route} />
-          )}
-        </Suspense>
-      </ErrorBoundary>
-    </Shell>
+    <IdentityProvider>
+      <Shell>
+        <ErrorBoundary key={route ? `${route.name}:${Object.values(route.params).join("/")}` : "missing"}>
+          <Suspense fallback={<PageLoading />}>
+            {!route ? (
+              <NotFoundPage />
+            ) : route.name === "sandbox" || route.name === "home" ? (
+              <SandboxPage />
+            ) : route.name === "games" ? (
+              <GamesPage />
+            ) : route.name === "game" ? (
+              <GamePage code={route.params["code"] ?? ""} />
+            ) : (
+              <NotYetPage route={route} />
+            )}
+          </Suspense>
+        </ErrorBoundary>
+      </Shell>
+    </IdentityProvider>
   );
 }
