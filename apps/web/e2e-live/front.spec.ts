@@ -8,13 +8,22 @@ import { expect, test } from "@playwright/test";
 import { chooseHandle, primary, scan, tab, uniqueHandle } from "./room.js";
 
 test.describe("the front door, live", () => {
-  test("Play now, a phase against six bots, a draw, then the record and the replay", async ({ page }) => {
+  test("Play now, a phase against six bots, a draw, then the record and the replay", async ({ page, context }) => {
     test.slow(); // a whole short game and four pages
+    // Headless Chromium reports notifications as denied whatever is granted; a newcomer's browser
+    // has not been asked yet. Say so, and count any prompt: nothing may ask on its own.
+    await context.addInitScript(() => {
+      const w = window as unknown as { __asked: number };
+      w.__asked = 0;
+      Object.defineProperty(Notification, "permission", { get: () => "default", configurable: true });
+      Object.defineProperty(Notification, "requestPermission", { value: async () => (w.__asked++, "default"), configurable: true });
+    });
     // The local server has no VAPID keys; say it does, so the offer can be made (it is only made
     // where the server can send).
     await page.route("**/api/push/key", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ publicKey: "BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U" }) }));
     await page.goto("/");
     await page.getByRole("button", { name: /Play now/ }).click();
+    await expect(page.locator(".notify-offer")).toHaveCount(0);
     const handle = uniqueHandle("nell");
     await chooseHandle(page, handle);
 
@@ -34,25 +43,26 @@ test.describe("the front door, live", () => {
     // The offer comes after the player readied, and only says what it would do.
     await expect(page.locator(".notify-offer")).toBeVisible();
     await expect(page.locator(".notify-offer")).toContainText("Want a nudge on this device");
+    expect(await page.evaluate(() => (window as unknown as { __asked: number }).__asked)).toBe(0);
     await page.locator(".notify-offer").getByRole("button", { name: "Not now" }).click();
     await expect(page.locator(".notify-offer")).toHaveCount(0);
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("Fall 1901", { timeout: 20_000 });
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Autumn 1901", { timeout: 20_000 });
 
     // The only person at the table votes for a draw, and the game is over.
     await tab(page, "Table");
     await page.getByRole("button", { name: "Vote for a draw" }).click();
-    await expect(primary(page)).toHaveText("See the final scores", { timeout: 20_000 });
+    // The game is over: the main button leads to the end, from the last results if they are on show.
+    await expect(primary(page)).toHaveText(/^(See the final scores|Back to the final position)$/, { timeout: 20_000 });
 
-    // The record lists the game, unrated, with its replay.
+    // The player's own record lists the table (unlisted, so on their list alone) with its replay.
     await page.goto(`/u/${handle}`);
     await expect(page.getByRole("heading", { level: 1, name: handle })).toBeVisible();
     await expect(page.getByRole("button", { name: "Your account", exact: true })).toBeVisible();
-    const recent = page.getByRole("region", { name: "Recent games" });
-    await expect(recent.getByRole("row")).toHaveCount(2);
-    await expect(recent).toContainText("Unrated");
+    const own = page.getByRole("region", { name: "Your tables" });
+    await expect(own.getByRole("row")).toHaveCount(2);
+    await expect(own).toContainText("Drawn");
     await scan(page, "profile, live");
-    // An unlisted game's code is shown to its own player.
-    await recent.getByRole("link", { name: `Replay the game ${code}` }).click();
+    await own.getByRole("link", { name: `Replay the game ${code}` }).click();
     await expect(page).toHaveURL(new RegExp(`/replay/${code}$`));
     await expect(page.getByRole("heading", { level: 1, name: /^Replay of table/ })).toBeAttached({ timeout: 20_000 });
     await expect(page.locator("svg.board")).toBeVisible();
