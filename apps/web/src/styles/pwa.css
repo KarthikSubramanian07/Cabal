@@ -1,0 +1,69 @@
+/*
+ * The update prompt: a dispatch slip pinned to the foot of the screen. Not a modal and not a
+ * banner over the board: it waits in the corner until the player has a moment.
+ */
+
+.update-slot {
+  position: fixed;
+  left: var(--space-4);
+  bottom: var(--space-4);
+  z-index: var(--z-topbar);
+  max-width: min(360px, calc(100vw - 2 * var(--space-4)));
+}
+
+.update-slip {
+  display: grid;
+  gap: var(--space-3);
+  padding: 14px 16px;
+  border: 1px solid var(--ink);
+  border-top: 4px solid var(--brass);
+  background: var(--ink);
+  color: var(--bone);
+  box-shadow: 0 6px 18px rgba(18, 17, 16, 0.25);
+}
+
+.update-slip p {
+  margin: 0;
+  font-weight: 560;
+}
+
+.update-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.update-actions .btn {
+  min-height: 40px;
+  padding: 0 16px;
+}
+
+.btn.ghost {
+  border-color: var(--ink-4);
+  background: transparent;
+  color: var(--bone);
+}
+
+.btn.ghost:hover {
+  background: var(--ink-2);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .update-slip {
+    animation: slip-in var(--dur-slow) var(--ease-out);
+  }
+
+  @keyframes slip-in {
+    from {
+      transform: translateY(12px);
+      opacity: 0;
+    }
+  }
+}
+
+/* On a phone the slip sits above the order sheet the sandbox pins to the bottom. */
+@media (max-width: 640px) {
+  .update-slot {
+    right: var(--space-4);
+    bottom: calc(var(--sheet-h) + var(--space-3));
+  }
+}

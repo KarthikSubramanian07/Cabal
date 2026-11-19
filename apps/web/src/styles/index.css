@@ -12,5 +12,7 @@
 @import "./sidebar.css";
 @import "./dialog.css";
 @import "./pages.css";
+@import "./lobby.css";
+@import "./pwa.css";
 @import "./motion.css";
 @import "./responsive.css";

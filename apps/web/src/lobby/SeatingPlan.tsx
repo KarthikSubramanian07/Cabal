@@ -1,0 +1,85 @@
+/**
+ * The seating plan: seven place cards, one per power, in the board's own colours. In the lobby an
+ * open card is the seat picker; once the game runs the cards say who is here and who has moved.
+ */
+import type { PowerName, SeatView } from "@cabal/protocol";
+import type { CSSProperties } from "react";
+import { powerLabel } from "./terms.js";
+
+function occupant(seat: SeatView): string {
+  if (seat.kind === "open") return "Open seat";
+  if (seat.kind === "ai") return seat.brain === "claude" ? "Played by Claude" : "Played by the bot";
+  if (seat.kind === "civil_disorder") return seat.autopilot ? `${seat.name ?? "Player"}, the bot covering` : `${seat.name ?? "Player"}, in civil disorder`;
+  return seat.name ?? "Player";
+}
+
+function state(seat: SeatView, running: boolean): string | null {
+  if (seat.kind === "open") return null;
+  if (seat.eliminated) return "Out of the game";
+  if (!running) return seat.kind === "human" ? (seat.present ? "At the table" : "Away") : null;
+  if (!seat.canAct) return "Nothing to order";
+  return seat.submitted ? (seat.ready ? "Orders in, ready" : "Orders in") : "Thinking";
+}
+
+export function SeatingPlan({
+  seats,
+  me,
+  running,
+  picking,
+  selected,
+  onSelect,
+}: {
+  seats: SeatView[];
+  me: PowerName | null;
+  /** The game has started: show orders status instead of presence. */
+  running: boolean;
+  /** Open seats can be chosen (the viewer holds no seat and the table is open). */
+  picking: boolean;
+  selected: PowerName | null;
+  onSelect: (power: PowerName | null) => void;
+}) {
+  return (
+    <ul className="seating" aria-label="Seats">
+      {seats.map((seat) => {
+        const style = { "--power": `var(--p-${seat.power.toLowerCase()})` } as CSSProperties;
+        const status = state(seat, running);
+        const marks = (
+          <>
+            {seat.host ? <span className="mark">Host</span> : null}
+            {seat.power === me ? <span className="mark you">You</span> : null}
+          </>
+        );
+        const body = (
+          <>
+            <span className="place-power">{powerLabel(seat.power)}</span>
+            <span className="place-who">{occupant(seat)}</span>
+            {status ? <span className={`place-state${seat.present || seat.kind === "ai" ? " here" : ""}`}>{status}</span> : null}
+            <span className="place-marks">{marks}</span>
+          </>
+        );
+        const classes = `place ${seat.kind}${seat.power === me ? " mine" : ""}${seat.eliminated ? " out" : ""}`;
+        if (picking && seat.kind === "open") {
+          const chosen = selected === seat.power;
+          return (
+            <li key={seat.power} className={classes} style={style}>
+              <button
+                type="button"
+                className="place-pick"
+                aria-pressed={chosen}
+                onClick={() => onSelect(chosen ? null : seat.power)}
+              >
+                {body}
+                <span className="place-take">{chosen ? "Your choice" : "Choose this seat"}</span>
+              </button>
+            </li>
+          );
+        }
+        return (
+          <li key={seat.power} className={classes} style={style}>
+            <div className="place-card">{body}</div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}

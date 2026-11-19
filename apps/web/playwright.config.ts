@@ -11,7 +11,9 @@ export default defineConfig({
   timeout: 90_000,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
-  use: { baseURL: origin, trace: "retain-on-failure" },
+  // The service worker is kept out of every spec except pwa.spec.ts, which tests it: a page it
+  // controls sends its requests through the worker, where page.route() cannot see them.
+  use: { baseURL: origin, trace: "retain-on-failure", serviceWorkers: "block" },
   webServer: {
     command: `pnpm build && pnpm exec vite preview --port ${port} --strictPort`,
     url: origin,
