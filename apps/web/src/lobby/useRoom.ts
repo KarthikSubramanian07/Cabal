@@ -3,12 +3,13 @@
  * rather than a socket that never answers), then holds a socket open: as a spectator, or bound
  * to this device's seat when it holds one. Joining stores the new seat token and rebinds.
  */
-import type { PowerName } from "@cabal/protocol";
-import type { CabalSocket, ConnectionStatus } from "@cabal/protocol/client";
+import type { PledgeInput, PowerName, Recipient } from "@cabal/protocol";
+import type { CabalSocket, ConnectionStatus, Frame } from "@cabal/protocol/client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CabalError } from "@cabal/protocol/client";
 import { ApiError, api, failureText, openSocket } from "../net/api.js";
 import { type HeldSeat, forgetSeat, readSeat, saveName, saveSeat } from "../net/seats.js";
-import { type RoomView, applyFrame, fromSummary } from "./room.js";
+import { type RoomView, applyFrame, fromSummary, markThreadRead } from "./room.js";
 
 export type RoomLoad = { kind: "loading" } | { kind: "missing" } | { kind: "unreachable"; message: string } | { kind: "ready"; view: RoomView };
 
@@ -22,6 +23,22 @@ export interface Room {
   start: () => Promise<void>;
   say: (body: string) => Promise<void>;
   retry: () => void;
+  /** Replace this seat's orders for the phase. Resolves with the server's verdict on each. */
+  setOrders: (phase: string, orders: string[]) => Promise<Frame<"orders.ack">>;
+  /** Say this seat is done (or not) with the phase. False when the socket is not open. */
+  setReady: (phase: string, ready: boolean) => boolean;
+  /** Send press, with a pledge when one is attached. */
+  send: (to: Recipient, body: string, pledge?: PledgeInput) => Promise<void>;
+  /** Mark a thread read up to a message's `sentAt` (its newest, usually). */
+  markRead: (thread: Recipient, upTo: number) => void;
+  vote: (value: boolean, include?: PowerName[]) => boolean;
+  extend: (phase: string) => Promise<Frame<"extend.ack">>;
+  /** The server's clock as best this device knows it. */
+  serverNow: () => number;
+  /** Drop the connection and dial again now, without waiting for the backoff. */
+  reconnect: () => void;
+  /** True once the socket has delivered a welcome at least once this visit. */
+  everOpen: boolean;
 }
 
 export function useRoom(code: string): Room {
@@ -30,6 +47,7 @@ export function useRoom(code: string): Room {
   const [connection, setConnection] = useState<ConnectionStatus>("idle");
   const [notice, setNotice] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [everOpen, setEverOpen] = useState(false);
   const socket = useRef<CabalSocket | null>(null);
 
   // The summary: does this table exist, and what does it look like right now?
@@ -63,7 +81,10 @@ export function useRoom(code: string): Room {
     // `status` names two things on CabalSocket: the connection's state (a string) and the
     // server's game status frame (an object), which arrives when a game starts or pauses.
     const offStatus = ws.on("status", (status: unknown) => {
-      if (typeof status === "string") setConnection(status as ConnectionStatus);
+      if (typeof status === "string") {
+        setConnection(status as ConnectionStatus);
+        if (status === "open") setEverOpen(true);
+      }
     });
     const offFrame = ws.on("frame", (frame) => {
       setLoad((current) => {
@@ -115,7 +136,31 @@ export function useRoom(code: string): Room {
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
-  return { load, seat, connection, notice, join, start, say, retry };
+  const live = () => {
+    const ws = socket.current;
+    if (!ws) throw new CabalError("not_connected", "the socket is not open");
+    return ws;
+  };
+
+  const setOrders = useCallback((phase: string, orders: string[]) => live().setOrders(phase, orders), []);
+  const setReady = useCallback((phase: string, ready: boolean) => socket.current?.ready(phase, ready) ?? false, []);
+  const send = useCallback(async (to: Recipient, body: string, pledge?: PledgeInput) => {
+    await live().press(to, body, pledge);
+  }, []);
+  const markRead = useCallback((thread: Recipient, upTo: number) => {
+    setLoad((current) => {
+      if (current.kind !== "ready") return current;
+      const view = markThreadRead(current.view, thread);
+      return view === current.view ? current : { kind: "ready", view };
+    });
+    if (upTo > 0) socket.current?.markRead(thread, upTo);
+  }, []);
+  const vote = useCallback((value: boolean, include?: PowerName[]) => socket.current?.vote(value, include) ?? false, []);
+  const extend = useCallback((phase: string) => live().extend(phase), []);
+  const serverNow = useCallback(() => socket.current?.serverNow() ?? Date.now(), []);
+  const reconnect = useCallback(() => socket.current?.reconnect(), []);
+
+  return { load, seat, connection, notice, join, start, say, retry, setOrders, setReady, send, markRead, vote, extend, serverNow, reconnect, everOpen };
 }
 
 /** Remember a seat this device was just dealt by creating a game. */
