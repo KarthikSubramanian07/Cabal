@@ -6,8 +6,11 @@
  * Storage can be missing or refuse writes (private windows, blocked site data), so every access
  * is guarded and a failure reads as "no seat here".
  */
-import { PowerName } from "@cabal/protocol";
+import type { PowerName } from "@cabal/protocol";
 import { isGameCode } from "./code.js";
+
+/** The seven powers, here rather than from the protocol's schemas so the shell can read seats cheaply. */
+const POWERS: ReadonlySet<string> = new Set(["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"]);
 
 const PREFIX = "cabal.seat.";
 const NAME_KEY = "cabal.name";
@@ -39,13 +42,12 @@ function parse(gameId: string, raw: string | null): HeldSeat | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as Partial<HeldSeat>;
-    const power = PowerName.safeParse(value.power);
-    if (!power.success || typeof value.token !== "string" || value.token === "") return null;
+    if (typeof value.power !== "string" || !POWERS.has(value.power) || typeof value.token !== "string" || value.token === "") return null;
     // A token names its own game: one copied under the wrong key is not this game's seat.
     if (!value.token.startsWith(`${gameId}.`)) return null;
     return {
       gameId,
-      power: power.data,
+      power: value.power as PowerName,
       token: value.token,
       name: typeof value.name === "string" ? value.name : "",
       userId: typeof value.userId === "string" ? value.userId : null,
@@ -105,6 +107,20 @@ export function listSeats(): HeldSeat[] {
     return out;
   }
   return out.sort((a, b) => b.savedAt - a.savedAt);
+}
+
+/**
+ * Forget every seat an account took on this device: those it is recorded as taking, and older
+ * ones taken under its handle before seats recorded their account. Seats somebody took without
+ * an account stay.
+ */
+export function forgetSeatsOf(account: { id: string; handle: string }): string[] {
+  const handle = account.handle.toLowerCase();
+  const gone = listSeats()
+    .filter((s) => s.userId === account.id || (!s.userId && s.name !== "" && s.name.toLowerCase() === handle))
+    .map((s) => s.gameId);
+  for (const gameId of gone) forgetSeat(gameId);
+  return gone;
 }
 
 /** The name this device last sat down under, so nobody types it twice. */
