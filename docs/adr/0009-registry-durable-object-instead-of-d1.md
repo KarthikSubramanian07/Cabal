@@ -1,6 +1,6 @@
 # ADR 0009: A Registry Durable Object for cross-game data, instead of D1
 
-Status: accepted (2026-11-18). Supersedes the D1 half of [ADR 0005](0005-storage-do-sqlite-per-game-d1-cross-game.md).
+Status: superseded by [ADR 0010](0010-d1-index-registry-for-the-claude-budget.md) (2026-11-19). Supersedes the D1 half of [ADR 0005](0005-storage-do-sqlite-per-game-d1-cross-game.md).
 
 ## Context
 

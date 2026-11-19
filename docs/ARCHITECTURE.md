@@ -25,15 +25,17 @@ flowchart TB
       WS --> SM --> EngineS --> SQL
       Alarm --> SM
     end
-    Registry[(Durable Object: Registry\none instance, SQLite\ngames, players, ratings, trust)]
+    D1[(D1: cabal\ngames index, players,\nratings, reliability, ledger)]
+    Registry[(Durable Object: Registry\none instance\nClaude budget)]
     Queue[[Queue: cabal-agent-turns\nopt-in Claude seats]]
   end
 
   Client -->|same-origin HTTPS and WSS /api| Pages
   Pages -->|service binding SERVER| API
   API --> DO
-  API --> Registry
-  DO -->|game over| Registry
+  API --> D1
+  DO -->|game over, seat taken| D1
+  DO -->|Claude admission| Registry
   SM --> Queue --> Anthropic[(Anthropic API)]
 ```
 
@@ -167,23 +169,37 @@ stateDiagram-v2
 The schema is the `SCHEMA` constant in `apps/server/src/room.ts`, which is the source of truth; this is its outline. The game's own metadata and engine state are kept in the object's key value storage.
 
 ```
-seats(power, kind human|ai|open|civil_disorder, name, token_hash, ready, missed, eliminated)
-orders(phase, power, orders_json, submitted_at)
+seats(power, kind human|ai|open|civil_disorder, name, token_hash, ready, missed, eliminated, player_id)
+stints(power, stint, player_id, name, joined_at, substitute, left_reason, due, on_time, late)
+seat_tokens(token_hash, power, created_at)
+orders(phase, power, orders_json, submitted_at, source)
 defaults(power, orders_json)
 press(id, phase, sender, recipient, body, sent_at, pledge_id)
-pledges(id, pledger, audience, phase, sealed, commitment, nonce, orders_json, receipt)
-votes(power, kind, value)
-phases(seq, name, results_json, adjudicated_at)
-events(seq, audience, payload_json)
+pledges(id, pledger, audience, phase, sealed, commitment, nonce, orders_json, receipt, pledger_player, audience_player)
+votes(power, kind, value, include_json)
+phases(seq, name, results_json, adjudicated_at, summary_json)
+events(seq, audience, payload_json, snapshot)
 ```
 
-### 5.3 Cross-game data: the `Registry` Durable Object
+A `stint` is one holder's time at a seat: a seat that went to a substitute has two. Stints carry the reliability counters (phases the seat had something to order, ordered in time, ordered in the grace period), and pledges remember which player made them to which, so the record a finished game hands the index can say exactly who did what.
 
-There is no D1 database (the account is at its D1 limit, see [ADR 0009](adr/0009-registry-durable-object-instead-of-d1.md)). Data that spans games lives in one SQLite-backed Durable Object class, `Registry`, bound as `env.REGISTRY` and always addressed as `idFromName("global")`. Callers use its RPC methods, never raw SQL, and its schema changes through versioned migrations that run inside the object. It holds the finished-games index, players, ratings (weighted pairwise Glicko, with diplicity-style `2/(N-1)` weighting), a reliability score, the trust ledger (pledges kept, broken and void per player) and push subscriptions. A `GameRoom` reports a finished game to it once. Status: designed, being built on issue #12; `main` does not have the class yet.
+### 5.3 Cross-game data: D1, behind the `GameIndex` port
+
+Data that spans games lives in the D1 database `cabal` (binding `DB`), reached only through two ports in `apps/server`: `GameIndex` (finished games, public listings, seats signed-in players hold) and `PlayerStore` (accounts, ratings, reliability, the trust ledger), both implemented by `d1-index.ts`. The schema is the numbered SQL files in `apps/server/migrations/`, applied with `wrangler d1 migrations apply cabal` and, in tests, by the workerd suite before it runs, so tests and production share one schema. See [ADR 0010](adr/0010-d1-index-registry-for-the-claude-budget.md).
+
+- **Games.** `games_index` (one row per ended game), `games_live` (public lobbies and running games), `game_players` (one row per stint: player, share of the result, phases due, on time and late, counted receipts).
+- **Players.** `players` (id, handle, the hash of the recovery code), `player_sessions` (the hash of each device's secret), `handle_aliases` (handles given up in the last 90 days).
+- **Standing.** `ratings` and `rating_history` (weighted pairwise Glicko-2, [ADR 0011](adr/0011-weighted-pairwise-glicko-2.md)), `rated_games`, and `player_stats` (totals, reliability and trust, recomputed from `game_players` in one statement whenever a player's game ends).
+
+A `GameRoom` hands a finished game to the index once, through a durable outbox that retries with backoff. Recording is idempotent; a game is rated at most once (its `rated_games` row is the first statement of the rating batch) and two games ending at once for the same player cannot lose an update (the batch re-checks each player's rating count and is retried on a conflict). Every multi-row change is one D1 batch, which is one transaction.
+
+The `Registry` Durable Object (one instance, `idFromName("global")`) stays deployed for the one thing that wants a single writer: the deployment-wide Claude budget, where two games asking at once must never both take the last place. It also holds the games index from before D1, which is copied into D1 once, in the background of the first request an isolate serves, without overwriting anything newer. Where no D1 database is bound (bare local setups), the Registry serves the games index as it did before and there are no players.
 
 ### 5.4 Identity
 
-Identity is guest first. A device gets a guest account (a random id, a chosen handle, and a secret kept on the device, of which the server stores only a hash) plus an exportable recovery code. There are no passkeys or email sign-in on `pages.dev`. Seats bind to a user id. Seat tokens never appear in URLs; a socket authenticates with its first `hello` frame. Status: designed, being built on issue #12; today a seat is held by a bearer token returned from create or join.
+Identity is guest first. `POST /api/players` makes an account (a random id and a handle, chosen or picked) and returns a 192-bit secret once; the server stores only its SHA-256, one row per device. A recovery code (100 bits, Crockford base32) restores the account on another device; issuing a new one retires the old. There are no passkeys or email sign-in on `pages.dev`. Handles are unique whatever their case and filtered for impersonation of the house and the worst abuse.
+
+A signed-in player sends their secret as the bearer on create and join. The router resolves it and tells the room who the player is in the request body (rooms are reachable only through the router), so the seat binds to the player id: one seat per player per game, ever, and the seat token can be issued again on another device (`POST /api/games/:id/seat`). Anonymous play still works with a name and a seat token. Seat tokens never appear in URLs; a socket authenticates with its first `hello` frame.
 
 ## 6. Protocol
 
@@ -191,7 +207,7 @@ The WebSocket protocol is specified in [PROTOCOL.md](PROTOCOL.md) and enforced w
 
 ## 7. Agents (`packages/agents`)
 
-AI seats always play and never block a phase. The default brain is a deterministic heuristic bot written in Rust (`crates/cabal-bot`, exposed through `@cabal/engine`) that runs inside the `GameRoom`: no cost, no latency, no network. A game can opt in to Claude brains (`settings.aiBrain: 'claude'`) when `ANTHROPIC_API_KEY` is set; their turns go through the `cabal-agent-turns` queue (dead letters to `cabal-agent-turns-dlq`) under a hard per-game spend cap and a deployment-wide daily budget kept by the `Registry` (which admits a game to Claude before it starts), and any failure falls back to the bot. A game with no active human seats ends instead of playing itself forever. Status: the bot plays every AI seat and covers every seat in civil disorder inside the `GameRoom` (`apps/server/src/bot.ts`), and is described in [BOT.md](BOT.md). The Claude path is built and tested with a scripted model; it stays off in production until `ANTHROPIC_API_KEY` is set.
+AI seats always play and never block a phase. The default brain is a deterministic heuristic bot written in Rust (`crates/cabal-bot`, exposed through `@cabal/engine`) that runs inside the `GameRoom`: no cost, no latency, no network. A game can opt in to Claude brains (`settings.aiBrain: 'claude'`) when `ANTHROPIC_API_KEY` is set; their turns go through the `cabal-agent-turns` queue (dead letters to `cabal-agent-turns-dlq`) under a hard per-game spend cap and a deployment-wide daily budget kept by the `Registry` Durable Object (which admits a game to Claude before it starts), and any failure falls back to the bot. A game with no active human seats ends instead of playing itself forever. Status: the bot plays every AI seat and covers every seat in civil disorder inside the `GameRoom` (`apps/server/src/bot.ts`), and is described in [BOT.md](BOT.md). The Claude path is built and tested with a scripted model; it stays off in production until `ANTHROPIC_API_KEY` is set.
 
 A Claude agent (`@cabal/agents`) is just another client. It receives the same state and message stream, builds a narrative prompt (board story, legal orders, diary, relationships), asks Claude for reasoning plus structured output, validates orders against the legal list with a repair pass, and submits through the protocol. Pledges are first class: the agent can seal commitments and reads the trust ledger of opponents.
 
@@ -217,5 +233,7 @@ A Claude agent (`@cabal/agents`) is just another client. It receives the same st
 - Clients never assert who they are. The socket tag from the authenticated join is the identity.
 - Orders are only accepted for the seat bound to the socket.
 - Pledge commitments are BLAKE3 hashes over canonical order text plus a 128 bit nonce; sealed pledges reveal after adjudication.
-- Per-IP rate limits on game creation and seat joins through Workers rate limiting bindings (`CREATE_LIMITER`, `JOIN_LIMITER`).
+- Per-IP rate limits through Workers rate limiting bindings: game creation (`CREATE_LIMITER`), seat joins and seat recovery (`JOIN_LIMITER`), reads and socket upgrades (`READ_LIMITER`), and making or restoring accounts (`ACCOUNT_LIMITER`); changes to an account are limited per player (`PROFILE_LIMITER`).
+- Player secrets, seat tokens and recovery codes are stored only as hashes. A player secret that does not authenticate is refused, never treated as anonymous play.
+- Ratings count only games between signed-in humans: bots and anonymous seats are not opponents, unlisted games are not rated, a rated game must last two years and seat three distinct players, and a pledge counts towards a player's trust ledger only when it was made to another person.
 - Multi-account heuristics and moderation hooks are not built and are not yet scheduled to an issue.
