@@ -1,7 +1,84 @@
 /* Motion policy. Durations and easings live in tokens.css. */
 
+/*
+ * Phase results, inked in. A phase's order marks are drawn in the order the adjudication
+ * tells it (src/map/motion.ts sets --delay and --stamp on each mark): the units that held,
+ * supported and convoyed first, then every move, then a failed order's cross is stamped down
+ * with a thud. Standoffs are washed in last. The mask's `.reveal` stroke is what draws, so the
+ * real stroke keeps its dashes. Nothing here runs under reduced motion: every mark is simply
+ * there, at its final state.
+ */
+.order-marks .reveal {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 26;
+  stroke-linecap: round;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 0;
+}
+
+@keyframes ink-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+
+/* The first version of this (by the contributor who started it) and still the way a ring arrives. */
+@keyframes result-arrive {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@keyframes result-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes stamp-thud {
+  0% {
+    opacity: 0;
+    transform: scale(2.4) rotate(-14deg);
+  }
+  60% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .order-marks.results .reveal {
+    animation: ink-draw var(--dur-march) var(--ease-out) var(--delay, 0ms) backwards;
+  }
+
+  .order-marks.results .order.hold,
+  .order-marks.results .order.carrying {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: result-arrive var(--dur-slow) var(--ease-out) var(--delay, 0ms) backwards;
+  }
+
+  /* These are placed with a transform of their own, so they only fade. */
+  .order-marks.results .order.build,
+  .order-marks.results .order.disband {
+    animation: result-fade var(--dur-slow) var(--ease-out) var(--delay, 0ms) backwards;
+  }
+
+  .order-marks.results .fail-mark .stamp {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: stamp-thud var(--dur-slow) var(--ease-thud) var(--stamp, 0ms) backwards;
+  }
+
+  .standoff {
+    animation: result-fade var(--dur-slow) var(--ease-out) var(--delay, 0ms) backwards;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
+    animation: none !important;
   }
 }

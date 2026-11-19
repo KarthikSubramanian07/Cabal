@@ -6,12 +6,14 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { type ParsedOrder, parseOrder, parseUnit } from "../game/notation.js";
 import { type UnitIds, unitKey } from "../game/unitIds.js";
+import { type MarkTiming, resultsTiming } from "./motion.js";
 import { carryingOrders, convoyChain, smoothPath } from "./route.js";
 import {
   type Board as BoardData,
@@ -65,6 +67,11 @@ export interface BoardProps {
   /** Provinces holding a unit that can be ordered now. With `targets`, what a near-miss tap snaps to. */
   hot?: ReadonlySet<string> | undefined;
   standoffs?: readonly string[] | undefined;
+  /**
+   * Set while a phase's results are shown, to a value unique to that phase: the order marks are
+   * then inked in, in the order the adjudication tells (motion.ts), once per change of value.
+   */
+  results?: string | undefined;
   /** Stable unit identities for `state`, so a piece keeps its DOM node from phase to phase. */
   ids?: UnitIds | undefined;
   /** Provinces to frame when the frame is too small for the whole board (the active power's). */
@@ -116,6 +123,7 @@ const OrderMark = memo(function OrderMark({
   r,
   route,
   carrying = false,
+  timing,
 }: {
   board: BoardData;
   order: DrawnOrder;
@@ -124,10 +132,40 @@ const OrderMark = memo(function OrderMark({
   route?: readonly string[] | undefined;
   /** A convoy whose army's track is drawn through this fleet: marked on the fleet, not with a line. */
   carrying?: boolean;
+  /** Results being shown: when this mark is drawn and its failure stamped (see motion.ts). */
+  timing?: MarkTiming | undefined;
 }) {
+  const maskId = `ink${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const parsed: ParsedOrder | null = parseOrder(order.text);
   if (!parsed || parsed.type === "waive") return null;
-  const style = { "--power": POWER_COLOR[order.power] ?? "var(--ink)" } as CSSProperties;
+  const style = {
+    "--power": POWER_COLOR[order.power] ?? "var(--ink)",
+    ...(timing ? { "--delay": `${timing.delay}ms`, "--stamp": `${timing.stamp}ms` } : {}),
+  } as CSSProperties;
+  /**
+   * Results are inked in: a solid copy of the stroke, drawn along its length, masks the real one,
+   * so dashed supports and dotted convoys keep their rhythm while they draw.
+   */
+  const ink = (shape: "line" | "path", geometry: { x1?: number; y1?: number; x2?: number; y2?: number; d?: string }) =>
+    timing ? (
+      <mask id={maskId} maskUnits="userSpaceOnUse" x={0} y={0} width={board.width} height={board.height}>
+        {shape === "line" ? (
+          <line className="reveal" pathLength={1} x1={geometry.x1} y1={geometry.y1} x2={geometry.x2} y2={geometry.y2} />
+        ) : (
+          <path className="reveal" pathLength={1} d={geometry.d} />
+        )}
+      </mask>
+    ) : null;
+  const masked = timing ? `url(#${maskId})` : undefined;
+  const failMark = (at: Point) =>
+    order.ok === false ? (
+      <g className="fail-mark" transform={`translate(${at[0]} ${at[1]})`}>
+        <g className="stamp">
+          <line x1={-4} y1={-4} x2={4} y2={4} />
+          <line x1={4} y1={-4} x2={-4} y2={4} />
+        </g>
+      </g>
+    ) : null;
   const cls = `order${order.ok === false ? " failed" : ""}${order.ok === true ? " ok" : ""}`;
   const at = regionPoint(board, parsed.unit.region);
 
@@ -135,15 +173,13 @@ const OrderMark = memo(function OrderMark({
     const cross = mid(a, b);
     return (
       <g className={`${cls} ${kind}`} style={style}>
-        <line className="halo" x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} />
-        <line className="stroke" x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} />
-        {head ? <polygon className="head" points={arrowHead(a, b, Math.max(8, r * 0.8))} /> : null}
-        {order.ok === false ? (
-          <g className="fail-mark" transform={`translate(${cross[0]} ${cross[1]})`}>
-            <line x1={-4} y1={-4} x2={4} y2={4} />
-            <line x1={4} y1={-4} x2={-4} y2={4} />
-          </g>
-        ) : null}
+        {ink("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1] })}
+        <g mask={masked}>
+          <line className="halo" x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} />
+          <line className="stroke" x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} />
+          {head ? <polygon className="head" points={arrowHead(a, b, Math.max(8, r * 0.8))} /> : null}
+        </g>
+        {failMark(cross)}
       </g>
     );
   };
@@ -166,15 +202,13 @@ const OrderMark = memo(function OrderMark({
         const cross = mid(stops.at(-1)!, b);
         return (
           <g className={`${cls} move via routed`} style={style}>
-            <path className="halo" d={d} />
-            <path className="stroke" d={d} />
-            <polygon className="head" points={arrowHead(stops.at(-1)!, b, Math.max(8, r * 0.8))} />
-            {order.ok === false ? (
-              <g className="fail-mark" transform={`translate(${cross[0]} ${cross[1]})`}>
-                <line x1={-4} y1={-4} x2={4} y2={4} />
-                <line x1={4} y1={-4} x2={-4} y2={4} />
-              </g>
-            ) : null}
+            {ink("path", { d })}
+            <g mask={masked}>
+              <path className="halo" d={d} />
+              <path className="stroke" d={d} />
+              <polygon className="head" points={arrowHead(stops.at(-1)!, b, Math.max(8, r * 0.8))} />
+            </g>
+            {failMark(cross)}
           </g>
         );
       }
@@ -385,6 +419,7 @@ export function Board({
   targets,
   hot,
   standoffs,
+  results,
   ids,
   focus,
   focusKey,
@@ -528,6 +563,7 @@ export function Board({
     return map;
   }, [board, texts]);
   const carrying = useMemo(() => carryingOrders(texts), [texts]);
+  const timing = useMemo(() => (results ? resultsTiming(orders) : null), [results, orders]);
 
   const candidates = useMemo<TapCandidate[]>(() => {
     const codes = new Set<string>([...(targets ?? []), ...(hot ?? [])]);
@@ -675,7 +711,14 @@ export function Board({
 
         {standoffs?.map((code) => {
           const p = board.provinces[code];
-          return p ? <path key={`so-${code}`} className="standoff" d={p.d} /> : null;
+          return p ? (
+            <path
+              key={`so-${results ?? ""}-${code}`}
+              className="standoff"
+              d={p.d}
+              style={timing ? ({ "--delay": `${timing.standoffs}ms` } as CSSProperties) : undefined}
+            />
+          ) : null;
         })}
         {targets
           ? [...targets].map((code) => {
@@ -707,7 +750,7 @@ export function Board({
             </g>
           ))}
         </g>
-        <g className="order-marks">
+        <g className={`order-marks${results ? " results" : ""}`} key={results ?? "orders"}>
           {orders.map((o, i) => (
             <OrderMark
               key={`${o.power}-${o.text}-${i}`}
@@ -716,6 +759,7 @@ export function Board({
               r={r}
               route={routes.get(o.text)}
               carrying={carrying.has(o.text)}
+              timing={timing?.marks[i]}
             />
           ))}
         </g>
