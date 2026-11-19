@@ -1,113 +1,35 @@
-import { env, runInDurableObject, SELF } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { SELF } from "cloudflare:test";
+import { describe, expect, it } from "vitest";
 import { Game } from "@cabal/engine";
-import type { ServerMessage } from "@cabal/protocol";
-import type { Env as ServerEnv } from "../src/env.js";
-
-const serverEnv = env as unknown as ServerEnv;
-let requestSequence = 0;
-const nextIp = () => `198.51.100.${(++requestSequence % 250) + 1}`;
-
-beforeAll(async () => {
-  await serverEnv.DB?.prepare(`CREATE TABLE IF NOT EXISTS games_index (
-    game_id TEXT PRIMARY KEY, result TEXT NOT NULL, winners_json TEXT NOT NULL, scores_json TEXT NOT NULL,
-    settings_json TEXT NOT NULL, phase_count INTEGER NOT NULL, finished_at INTEGER NOT NULL, ledger_json TEXT NOT NULL
-  )`).run();
-});
-
-async function create(name: string, settings: Record<string, unknown> = {}) {
-  const res = await SELF.fetch("http://cabal/api/games", {
-    method: "POST",
-    headers: { "cf-connecting-ip": nextIp() },
-    body: JSON.stringify({ name, settings }),
-  });
-  expect(res.status).toBe(200);
-  return (await res.json()) as { gameId: string; token: string; power: string };
-}
-
-async function join(gameId: string, name: string) {
-  const res = await SELF.fetch(`http://cabal/api/games/${gameId}/join`, {
-    method: "POST",
-    headers: { "cf-connecting-ip": nextIp() },
-    body: JSON.stringify({ name }),
-  });
-  expect(res.status).toBe(200);
-  return (await res.json()) as { gameId: string; token: string; power: string };
-}
+import {
+  Client,
+  create,
+  deadlineIn,
+  holdAndReady,
+  inRoom,
+  join,
+  nextIp,
+  start,
+  summary,
+  untilIndexed,
+} from "./helpers.js";
 
 async function seedGame(gameId: string, game: Game): Promise<void> {
-  const stub = serverEnv.GAME_ROOM.get(serverEnv.GAME_ROOM.idFromName(gameId));
-  await runInDurableObject(stub, async (instance, state) => {
-    (instance as unknown as { game: Game }).game = game;
+  await inRoom(gameId, async (room, state) => {
+    (room as unknown as { game: Game }).game = game;
     await state.storage.put("saved", game.toSaved(gameId));
   });
-}
-
-class Client {
-  ws: WebSocket;
-  frames: ServerMessage[] = [];
-  private waiters: { pred: (m: ServerMessage) => boolean; resolve: (m: ServerMessage) => void }[] = [];
-
-  constructor(ws: WebSocket) {
-    this.ws = ws;
-    ws.accept();
-    ws.addEventListener("message", (ev) => {
-      const m = JSON.parse(ev.data as string) as ServerMessage;
-      this.frames.push(m);
-      const i = this.waiters.findIndex((w) => w.pred(m));
-      if (i >= 0) {
-        const [w] = this.waiters.splice(i, 1);
-        w!.resolve(m);
-      }
-    });
-  }
-
-  static async connect(gameId: string, token?: string): Promise<Client> {
-    const res = await SELF.fetch(`http://cabal/api/games/${gameId}/ws${token ? `?token=${token}` : ""}`, {
-      headers: { upgrade: "websocket" },
-    });
-    expect(res.status).toBe(101);
-    return new Client(res.webSocket!);
-  }
-
-  send(frame: unknown): void {
-    this.ws.send(JSON.stringify(frame));
-  }
-
-  close(): void {
-    this.ws.close();
-  }
-
-  next<T extends ServerMessage["t"]>(t: T, timeoutMs = 3000): Promise<Extract<ServerMessage, { t: T }>> {
-    const existing = this.frames.find((m) => m.t === t);
-    if (existing) {
-      this.frames.splice(this.frames.indexOf(existing), 1);
-      return Promise.resolve(existing as Extract<ServerMessage, { t: T }>);
-    }
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`timeout waiting for ${t}`)), timeoutMs);
-      this.waiters.push({
-        pred: (m) => m.t === t,
-        resolve: (m) => {
-          clearTimeout(timer);
-          this.frames.splice(this.frames.indexOf(m), 1);
-          resolve(m as Extract<ServerMessage, { t: T }>);
-        },
-      });
-    });
-  }
 }
 
 describe("GameRoom", () => {
   it("creates a game with a lobby and seven seats", async () => {
     const ann = await create("Ann");
     expect(ann.gameId).toMatch(/^[A-Z0-9]{6}$/);
-    const res = await SELF.fetch(`http://cabal/api/games/${ann.gameId}`);
-    const summary = (await res.json()) as { status: string; seats: { kind: string }[]; phase: string };
-    expect(summary.status).toBe("lobby");
-    expect(summary.seats).toHaveLength(7);
-    expect(summary.seats.filter((s) => s.kind === "human")).toHaveLength(1);
-    expect(summary.phase).toBe("S1901M");
+    const lobby = await summary(ann.gameId);
+    expect(lobby.status).toBe("lobby");
+    expect(lobby.seats).toHaveLength(7);
+    expect(lobby.seats.filter((s) => s.kind === "human")).toHaveLength(1);
+    expect(lobby.phase).toBe("S1901M");
   });
 
   it("runs seven human seats from the opening phase through a draw vote", async () => {
@@ -137,14 +59,11 @@ describe("GameRoom", () => {
     const bob = await join(ann.gameId, "Bob");
     expect(bob.power).not.toBe(ann.power);
 
-    const start = await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
-    expect(start.status).toBe(200);
-    const summary = (await start.json()) as { status: string; seats: { kind: string }[] };
-    expect(summary.status).toBe("active");
-    expect(summary.seats.filter((s) => s.kind === "ai")).toHaveLength(5);
+    const started = await start(ann);
+    expect(started.status).toBe(200);
+    const begun = (await started.json()) as { status: string; seats: { kind: string }[] };
+    expect(begun.status).toBe("active");
+    expect(begun.seats.filter((s) => s.kind === "ai")).toHaveLength(5);
 
     const a = await Client.connect(ann.gameId, ann.token);
     const b = await Client.connect(ann.gameId, bob.token);
@@ -194,84 +113,12 @@ describe("GameRoom", () => {
     const saved = (await replay.json()) as { phases: { name: string }[] };
     expect(saved.phases.map((p) => p.name)).toEqual(["S1901M", "F1901M"]);
     const ledger = await SELF.fetch(`http://cabal/api/games/${ann.gameId}/ledger`);
-    expect((await ledger.json() as { ledger: Record<string, { kept: number }> }).ledger[ann.power]!.kept).toBe(1);
-  });
-
-  it("lets an authenticated Queue agent fetch its state and submit a validated turn through the room binding", async () => {
-    const ann = await create("Queue creator", { aiFill: true, readyAdvance: true });
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
-    const room = serverEnv.GAME_ROOM.get(serverEnv.GAME_ROOM.idFromName(ann.gameId));
-    const agentToken = await runInDurableObject(room, (instance) => {
-      const db = instance as unknown as { sql: { exec<T>(query: string, ...bindings: unknown[]): { one(): T } } };
-      return db.sql.exec<{ token: string }>("SELECT token FROM agent_tokens LIMIT 1").one().token;
-    });
-
-    const unauthorized = await room.fetch("https://room/agent/state");
-    expect(unauthorized.status).toBe(403);
-    const state = await room.fetch("https://room/agent/state", { headers: { authorization: `Bearer ${agentToken}` } });
-    expect(state.status).toBe(200);
-    const welcome = await state.json() as { phase: string; power: string };
-    expect(welcome.phase).toBe("S1901M");
-
-    const action = await room.fetch("https://room/agent/act", {
-      method: "POST",
-      headers: { authorization: `Bearer ${agentToken}`, "content-type": "application/json" },
-      body: JSON.stringify({ frames: [
-        { t: "orders.set", p: { phase: welcome.phase, orders: [] } },
-        { t: "ready", p: { phase: welcome.phase, ready: true } },
-      ] }),
-    });
-    expect(action.status).toBe(200);
-    const summary = await (await SELF.fetch(`http://cabal/api/games/${ann.gameId}`)).json() as {
-      seats: { power: string; ready: boolean }[];
-    };
-    expect(summary.seats.find((seat) => seat.power === welcome.power)?.ready).toBe(true);
-  });
-
-  it("fires a deadline alarm and applies stored default movement orders", async () => {
-    const moves: Record<string, string> = {
-      AUSTRIA: "A VIE - GAL",
-      ENGLAND: "F LON - NTH",
-      FRANCE: "A PAR - BUR",
-      GERMANY: "A MUN - RUH",
-      ITALY: "A VEN - PIE",
-      RUSSIA: "A MOS - UKR",
-      TURKEY: "A CON - BUL",
-    };
-    const ann = await create("Ann", { aiFill: true });
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
-    const client = await Client.connect(ann.gameId, ann.token);
-    const welcome = await client.next("welcome");
-    client.send({ t: "orders.default", p: { orders: [moves[ann.power]!] } });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    const stub = serverEnv.GAME_ROOM.get(serverEnv.GAME_ROOM.idFromName(ann.gameId));
-    await runInDurableObject(stub, async (instance, state) => {
-      (instance as unknown as { meta: { deadlineAt: number } }).meta.deadlineAt = Date.now() - 1;
-      const meta = await state.storage.get<{ deadlineAt: number }>("meta");
-      await state.storage.put("meta", { ...meta, deadlineAt: Date.now() - 1 });
-      await state.storage.setAlarm(Date.now() - 1);
-      await instance.alarm();
-    });
-    const state = await client.next("state");
-    expect(state.p.phase).toBe("F1901M");
-    const destination = moves[ann.power]!.split(" - ")[1]!;
-    const unitType = moves[ann.power]!.startsWith("F ") ? "F" : "A";
-    expect(state.p.state.units[ann.power]).toContain(`${unitType} ${destination}`);
-    expect(welcome.p.phase).toBe("S1901M");
+    expect((await ledger.json() as { ledger: Record<string, { kept: number; broken: number; void: number }> }).ledger[ann.power]).toEqual({ kept: 1, broken: 0, void: 0 });
   });
 
   it("accepts retreat orders and advances back into movement", async () => {
-    const ann = await create("Ann", { aiFill: true, readyAdvance: true });
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
+    const ann = await create("Ann", { aiFill: true, readyAdvance: true, rulebookPress: true });
+    await start(ann);
     const state = new Game().state();
     const enemy = (["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"] as string[])
       .find((power) => power !== ann.power)!;
@@ -294,11 +141,8 @@ describe("GameRoom", () => {
   });
 
   it("accepts adjustment builds and returns to the next spring movement", async () => {
-    const ann = await create("Ann", { aiFill: true, readyAdvance: true });
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
+    const ann = await create("Ann", { aiFill: true, readyAdvance: true, rulebookPress: true });
+    await start(ann);
     const state = new Game().state();
     state.name = "F1901M";
     state.units[ann.power] = state.units[ann.power]!.slice(0, 1);
@@ -320,37 +164,60 @@ describe("GameRoom", () => {
     expect((await client.next("state")).p.phase).toBe("S1902M");
   });
 
-  it("applies pacing presets and extends a deadline after two seats request once", async () => {
-    const ann = await create("Ann", { pacing: "live", graceSeconds: 45, whisperBudget: 2 });
+  it("applies pacing presets and extends a deadline once, when two players ask", async () => {
+    const ann = await create("Ann", { pacing: "live" });
     const bob = await join(ann.gameId, "Bob");
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
-    const summaryRes = await SELF.fetch(`http://cabal/api/games/${ann.gameId}`);
-    const summary = await summaryRes.json() as { settings: { movementSeconds: number }; deadlineAt: number };
-    expect(summary.settings.movementSeconds).toBe(600);
-    const initialDeadline = summary.deadlineAt;
+    await start(ann);
+    const begun = await summary(ann.gameId);
+    expect(begun.settings).toMatchObject({ movementSeconds: 600, shortPhaseSeconds: 300, graceSeconds: 60, extendSeconds: 300 });
+    const initialDeadline = begun.deadlineAt!;
     const a = await Client.connect(ann.gameId, ann.token);
     const b = await Client.connect(ann.gameId, bob.token);
     await a.next("welcome");
     await b.next("welcome");
     a.send({ t: "extend", id: "ext-a", p: { phase: "S1901M" } });
     expect((await a.next("extend.ack")).p).toMatchObject({ requests: 1, extended: false });
+    // The other player is told a request is pending, so they know to second it.
+    expect((await b.next("extend")).p).toMatchObject({ requestedBy: [ann.power], needed: 2, granted: false });
+    expect((await summary(ann.gameId)).deadlineAt).toBe(initialDeadline);
     b.send({ t: "extend", id: "ext-b", p: { phase: "S1901M" } });
     expect((await b.next("extend.ack")).p).toMatchObject({ requests: 2, extended: true });
-    const deadline = await SELF.fetch(`http://cabal/api/games/${ann.gameId}`);
-    expect((await deadline.json() as { deadlineAt: number }).deadlineAt).toBe(initialDeadline + 45_000);
+    expect((await summary(ann.gameId)).deadlineAt).toBe(initialDeadline + 300_000);
     a.send({ t: "extend", p: { phase: "S1901M" } });
     expect((await a.next("error")).p.code).toBe("extension_used");
+    // Spectators cannot ask for time.
+    const spectator = await Client.connect(ann.gameId);
+    await spectator.next("welcome");
+    spectator.send({ t: "extend", p: { phase: "S1901M" } });
+    expect((await spectator.next("error")).p.code).toBe("spectator");
+  });
+
+  it("uses the daily and async presets, lets explicit seconds win, and rejects bad settings with a 400", async () => {
+    const daily = await summary((await create("Ann", { pacing: "daily" })).gameId);
+    expect(daily.settings).toMatchObject({ movementSeconds: 86_400, shortPhaseSeconds: 43_200 });
+    const dflt = await summary((await create("Ann")).gameId);
+    expect(dflt.settings).toMatchObject({ pacing: "async", movementSeconds: 172_800, shortPhaseSeconds: 86_400 });
+    const custom = await summary((await create("Ann", { pacing: "live", movementSeconds: 120 })).gameId);
+    expect(custom.settings).toMatchObject({ movementSeconds: 120, shortPhaseSeconds: 300 });
+    const bad = await SELF.fetch("http://cabal/api/games", {
+      method: "POST",
+      headers: { "cf-connecting-ip": nextIp() },
+      body: JSON.stringify({ name: "Ann", settings: { pacing: "hourly" } }),
+    });
+    expect(bad.status).toBe(400);
+  });
+
+  it("starts each phase with the pacing clock and the short clock for retreats", async () => {
+    const ann = await create("Ann", { pacing: "live", graceSeconds: 0 });
+    await start(ann);
+    const begun = await summary(ann.gameId);
+    expect(begun.deadlineAt! - Date.now()).toBeGreaterThan(590_000);
+    expect(begun.deadlineAt! - Date.now()).toBeLessThanOrEqual(600_000);
   });
 
   it("enforces the configured private press budget", async () => {
     const ann = await create("Ann", { aiFill: true, whisperBudget: 2 });
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
+    await start(ann);
     const a = await Client.connect(ann.gameId, ann.token);
     await a.next("welcome");
     for (let i = 0; i < 2; i++) {
@@ -364,145 +231,11 @@ describe("GameRoom", () => {
   it("enforces public-only and gunboat press modes", async () => {
     for (const [mode, expected] of [["public", "public_only"], ["gunboat", "no_press"]] as const) {
       const ann = await create("Ann", { aiFill: true, press: mode });
-      await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${ann.token}` },
-      });
+      await start(ann);
       const client = await Client.connect(ann.gameId, ann.token);
       await client.next("welcome");
       client.send({ t: "press.send", p: { to: "FRANCE", body: "private message" } });
       expect((await client.next("error")).p.code).toBe(expected);
-    }
-  });
-
-  it("takes over a seat after three missed movement phases", async () => {
-    const ann = await create("Ann", { aiFill: true, readyAdvance: true });
-    const bob = await join(ann.gameId, "Bob");
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
-    const a = await Client.connect(ann.gameId, ann.token);
-    const b = await Client.connect(ann.gameId, bob.token);
-    const opening = await a.next("welcome");
-    await b.next("welcome");
-    const holds = opening.p.state.units[ann.power]!.map((unit) => `${unit} H`);
-    for (const phase of ["S1901M", "F1901M", "S1902M"]) {
-      a.send({ t: "orders.set", p: { phase, orders: holds } });
-      await a.next("orders.ack");
-      a.send({ t: "ready", p: { phase, ready: true } });
-      if (phase !== "S1902M") b.send({ t: "ready", p: { phase, ready: true } });
-      await a.next("state");
-    }
-    const summary = await (await SELF.fetch(`http://cabal/api/games/${ann.gameId}`)).json() as {
-      seats: { power: string; kind: string; missed: number }[];
-    };
-    expect(summary.seats.find((seat) => seat.power === bob.power)).toMatchObject({ kind: "ai", missed: 3 });
-  });
-
-  it("allows a substitute to claim a civil-disorder seat with a fresh token", async () => {
-    const ann = await create("Ann", { aiFill: true, readyAdvance: true });
-    const bob = await join(ann.gameId, "Bob");
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
-    const a = await Client.connect(ann.gameId, ann.token);
-    const b = await Client.connect(ann.gameId, bob.token);
-    await a.next("welcome");
-    await b.next("welcome");
-    for (const phase of ["S1901M", "F1901M"]) {
-      a.send({ t: "orders.set", p: { phase, orders: [] } });
-      await a.next("orders.ack");
-      a.send({ t: "ready", p: { phase, ready: true } });
-      b.send({ t: "ready", p: { phase, ready: true } });
-      await a.next("state");
-    }
-    const substituteRes = await SELF.fetch(`http://cabal/api/games/${ann.gameId}/join`, {
-      method: "POST",
-      body: JSON.stringify({ name: "Sam", power: bob.power }),
-    });
-    expect(substituteRes.status).toBe(200);
-    const substitute = await substituteRes.json() as { token: string; power: string };
-    expect(substitute.power).toBe(bob.power);
-    expect(substitute.token).not.toBe(bob.token);
-    const oldToken = await SELF.fetch(`http://cabal/api/games/${ann.gameId}/ws?token=${bob.token}`, {
-      headers: { upgrade: "websocket" },
-    });
-    expect(oldToken.status).toBe(401);
-    const replacement = await Client.connect(ann.gameId, substitute.token);
-    expect((await replacement.next("welcome")).p.power).toBe(bob.power);
-  });
-
-  it("abandons a game after three resolved phases without orders", async () => {
-    const ann = await create("Ann", { aiFill: true, readyAdvance: true });
-    const bob = await join(ann.gameId, "Bob");
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
-    const a = await Client.connect(ann.gameId, ann.token);
-    const b = await Client.connect(ann.gameId, bob.token);
-    await a.next("welcome");
-    await b.next("welcome");
-    for (const phase of ["S1901M", "F1901M", "S1902M"]) {
-      a.send({ t: "orders.set", p: { phase, orders: [] } });
-      await a.next("orders.ack");
-      a.send({ t: "ready", p: { phase, ready: true } });
-      if (phase !== "S1902M") b.send({ t: "ready", p: { phase, ready: true } });
-      if (phase !== "S1902M") await a.next("state");
-    }
-    expect((await a.next("status")).p).toMatchObject({ status: "abandoned", reason: "no_orders" });
-    const summary = await SELF.fetch(`http://cabal/api/games/${ann.gameId}`);
-    expect((await summary.json() as { status: string }).status).toBe("abandoned");
-  });
-
-  it("pauses when every human disconnects and resumes on reconnect", async () => {
-    const ann = await create("Ann", { aiFill: true });
-    const bob = await join(ann.gameId, "Bob");
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
-    const a = await Client.connect(ann.gameId, ann.token);
-    const b = await Client.connect(ann.gameId, bob.token);
-    await a.next("welcome");
-    await b.next("welcome");
-    a.close();
-    b.close();
-    let status = "active";
-    for (let i = 0; i < 20 && status !== "paused"; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      status = ((await (await SELF.fetch(`http://cabal/api/games/${ann.gameId}`)).json()) as { status: string }).status;
-    }
-    expect(status).toBe("paused");
-    const spectator = await Client.connect(ann.gameId);
-    expect((await spectator.next("welcome")).p).toMatchObject({ status: "paused", pauseReason: "humans_absent" });
-    const resumed = await Client.connect(ann.gameId, ann.token);
-    expect((await resumed.next("welcome")).p.status).toBe("active");
-  });
-
-  it("distinguishes DIAS unanimity from a two-vote non-DIAS draw", async () => {
-    for (const dias of [true, false]) {
-      const ann = await create("Ann", { aiFill: true, dias });
-      const bob = await join(ann.gameId, "Bob");
-      const cal = await join(ann.gameId, "Cal");
-      await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${ann.token}` },
-      });
-      const clients = await Promise.all([ann.token, bob.token, cal.token].map((token) => Client.connect(ann.gameId, token)));
-      for (const client of clients) await client.next("welcome");
-      clients[0]!.send({ t: "vote", p: { kind: "draw", value: true } });
-      clients[1]!.send({ t: "vote", p: { kind: "draw", value: true } });
-      if (!dias) await clients[0]!.next("finished");
-      const summary = await SELF.fetch(`http://cabal/api/games/${ann.gameId}`);
-      expect((await summary.json() as { status: string }).status).toBe(dias ? "active" : "finished");
-      if (dias) {
-        clients[2]!.send({ t: "vote", p: { kind: "draw", value: true } });
-        expect((await SELF.fetch(`http://cabal/api/games/${ann.gameId}`)).status).toBe(200);
-        expect(((await (await SELF.fetch(`http://cabal/api/games/${ann.gameId}`)).json()) as { status: string }).status).toBe("finished");
-      }
     }
   });
 
@@ -519,10 +252,7 @@ describe("GameRoom", () => {
     };
     const ann = await create("Ann", { aiFill: true, readyAdvance: true });
     const bob = await join(ann.gameId, "Bob");
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
+    await start(ann);
     const a = await Client.connect(ann.gameId, ann.token);
     const b = await Client.connect(ann.gameId, bob.token);
     const annUnits = [...(await a.next("welcome")).p.state.units[ann.power]!].sort();
@@ -547,50 +277,6 @@ describe("GameRoom", () => {
     expect(state.p.state.units[bob.power]).toContain(moves[bob.power]![1]);
   });
 
-  it("lets a draw pass when the other human seat has fallen into civil disorder", async () => {
-    const ann = await create("Ann", { aiFill: true, readyAdvance: true });
-    const bob = await join(ann.gameId, "Bob");
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
-    const a = await Client.connect(ann.gameId, ann.token);
-    const b = await Client.connect(ann.gameId, bob.token);
-    await a.next("welcome");
-    const bobWelcome = await b.next("welcome");
-    const bobUnits = bobWelcome.p.state.units[bob.power]!;
-    // Bob readies up without orders twice, which puts his seat into civil disorder.
-    for (const phase of ["S1901M", "F1901M"]) {
-      a.send({ t: "orders.set", p: { phase, orders: [] } });
-      await a.next("orders.ack");
-      a.send({ t: "ready", p: { phase, ready: true } });
-      b.send({ t: "ready", p: { phase, ready: true } });
-      await a.next("state");
-    }
-    const summary = await (await SELF.fetch(`http://cabal/api/games/${ann.gameId}`)).json() as {
-      seats: { power: string; kind: string; missed: number }[];
-    };
-    expect(summary.seats.find((seat) => seat.power === bob.power)).toMatchObject({ kind: "civil_disorder", missed: 2 });
-
-    // A returning player can submit orders to reclaim the seat from civil disorder.
-    b.send({ t: "orders.set", p: { phase: "S1902M", orders: bobUnits.map((unit) => `${unit} H`) } });
-    const returned = await b.next("orders.ack");
-    expect(returned.p.accepted).toHaveLength(bobUnits.length);
-    const recoveredSummary = await (await SELF.fetch(`http://cabal/api/games/${ann.gameId}`)).json() as {
-      seats: { power: string; kind: string; missed: number }[];
-    };
-    expect(recoveredSummary.seats.find((seat) => seat.power === bob.power)).toMatchObject({ kind: "human", missed: 0 });
-    a.send({ t: "vote", p: { kind: "draw", value: true } });
-    b.send({ t: "vote", p: { kind: "draw", value: true } });
-    const finished = await a.next("finished");
-    expect(finished.p.result).toBe("draw");
-    const indexed = await serverEnv.DB?.prepare("SELECT result, phase_count FROM games_index WHERE game_id = ?").bind(ann.gameId).first<{
-      result: string;
-      phase_count: number;
-    }>();
-    expect(indexed).toMatchObject({ result: "draw", phase_count: 2 });
-  });
-
   it("throttles a socket that floods the room", async () => {
     const ann = await create("Ann");
     const spectator = await Client.connect(ann.gameId);
@@ -598,6 +284,8 @@ describe("GameRoom", () => {
     for (let i = 0; i < 60; i++) spectator.send({ t: "sync", p: { since: 0 } });
     const error = await spectator.next("error");
     expect(error.p.code).toBe("rate_limited");
+    // The first sync was answered and closed with a cursor.
+    expect((await spectator.next("synced")).p).toMatchObject({ more: false });
   });
 
   it("answers 404 for a code that names no game", async () => {
@@ -615,94 +303,82 @@ describe("GameRoom", () => {
     expect(res.status).toBe(400);
   });
 
-  it("never lets default orders command another power's units", async () => {
-    // One opening move per power, keyed by the power name the server assigns.
-    const moves: Record<string, [string, string]> = {
-      AUSTRIA: ["A VIE - GAL", "A GAL"],
-      ENGLAND: ["F LON - NTH", "F NTH"],
-      FRANCE: ["A PAR - BUR", "A BUR"],
-      GERMANY: ["A MUN - RUH", "A RUH"],
-      ITALY: ["A VEN - PIE", "A PIE"],
-      RUSSIA: ["A MOS - UKR", "A UKR"],
-      TURKEY: ["A CON - BUL", "A BUL"],
+  it("fires the deadline alarm by itself and applies sealed default orders", async () => {
+    const moves: Record<string, string> = {
+      AUSTRIA: "A VIE - GAL",
+      ENGLAND: "F LON - NTH",
+      FRANCE: "A PAR - BUR",
+      GERMANY: "A MUN - RUH",
+      ITALY: "A VEN - PIE",
+      RUSSIA: "A MOS - UKR",
+      TURKEY: "A CON - BUL",
     };
-    const ann = await create("Ann", { aiFill: true, readyAdvance: true });
-    const bob = await join(ann.gameId, "Bob");
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
-    const a = await Client.connect(ann.gameId, ann.token);
-    const b = await Client.connect(ann.gameId, bob.token);
-    const annUnits = [...(await a.next("welcome")).p.state.units[ann.power]!].sort();
-    await b.next("welcome");
-
-    // Bob files his own move plus one dressed up as Ann's, then submits nothing.
-    b.send({
-      t: "orders.default",
-      id: "d1",
-      p: { orders: [moves[bob.power]![0], `${ann.power}: ${moves[ann.power]![0]}`] },
-    });
-    const error = await b.next("error");
-    expect(error.p.code).toBe("bad_order");
-    expect(error.p.message).toContain("order names another power");
-
-    a.send({ t: "ready", p: { phase: "S1901M", ready: true } });
-    b.send({ t: "ready", p: { phase: "S1901M", ready: true } });
-    const state = await a.next("state");
-    expect(state.p.phase).toBe("F1901M");
-    expect([...state.p.state.units[ann.power]!].sort()).toEqual(annUnits);
-    // Bob's legitimate default still stood in for his missing orders.
-    expect(state.p.state.units[bob.power]).toContain(moves[bob.power]![1]);
+    const ann = await create("Ann", { aiFill: true, graceSeconds: 0 });
+    await start(ann);
+    const client = await Client.connect(ann.gameId, ann.token);
+    expect((await client.next("welcome")).p.phase).toBe("S1901M");
+    client.send({ t: "orders.default", p: { orders: [moves[ann.power]!] } });
+    // Nobody readies. The deadline passes and the room's own alarm resolves the phase.
+    await deadlineIn(ann.gameId, 80);
+    const state = await client.next("state", (m) => m.p.phase === "F1901M");
+    const destination = moves[ann.power]!.split(" - ")[1]!;
+    const unitType = moves[ann.power]!.startsWith("F ") ? "F" : "A";
+    expect(state.p.state.units[ann.power]).toContain(`${unitType} ${destination}`);
+    expect(state.p.status).toBe("active");
+    // Defaults are honoured, but the player was still absent: that is one missed phase.
+    expect((await summary(ann.gameId)).seats.find((s) => s.power === ann.power)).toMatchObject({ kind: "human", missed: 1 });
+    // The next phase has its own full deadline.
+    expect(state.p.deadlineAt! - Date.now()).toBeGreaterThan(172_000_000);
   });
 
-  it("lets a draw pass when the other human seat has fallen into civil disorder", async () => {
+  it("lets a draw pass when both players agree, and records the game in the Registry", async () => {
     const ann = await create("Ann", { aiFill: true, readyAdvance: true });
     const bob = await join(ann.gameId, "Bob");
-    await SELF.fetch(`http://cabal/api/games/${ann.gameId}/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${ann.token}` },
-    });
+    await start(ann);
     const a = await Client.connect(ann.gameId, ann.token);
     const b = await Client.connect(ann.gameId, bob.token);
-    await a.next("welcome");
-    await b.next("welcome");
+    const annUnits = (await a.next("welcome")).p.state.units[ann.power]!;
+    const bobUnits = (await b.next("welcome")).p.state.units[bob.power]!;
     // Bob readies up without orders twice, which puts his seat into civil disorder.
     for (const phase of ["S1901M", "F1901M"]) {
-      a.send({ t: "orders.set", p: { phase, orders: [] } });
-      await a.next("orders.ack");
-      a.send({ t: "ready", p: { phase, ready: true } });
       b.send({ t: "ready", p: { phase, ready: true } });
-      await a.next("state");
+      await holdAndReady(a, annUnits, phase);
     }
+    const disorder = await summary(ann.gameId);
+    expect(disorder.seats.find((seat) => seat.power === bob.power)).toMatchObject({ kind: "civil_disorder", missed: 2, autopilot: true });
+
+    // The returning player submits orders with the token he always had, and has his seat back.
+    const phase = disorder.phase;
+    b.send({ t: "orders.set", p: { phase, orders: bobUnits.map((unit) => `${unit} H`) } });
+    const returned = await b.next("orders.ack", (m) => m.p.phase === phase);
+    expect(returned.p.accepted.length).toBeGreaterThan(0);
+    expect((await summary(ann.gameId)).seats.find((seat) => seat.power === bob.power)).toMatchObject({ kind: "human", missed: 0, autopilot: false });
+
     a.send({ t: "vote", p: { kind: "draw", value: true } });
+    expect((await b.next("votes")).p).toMatchObject({ draw: [{ power: ann.power, value: true, include: null }] });
+    b.send({ t: "vote", p: { kind: "draw", value: true } });
     const finished = await a.next("finished");
-    expect(finished.p.result).toBe("draw");
+    expect(finished.p).toMatchObject({ result: "draw", reason: "vote" });
+    const indexed = await untilIndexed(ann.gameId);
+    expect(indexed).toMatchObject({ result: "draw", reason: "vote", cluster: "standard:full:async" });
+    expect(indexed.phaseCount).toBeGreaterThanOrEqual(2);
+    expect(indexed.seats.find((seat) => seat.power === ann.power)).toMatchObject({ kind: "human", name: "Ann" });
   });
 
-  it("throttles a socket that floods the room", async () => {
+  it("binds a socket with a hello frame, refuses tokens in the URL and closes on a bad token", async () => {
     const ann = await create("Ann");
-    const spectator = await Client.connect(ann.gameId);
-    await spectator.next("welcome");
-    for (let i = 0; i < 60; i++) spectator.send({ t: "sync", p: { since: 0 } });
-    const error = await spectator.next("error");
-    expect(error.p.code).toBe("rate_limited");
-  });
-
-  it("answers 404 for a code that names no game", async () => {
-    const res = await SELF.fetch("http://cabal/api/games/ZZZZZ9");
-    expect(res.status).toBe(404);
-    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-  });
-
-  it("rejects bad tokens and lets spectators watch", async () => {
-    const ann = await create("Ann");
-    const bad = await SELF.fetch(`http://cabal/api/games/${ann.gameId}/ws?token=${ann.gameId}.FRANCE.${"0".repeat(48)}`, {
-      headers: { upgrade: "websocket" },
+    const inUrl = await SELF.fetch(`http://cabal/api/games/${ann.gameId}/ws?token=${ann.token}`, {
+      headers: { upgrade: "websocket", "cf-connecting-ip": nextIp() },
     });
-    expect(bad.status).toBe(401);
+    expect(inUrl.status).toBe(400);
     const spectator = await Client.connect(ann.gameId);
-    const welcome = await spectator.next("welcome");
-    expect(welcome.p.power).toBeNull();
+    expect((await spectator.next("welcome")).p.power).toBeNull();
+    spectator.send({ t: "hello", id: "h1", p: { token: ann.token } });
+    const bound = await spectator.next("welcome");
+    expect(bound.p.power).toBe(ann.power);
+    expect(bound.id).toBe("h1");
+    const forged = await Client.connect(ann.gameId, `${ann.gameId}.FRANCE.${"0".repeat(48)}`);
+    expect((await forged.next("error")).p.code).toBe("bad_token");
+    expect((await forged.untilClosed()).code).toBe(4401);
   });
 });

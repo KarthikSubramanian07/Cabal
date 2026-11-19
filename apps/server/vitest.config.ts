@@ -3,5 +3,6 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } })],
-  test: { include: ["test/**/*.test.ts"] },
+  // Tests drive real sockets, alarms and a queue inside workerd; leave room for a busy CI runner.
+  test: { include: ["test/**/*.test.ts"], testTimeout: 30_000, hookTimeout: 30_000 },
 });

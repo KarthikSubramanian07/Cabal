@@ -1,23 +1,27 @@
 /**
- * cabal-server: HTTP router in front of the GameRoom Durable Objects.
+ * cabal-server: HTTP router in front of the GameRoom Durable Objects and the Registry.
  *
- *   POST /api/games                 create a game, returns the creator's seat token
- *   POST /api/games/:id/join        claim a seat
- *   POST /api/games/:id/start       creator starts early (AI fills open seats)
- *   GET  /api/games/:id             public summary
- *   GET  /api/games/:id/replay      MILA saved game JSON
- *   GET  /api/games/:id/ws?token=   WebSocket (spectators may omit the token)
+ *   POST /api/games                   create a game, returns the creator's seat token
+ *   GET  /api/games                   recently finished and abandoned games (from the Registry)
+ *   POST /api/games/:id/join          claim a lobby seat, or a vacated seat with a substitute invite
+ *   POST /api/games/:id/start         creator starts early (AI fills open seats)
+ *   POST /api/games/:id/substitute    a seated player opens a vacated seat to an invited substitute
+ *   GET  /api/games/:id               public summary
+ *   GET  /api/games/:id/replay        MILA saved game JSON
+ *   GET  /api/games/:id/ledger        kept, broken and void pledges per power
+ *   GET  /api/games/:id/ws            WebSocket; a player then sends `hello { token }`
  *   GET  /health
+ *
+ * The queue handler plays Claude turns for games that opted into them (see agent-consumer.ts).
  */
-import { CreateGameRequest, JoinGameRequest } from "@cabal/protocol";
-import { ClaudeBrain, FallbackBrain, PERSONAS, Player } from "@cabal/agents";
-import { Game, mapInfo } from "@cabal/engine";
-import type { PowerName, PressView, StateView } from "@cabal/protocol";
-import { engineReady } from "./engine.js";
-import type { Env } from "./env.js";
+import { CreateGameRequest, GameResult, JoinGameRequest, SubstituteInviteRequest, resolveSettings } from "@cabal/protocol";
+import { consumeTurns } from "./agent-consumer.js";
+import type { AgentTurn, Env } from "./env.js";
+import { REGISTRY_NAME } from "./registry.js";
 import { gameCode } from "./tokens.js";
 
 export { GameRoom } from "./room.js";
+export { Registry } from "./registry.js";
 
 const CORS: Record<string, string> = {
   "access-control-allow-origin": "*",
@@ -39,7 +43,7 @@ function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8" } });
 }
 
-const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|replay|ledger|ws))?$/;
+const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|substitute|replay|ledger|ws))?$/;
 
 async function readJson(request: Request): Promise<unknown> {
   const declared = Number(request.headers.get("content-length") ?? "0");
@@ -97,36 +101,62 @@ export default {
 
     if (url.pathname === "/api/games" && request.method === "POST") {
       if (await limited(env.CREATE_LIMITER, request, "create")) return tooMany();
-      const rawBody = await readJson(request);
-      const body = CreateGameRequest.safeParse(rawBody);
+      const body = CreateGameRequest.safeParse(await readJson(request));
       if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
-      const rawSettings = typeof rawBody === "object" && rawBody !== null && "settings" in rawBody ? rawBody.settings : {};
+      // Settings are validated and resolved here, so bad input is a 400 and never reaches a room.
+      const settings = resolveSettings(body.data.settings);
       const id = gameCode();
       const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id));
       const res = await stub.fetch("https://room/create", {
         method: "POST",
-        body: JSON.stringify({ id, name: body.data.name, settings: rawSettings }),
+        body: JSON.stringify({ id, name: body.data.name, settings }),
       });
       return withCors(res);
+    }
+
+    if (url.pathname === "/api/games" && request.method === "GET") {
+      if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
+      if (!env.REGISTRY) return withCors(json({ games: [] }));
+      const limit = Number(url.searchParams.get("limit") ?? "25");
+      const before = Number(url.searchParams.get("before") ?? "");
+      const result = GameResult.safeParse(url.searchParams.get("result"));
+      const registry = env.REGISTRY.get(env.REGISTRY.idFromName(REGISTRY_NAME));
+      const games = await registry.listGames({
+        ...(Number.isFinite(limit) ? { limit } : {}),
+        ...(Number.isFinite(before) && before > 0 ? { before } : {}),
+        ...(result.success ? { result: result.data } : {}),
+      });
+      return withCors(json({ games }));
     }
 
     const m = GAME_PATH.exec(url.pathname);
     if (m) {
       const [, id, action] = m;
       const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id!));
-      if (action === "ws") {
-        return stub.fetch(`https://room/ws${url.search}`, request);
-      }
+      const authorization = { authorization: request.headers.get("authorization") ?? "" };
       if (action === "join" && request.method === "POST") {
         if (await limited(env.JOIN_LIMITER, request, "join")) return tooMany();
         const body = JoinGameRequest.safeParse(await readJson(request));
         if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
-        return withCors(await stub.fetch("https://room/join", { method: "POST", body: JSON.stringify(body.data) }));
+        return withCors(await stub.fetch("https://room/join", { method: "POST", headers: authorization, body: JSON.stringify(body.data) }));
+      }
+      if (action === "substitute" && request.method === "POST") {
+        if (await limited(env.JOIN_LIMITER, request, "substitute")) return tooMany();
+        const body = SubstituteInviteRequest.safeParse(await readJson(request));
+        if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
+        return withCors(await stub.fetch("https://room/substitute", { method: "POST", headers: authorization, body: JSON.stringify(body.data) }));
+      }
+      // Everything below can wake a room and load the engine, so it shares one per-address limit.
+      if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
+      if (action === "ws") {
+        // Seat tokens never travel in a URL; a stray query string is not forwarded.
+        if (url.searchParams.has("token")) {
+          return withCors(json({ error: "send the seat token in a hello frame, not in the URL" }, 400));
+        }
+        return stub.fetch("https://room/ws", request);
       }
       if (action === "start" && request.method === "POST") {
-        return withCors(
-          await stub.fetch("https://room/start", { method: "POST", headers: { authorization: request.headers.get("authorization") ?? "" } }),
-        );
+        return withCors(await stub.fetch("https://room/start", { method: "POST", headers: authorization }));
       }
       if (action === "replay" && request.method === "GET") return withCors(await stub.fetch("https://room/replay"));
       if (action === "ledger" && request.method === "GET") return withCors(await stub.fetch("https://room/ledger"));
@@ -134,67 +164,7 @@ export default {
     }
     return withCors(json({ error: "not found" }, 404));
   },
-  async queue(batch: MessageBatch, env: Env): Promise<void> {
-    await engineReady();
-    for (const message of batch.messages) {
-      const { gameId, power, token } = message.body as { gameId: string; power: PowerName; token: string };
-      const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(gameId));
-      const brain = env.ANTHROPIC_API_KEY ? new ClaudeBrain({ apiKey: env.ANTHROPIC_API_KEY }) : new FallbackBrain();
-      const player = new Player(power, PERSONAS[power] ?? "A careful strategist.", brain);
-      try {
-        const authorization = { authorization: `Bearer ${token}` };
-        const stateResponse = await room.fetch("https://room/agent/state", { headers: authorization });
-        if (stateResponse.status === 409) {
-          message.ack();
-          continue;
-        }
-        if (!stateResponse.ok) throw new Error(`agent state failed: ${stateResponse.status}`);
-        const welcome = await stateResponse.json() as { phase: string; state: StateView; press: PressView[] };
-        const game = Game.fromState(welcome.state);
-        const { decision, validated } = await player.play({
-          phase: welcome.phase,
-          state: welcome.state,
-          map: mapInfo(),
-          legal: game.legal(power),
-          press: welcome.press.map((item) => ({ from: item.from, to: item.to, body: item.body, pledge: item.pledge?.orders ?? null })),
-          myPledges: welcome.press
-            .filter((item) => item.phase === welcome.phase && item.from === power && item.pledge?.orders)
-            .map((item) => item.pledge!.orders!),
-          trust: {},
-        });
-        const knownPowers = new Set<PowerName>(["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"]);
-        const frames: unknown[] = decision.messages
-          .filter((item) => item.to === "ALL" || knownPowers.has(item.to as PowerName))
-          .map((item) => {
-            const pledgedOrders = decision.pledge?.to === item.to
-              ? decision.pledge.orders.filter((order) => validated.orders.includes(order))
-              : [];
-            return {
-              t: "press.send",
-              p: {
-                to: item.to,
-                body: item.body,
-                ...(pledgedOrders.length > 0 && decision.pledge
-                  ? { pledge: { orders: pledgedOrders, sealed: decision.pledge.sealed } }
-                  : {}),
-              },
-            };
-          });
-        frames.push(
-          { t: "orders.set", p: { phase: welcome.phase, orders: validated.orders } },
-          { t: "ready", p: { phase: welcome.phase, ready: true } },
-        );
-        const actionResponse = await room.fetch("https://room/agent/act", {
-          method: "POST",
-          headers: { ...authorization, "content-type": "application/json" },
-          body: JSON.stringify({ frames }),
-        });
-        if (!actionResponse.ok) throw new Error(`agent action failed: ${actionResponse.status} ${await actionResponse.text()}`);
-        message.ack();
-      } catch (error) {
-        console.error(JSON.stringify({ event: "agent_turn_failed", gameId, power, error: String(error) }));
-        message.retry({ delaySeconds: 30 });
-      }
-    }
+  async queue(batch: MessageBatch<AgentTurn>, env: Env): Promise<void> {
+    await consumeTurns(batch, env);
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<Env, AgentTurn>;
