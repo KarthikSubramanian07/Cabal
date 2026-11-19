@@ -144,17 +144,33 @@ describe("Game", () => {
   it("never lets a power prefix order another power's units", () => {
     const game = new Game();
     const spoofed = { orders: { GERMANY: ["FRA: A PAR - PIC"] } };
-    expect(() => game.normaliseOrders(spoofed)).toThrow(/submitted for Germany/);
-    expect(() => game.process(spoofed)).toThrow(/submitted for Germany/);
+    // set aside with a reason instead of failing the phase
+    expect(game.normaliseOrders(spoofed)).toEqual(spoofed);
+    const outcome = game.process(spoofed);
+    expect(outcome.rejected).toEqual([
+      {
+        power: "GERMANY",
+        input: "FRA: A PAR - PIC",
+        code: "wrong_power",
+        reason: "The order names France but was submitted for Germany.",
+      },
+    ]);
+    expect(outcome.next.units["FRANCE"]).toContain("A PAR");
     expect(() => canonicalOrder("FRA: A PAR - PIC", "M", "GERMANY")).toThrow(/submitted for Germany/);
     expect(canonicalOrder("GER: A MUN - BUR", "M", "GERMANY")).toBe("A MUN - BUR");
   });
 
-  it("rejects orders that do not parse", () => {
+  it("adjudicates the rest of a phase when one order does not parse", () => {
     const game = new Game();
-    expect(() =>
-      game.process({ orders: { FRANCE: ["A PAR - NOWHERE"] } }),
-    ).toThrow(/NOWHERE/);
+    const outcome = game.process({
+      orders: { FRANCE: ["A PAR - NOWHERE", "A MAR - SPA"], GERMANY: ["A MUN - BUR"] },
+    });
+    expect(outcome.rejected).toHaveLength(1);
+    expect(outcome.rejected[0]).toMatchObject({ power: "FRANCE", input: "A PAR - NOWHERE", code: "unparseable" });
+    expect(outcome.rejected[0]?.reason).toContain("NOWHERE");
+    expect(outcome.next.units["FRANCE"]).toContain("A SPA");
+    expect(outcome.next.units["GERMANY"]).toContain("A BUR");
+    expect(outcome.results.find((r) => r.unit === "A PAR")?.code).toBe("ok");
   });
 });
 
