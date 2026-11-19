@@ -83,8 +83,20 @@ fn build_identity(manifest: &Path) {
         }
     }
     println!("cargo:rustc-env=CABAL_BUILD_COMMIT={commit}");
+    // Cargo's `PROFILE` only says `debug` or `release`, also for a profile
+    // that inherits from one of them. The directory the build writes to is
+    // named after the profile itself (`wasm-release`), three levels above
+    // `OUT_DIR` (`<profile>/build/<crate>-<hash>/out`).
+    let profile = env::var("OUT_DIR")
+        .ok()
+        .and_then(|out| {
+            let name = Path::new(&out).ancestors().nth(3)?.file_name()?;
+            Some(name.to_string_lossy().into_owned())
+        })
+        .or_else(|| env::var("PROFILE").ok())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=CABAL_BUILD_PROFILE={profile}");
     for (key, var) in [
-        ("CABAL_BUILD_PROFILE", "PROFILE"),
         ("CABAL_BUILD_OPT_LEVEL", "OPT_LEVEL"),
         ("CABAL_BUILD_TARGET", "TARGET"),
     ] {

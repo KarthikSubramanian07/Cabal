@@ -53,7 +53,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod build {
     /// Short commit hash the engine was built from, or `unknown` outside a checkout.
     pub const COMMIT: &str = env!("CABAL_BUILD_COMMIT");
-    /// Cargo profile family: `release` or `debug`.
+    /// The cargo profile by name: `debug`, `release`, or a custom one such as
+    /// `wasm-release` (the WebAssembly build).
     pub const PROFILE: &str = env!("CABAL_BUILD_PROFILE");
     /// Optimisation level the engine was compiled at: `0` to `3`, `s` or `z`.
     pub const OPT_LEVEL: &str = env!("CABAL_BUILD_OPT_LEVEL");
@@ -67,7 +68,12 @@ mod build_tests {
     fn the_build_identifies_itself() {
         assert!(super::VERSION.split('.').count() == 3);
         assert!(!super::build::COMMIT.is_empty());
-        assert!(["debug", "release"].contains(&super::build::PROFILE));
+        // tests run under the dev profile, whose directory is `debug`
+        assert!(
+            ["debug", "release"].contains(&super::build::PROFILE),
+            "{}",
+            super::build::PROFILE
+        );
         assert!(!super::build::OPT_LEVEL.is_empty());
         assert!(super::build::TARGET.contains('-'));
     }
