@@ -19,6 +19,8 @@
 .brand {
   display: flex;
   align-items: center;
+  /* A pointer target of at least 24px (WCAG 2.5.8), though the mark is 22px tall. */
+  min-height: 24px;
 }
 
 .nav-toggle {
@@ -122,6 +124,13 @@
 .footer-links {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 18px;
+  gap: 2px 18px;
   margin-left: auto;
+}
+
+/* Tall enough to be a 24px pointer target (WCAG 2.5.8) without moving the text. */
+.footer-links a {
+  display: inline-block;
+  padding-block: 3px;
+  margin-block: -3px;
 }
