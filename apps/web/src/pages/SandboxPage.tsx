@@ -867,7 +867,9 @@ function Table({ sb }: { sb: Sandbox }) {
                 Disband <kbd>D</kbd>
               </button>
             ) : null}
-            {playing ? (
+            {/* Offered between orders, not while one is half written: the toolbar keeps one row
+                on a phone, so the map does not resize under the finger mid-order. */}
+            {playing && draft.step === "idle" && !picker ? (
               <button type="button" className="tool what-if" aria-pressed={whatIf.on} onClick={toggleWhatIf}>
                 What if
               </button>
