@@ -354,7 +354,6 @@ describe("CabalSocket", () => {
     const ws = await h.bind(1);
     h.socket.reconnect();
     expect(ws.closedWith?.code).toBe(4000);
-    h.time.advance(100);
     const second = await h.bind(1);
     h.socket.close();
     expect(second.closedWith).toEqual({ code: 1000, reason: "bye" });
@@ -362,6 +361,59 @@ describe("CabalSocket", () => {
     h.time.advance(60_000);
     await flush();
     expect(h.sockets).toHaveLength(2);
+  });
+});
+
+describe("reconnecting on request", () => {
+  it("dials at once after a long outage instead of waiting out a grown backoff", async () => {
+    const time = clock();
+    let dials = 0;
+    const socket = new CabalSocket({
+      connect: () => {
+        dials++;
+        throw new Error("server down");
+      },
+      random: () => 0,
+      now: time.now,
+      setTimer: time.setTimer,
+      clearTimer: time.clearTimer,
+      heartbeatMs: 0,
+    });
+    void socket.start().catch(() => undefined);
+    await flush();
+    // About a minute of outage: the backoff has grown to its ceiling.
+    for (let i = 0; i < 12; i++) {
+      time.advance(10_000);
+      await flush();
+    }
+    expect(socket.attempt).toBeGreaterThanOrEqual(6);
+    const before = dials;
+    socket.reconnect();
+    await flush();
+    expect(dials).toBe(before + 1);
+    expect(socket.attempt).toBe(1);
+  });
+
+  it("leaves one retry waiting however often it is pressed", async () => {
+    const time = clock();
+    const socket = new CabalSocket({
+      connect: () => {
+        throw new Error("server down");
+      },
+      random: () => 0,
+      now: time.now,
+      setTimer: time.setTimer,
+      clearTimer: time.clearTimer,
+      heartbeatMs: 0,
+    });
+    void socket.start().catch(() => undefined);
+    await flush();
+    expect(time.pending()).toHaveLength(1);
+    socket.reconnect();
+    socket.reconnect();
+    socket.reconnect();
+    await flush();
+    expect(time.pending()).toHaveLength(1);
   });
 });
 
