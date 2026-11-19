@@ -387,4 +387,28 @@ describe("createApi", () => {
     expect(failure).toBeInstanceOf(ApiError);
     expect(failure).toMatchObject({ status: 404, message: "no such game" });
   });
+
+  it("covers the player routes, with the player secret as the bearer and never in a URL", async () => {
+    const calls: { url: string; init: RequestInit | undefined }[] = [];
+    const summary = { id: "pl_1", handle: "Talleyrand", createdAt: 1 };
+    const replies: Response[] = [
+      Response.json({ player: summary, secret: "cps_secret" }, { status: 201 }),
+      Response.json({ recoveryCode: "CABAL-AAAA-BBBB-CCCC-DDDD-EEEE", issuedAt: 2 }),
+      new Response(null, { status: 204 }),
+      Response.json({ ladder: "overall", entries: [], offset: 25, limit: 25, next: null }),
+      Response.json({ gameId: "ABCDEF", token: "ABCDEF.FRANCE.secret", power: "FRANCE" }),
+    ];
+    const api = createApi({ fetch: async (url, init) => (calls.push({ url, init }), replies.shift()!) });
+    expect(await api.createPlayer("Talleyrand")).toEqual({ player: summary, secret: "cps_secret" });
+    expect(JSON.parse(calls[0]!.init!.body as string)).toEqual({ handle: "Talleyrand" });
+    expect((await api.issueRecoveryCode("cps_secret")).recoveryCode).toMatch(/^CABAL-/);
+    expect((calls[1]!.init!.headers as Record<string, string>).authorization).toBe("Bearer cps_secret");
+    expect(await api.logout("cps_secret", true)).toBeNull();
+    expect(JSON.parse(calls[2]!.init!.body as string)).toEqual({ everywhere: true });
+    await api.leaderboard({ offset: 25 });
+    expect(calls[3]!.url).toBe("/api/leaderboard?offset=25");
+    await api.joinGame("ABCDEF", {}, "cps_secret");
+    expect((calls[4]!.init!.headers as Record<string, string>).authorization).toBe("Bearer cps_secret");
+    for (const call of calls) expect(call.url).not.toContain("secret");
+  });
 });
