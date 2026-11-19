@@ -324,10 +324,16 @@ describe("GameRoom", () => {
     client.send({ t: "orders.default", p: { orders: [moves[ann.power]!] } });
     // Nobody readies. The deadline passes and the room's own alarm resolves the phase.
     await deadlineIn(ann.gameId, 80);
+    const results = await client.next("results", (m) => m.p.phase === "S1901M");
     const state = await client.next("state", (m) => m.p.phase === "F1901M");
+    // The sealed default was the order adjudicated for the unit. Whether the move got through is
+    // the board's business: a neighbouring bot may contest the province and bounce it.
+    const mine = results.p.results.filter((r) => r.power === ann.power);
+    expect(mine.map((r) => r.order)).toContain(moves[ann.power]!);
     const destination = moves[ann.power]!.split(" - ")[1]!;
     const unitType = moves[ann.power]!.startsWith("F ") ? "F" : "A";
-    expect(state.p.state.units[ann.power]).toContain(`${unitType} ${destination}`);
+    const moved = mine.find((r) => r.order === moves[ann.power])!;
+    expect(state.p.state.units[ann.power]!.includes(`${unitType} ${destination}`)).toBe(moved.ok);
     expect(state.p.status).toBe("active");
     // Defaults are honoured, but the player was still absent: that is one missed phase.
     expect((await summary(ann.gameId)).seats.find((s) => s.power === ann.power)).toMatchObject({ kind: "human", missed: 1 });
