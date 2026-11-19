@@ -248,6 +248,14 @@ dialog.seal-dialog {
 
 /* ---- the account card */
 
+/* A link on its own line, with a hit area of at least 24 px (WCAG 2.5.8). */
+.account-record a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 0;
+}
+
 dialog.account .how-body section {
   padding: 16px 0;
 }
