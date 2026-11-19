@@ -486,8 +486,9 @@ impl Game {
             };
             let recorded_solo = match recorded {
                 Some(SavedOutcome::Solo { winner }) => Some(Some(canon(winner))),
-                Some(_) => Some(None),
-                None => None,
+                Some(SavedOutcome::Active | SavedOutcome::Draw { .. }) => Some(None),
+                // an ending this engine does not know says nothing about a solo
+                Some(SavedOutcome::Unknown) | None => None,
             };
             if let Some(want) = recorded_solo {
                 if want != engine_solo {

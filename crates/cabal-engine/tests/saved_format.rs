@@ -556,3 +556,154 @@ fn a_cabal_key_holding_a_hosts_own_data_does_not_stop_the_file_loading() {
     let own = through_json(&game.to_saved("own"));
     assert!(own.cabal.is_some());
 }
+
+/// A host's block is whatever the host needs it to be. None of these may stop
+/// the file loading, whichever way it is loaded; each was a hard error while
+/// the block was parsed into the engine's own layout before being looked at.
+#[test]
+fn a_hosts_cabal_block_of_any_shape_is_read_as_absent() {
+    use serde_json::json;
+    let map = Map::standard();
+    let mut game = Game::new(map, Rulebook::edition_1971());
+    game.process_movement(&movement(map, &["FRA: A PAR - BUR"]));
+    let own = serde_json::to_value(game.to_saved("annotated")).unwrap();
+    let entry = json!({
+        "id": "p1", "pledger": "FRANCE", "audience": "ALL", "phase": "S1901M", "sealed": true,
+        "commitment": "ab", "nonce": "cd", "orders": ["A PAR - BUR"], "receipt": "kept",
+    });
+    let with = |entry: &serde_json::Value, key: &str, value: serde_json::Value| {
+        let mut e = entry.clone();
+        e[key] = value;
+        e
+    };
+    let without = |entry: &serde_json::Value, key: &str| {
+        let mut e = entry.clone();
+        e.as_object_mut().unwrap().remove(key);
+        e
+    };
+    let blocks = [
+        (
+            "a receipt the engine does not know",
+            json!({ "protocol": 3, "pledges": [with(&entry, "receipt", json!("invalid"))] }),
+        ),
+        (
+            "a pledge without a phase",
+            json!({ "protocol": 3, "pledges": [without(&entry, "phase")] }),
+        ),
+        (
+            "a pledge of another shape",
+            json!({ "pledges": [{ "id": "p1", "by": "FRANCE", "text": "I will not attack" }] }),
+        ),
+        ("pledges that are not a list", json!({ "pledges": "none" })),
+        (
+            "a rulebook named by a string",
+            json!({ "protocol": 3, "rulebook": "2023", "status": "active" }),
+        ),
+        (
+            "an engine and a rulebook that is not one",
+            json!({ "engine": "host 2", "rulebook": "2023" }),
+        ),
+        (
+            "an engine that is not a string",
+            json!({ "engine": 2, "rulebook": own["cabal"]["rulebook"].clone() }),
+        ),
+        (
+            "an outcome written as a string",
+            json!({ "protocol": 3, "outcome": "draw" }),
+        ),
+        ("a string", json!("v1")),
+        ("an array", json!([1, 2])),
+        ("a number", json!(7)),
+        ("null", json!(null)),
+        ("an empty object", json!({})),
+    ];
+    for (what, block) in blocks {
+        let mut json = own.clone();
+        json["cabal"] = block;
+        let saved: SavedGame =
+            serde_json::from_value(json).unwrap_or_else(|e| panic!("{what}: {e}"));
+        assert!(saved.cabal.is_none(), "{what}: read as absent");
+        let replayed = Game::from_saved(&saved, Rulebook::default()).unwrap();
+        assert_eq!(replayed.state, game.state, "{what}");
+        assert_eq!(
+            replayed.rulebook, game.rulebook,
+            "{what}: edition from `rules`"
+        );
+        let resumed = Game::resume(&saved, Rulebook::default()).unwrap();
+        assert_eq!(resumed.state, game.state, "{what}");
+        let report = Game::verify_saved(&saved, Rulebook::default()).unwrap();
+        assert!(report.is_clean(), "{what}: {:?}", report.divergences);
+    }
+}
+
+/// A deploy can be rolled back. A record written by a newer engine must still
+/// wake on an older one, whatever the newer one added to its own block.
+#[test]
+fn a_newer_engines_block_still_loads() {
+    use serde_json::json;
+    let map = Map::standard();
+    let mut game = Game::new(map, Rulebook::edition_1971());
+    game.process_movement(&movement(map, &["FRA: A PAR - BUR"]));
+    game.record_pledge(SavedPledge {
+        id: "p1".into(),
+        phase: "S1901M".into(),
+        pledger: "FRANCE".into(),
+        audience: "ALL".into(),
+        orders: vec!["A PAR - BUR".into()],
+        ..Default::default()
+    });
+    let own = serde_json::to_value(game.to_saved("future")).unwrap();
+
+    // an ending this engine has never heard of: the block is still the engine's
+    let mut json = own.clone();
+    json["cabal"]["outcome"] = json!({ "result": "abandoned", "by": "host" });
+    let saved: SavedGame = serde_json::from_value(json.clone()).unwrap();
+    let meta = saved.cabal.as_ref().expect("still the engine's block");
+    assert_eq!(meta.outcome, SavedOutcome::Unknown);
+    assert_eq!(meta.rulebook, game.rulebook);
+    assert_eq!(meta.pledges.len(), 1);
+    let resumed = Game::resume(&saved, Rulebook::default()).unwrap();
+    assert_eq!(resumed.state, game.state);
+    assert_eq!(resumed.rulebook, game.rulebook);
+    assert!(
+        !resumed.is_finished(),
+        "play continues unless the file says COMPLETED"
+    );
+    assert_eq!(
+        Game::from_saved(&saved, Rulebook::default()).unwrap().state,
+        game.state
+    );
+
+    // the same ending on a finished file: the final phase label decides
+    json["phases"].as_array_mut().unwrap().last_mut().unwrap()["name"] = json!("COMPLETED");
+    let saved: SavedGame = serde_json::from_value(json).unwrap();
+    assert!(
+        Game::resume(&saved, Rulebook::default())
+            .unwrap()
+            .is_finished()
+    );
+    assert!(
+        Game::from_saved(&saved, Rulebook::default())
+            .unwrap()
+            .is_finished()
+    );
+
+    // a rule setting and a pledge field this engine does not know are ignored;
+    // a pledge it cannot read at all is left out and the rest are kept
+    let mut json = own.clone();
+    json["cabal"]["rulebook"]["some_new_rule"] = json!(true);
+    json["cabal"]["pledges"][0]["witnesses"] = json!(["ENGLAND"]);
+    json["cabal"]["pledges"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "id": "p2", "receipt": "invalid" }));
+    let saved: SavedGame = serde_json::from_value(json).unwrap();
+    let meta = saved.cabal.as_ref().unwrap();
+    assert_eq!(meta.rulebook, game.rulebook);
+    assert_eq!(meta.pledges.len(), 1);
+    assert_eq!(meta.pledges[0].id, "p1");
+    assert_eq!(
+        Game::resume(&saved, Rulebook::default()).unwrap().state,
+        game.state
+    );
+}

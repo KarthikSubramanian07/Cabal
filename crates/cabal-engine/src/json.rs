@@ -114,6 +114,11 @@ pub enum SavedOutcome {
     Draw {
         members: Vec<String>,
     },
+    /// A kind of ending this engine does not know, written by a newer one.
+    /// Read as if no outcome had been recorded: the board and a final
+    /// `COMPLETED` phase decide. Never written by this engine.
+    #[serde(other)]
+    Unknown,
 }
 
 /// A pledge as recorded in a saved game. Sealed pledges are recorded once revealed.
@@ -171,33 +176,51 @@ pub struct SavedGame {
     pub cabal: Option<CabalMeta>,
 }
 
-/// `cabal` on a saved game is only this engine's record when it has this
-/// engine's shape. Hosts attach their own data under the same key, and a file
-/// must not become unreadable because of an annotation the replay does not need.
-/// The engine's record always names the engine and the rulebook; a block
-/// without both is somebody else's.
+/// `cabal` on a saved game is only this engine's record when it names the
+/// engine and the rulebook. Hosts attach their own data under the same key,
+/// and a file must not become unreadable because of an annotation the replay
+/// does not need, so anything else is read as absent: a block that is not an
+/// object, one without both keys, or one whose `rulebook` is not a rulebook.
+///
+/// The block is looked at before it is given a shape. A host field that
+/// shares a name with one of the engine's but not its layout (a pledge with a
+/// receipt this engine has never heard of, an outcome written as a string)
+/// therefore cannot fail the file.
+///
+/// The engine's own block is read just as forgivingly, because a game has to
+/// keep loading after a deploy is rolled back to an older engine: an outcome
+/// kind this engine does not know becomes [`SavedOutcome::Unknown`], and a
+/// pledge it cannot read is left out.
 fn own_meta_or_none<'de, D>(deserializer: D) -> Result<Option<CabalMeta>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    struct Block {
-        engine: Option<String>,
-        rulebook: Option<Rulebook>,
-        #[serde(default)]
-        outcome: SavedOutcome,
-        #[serde(default)]
-        pledges: Vec<SavedPledge>,
-    }
-    let block = Option::<Block>::deserialize(deserializer)?;
-    Ok(block.and_then(|b| match (b.engine, b.rulebook) {
-        (Some(engine), Some(rulebook)) => Some(CabalMeta {
-            engine,
-            rulebook,
-            outcome: b.outcome,
-            pledges: b.pledges,
-        }),
-        _ => None,
+    use serde_json::Value;
+    let Value::Object(mut block) = Value::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let Some(Value::String(engine)) = block.remove("engine") else {
+        return Ok(None);
+    };
+    let Some(Ok(rulebook)) = block.remove("rulebook").map(Rulebook::deserialize) else {
+        return Ok(None);
+    };
+    let outcome = match block.remove("outcome") {
+        None => SavedOutcome::default(),
+        Some(value) => SavedOutcome::deserialize(value).unwrap_or(SavedOutcome::Unknown),
+    };
+    let pledges = match block.remove("pledges") {
+        Some(Value::Array(list)) => list
+            .into_iter()
+            .filter_map(|p| SavedPledge::deserialize(p).ok())
+            .collect(),
+        _ => Vec::new(),
+    };
+    Ok(Some(CabalMeta {
+        engine,
+        rulebook,
+        outcome,
+        pledges,
     }))
 }
 
@@ -817,8 +840,8 @@ impl Game {
                 let members = powers_named(self.map(), members)?;
                 self.declare_draw_among(&members);
             }
-            Some(_) => {}
-            None => {
+            Some(SavedOutcome::Active | SavedOutcome::Solo { .. }) => {}
+            Some(SavedOutcome::Unknown) | None => {
                 if saved.phases.last().is_some_and(|p| p.name == "COMPLETED") {
                     self.declare_draw();
                 }
@@ -908,11 +931,11 @@ impl Game {
                 let members = powers_named(map, members)?;
                 self.declare_draw_among(&members);
             }
-            None if completed => match self.solo_winner() {
+            Some(SavedOutcome::Unknown) | None if completed => match self.solo_winner() {
                 Some(winner) => self.status = Status::Solo { winner },
                 None => self.declare_draw(),
             },
-            None => {}
+            Some(SavedOutcome::Unknown) | None => {}
         }
         Ok(())
     }
@@ -983,6 +1006,8 @@ pub enum ReplayError {
     Diverged { phase: String },
     #[error("unsupported snapshot format {0}")]
     SnapshotFormat(u32),
+    #[error("the saved game is not the history of this snapshot: {0}")]
+    SnapshotMismatch(String),
 }
 
 /// Province name helper used by hosts.
