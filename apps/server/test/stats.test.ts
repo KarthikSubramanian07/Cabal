@@ -1,6 +1,6 @@
 /** The statistics behind the metrics summary and the cold start gate. */
 import { describe, expect, it } from "vitest";
-import { overBudget, quantile, regressions, summarise } from "../src/stats.js";
+import { binOf, binValue, overBudget, quantile, regressions, summarise, summariseBins } from "../src/stats.js";
 
 describe("quantile", () => {
   it("interpolates between closest ranks, like PERCENTILE.INC", () => {
@@ -51,5 +51,39 @@ describe("the gates", () => {
       { metric: "b", median: 60, ceiling: 50 },
       { metric: "c", median: null, ceiling: 10 },
     ]);
+  });
+});
+
+describe("histograms", () => {
+  it("bin a timing so its bin's value is within 2.5 percent of it", () => {
+    expect(binOf(0)).toBe(0);
+    expect(binOf(0.4)).toBe(0);
+    expect(binOf(Number.NaN)).toBe(0);
+    let last = 0;
+    for (let ms = 1; ms <= 3_600_000; ms *= 1.013) {
+      const bin = binOf(ms);
+      expect(bin).toBeGreaterThanOrEqual(last);
+      last = bin;
+      expect(Math.abs(binValue(bin) - ms) / ms).toBeLessThan(0.025);
+    }
+    // Bounded: the longest landing time the protocol accepts is bin 311.
+    expect(binOf(3_600_000)).toBeLessThan(320);
+  });
+
+  it("summarise a histogram to within 2.5 percent of the exact figures", () => {
+    let seed = 7;
+    const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const values = Array.from({ length: 500 }, () => 20 + random() * random() * 900);
+    const bins = new Map<number, number>();
+    for (const v of values) bins.set(binOf(v), (bins.get(binOf(v)) ?? 0) + 1);
+    const exact = summarise(values)!;
+    const approx = summariseBins(bins)!;
+    expect(approx.n).toBe(500);
+    for (const k of ["min", "median", "p90", "p95", "p99", "max"] as const) expect(Math.abs(approx[k] - exact[k]) / exact[k], k).toBeLessThan(0.025);
+    expect(summariseBins([])).toBeNull();
+    const one = summariseBins([[binOf(100), 3]])!;
+    expect(one.n).toBe(3);
+    expect(one.min).toBeCloseTo(binValue(binOf(100)), 1);
+    expect(one.max).toBe(one.min);
   });
 });

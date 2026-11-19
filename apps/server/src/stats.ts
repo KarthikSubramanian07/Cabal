@@ -76,3 +76,47 @@ export function overBudget(head: Record<string, Summary | null>, ceilings: Recor
   }
   return out;
 }
+
+// ---------- histograms ----------
+
+/** Histogram bins grow by this factor: a bin's middle is within 2.5 percent of any value in it. */
+const BIN_GROWTH = 1.05;
+const LOG_GROWTH = Math.log(BIN_GROWTH);
+
+/** The bin a timing falls in: 0 below 1 ms, then `[1.05^(k-1), 1.05^k)` for bin k. */
+export function binOf(ms: number): number {
+  if (!(ms >= 1)) return 0;
+  return 1 + Math.floor(Math.log(ms) / LOG_GROWTH);
+}
+
+/** The value a bin stands for: the geometric middle of its edges (0.5 ms for bin 0). */
+export function binValue(bin: number): number {
+  return bin <= 0 ? 0.5 : BIN_GROWTH ** (bin - 0.5);
+}
+
+/**
+ * `summarise` over a histogram of `[bin, count]` pairs, every sample read as its bin's value. The
+ * same interpolation as `quantile`, so a figure is within 2.5 percent of the exact one. Null for no
+ * samples.
+ */
+export function summariseBins(bins: Iterable<readonly [number, number]>): Summary | null {
+  const sorted = [...bins].filter(([, n]) => n > 0).sort((a, b) => a[0] - b[0]);
+  const total = sorted.reduce((sum, [, n]) => sum + n, 0);
+  if (total === 0) return null;
+  // The value of the sample at 0-based rank `r`.
+  const at = (r: number) => {
+    let seen = 0;
+    for (const [bin, n] of sorted) {
+      seen += n;
+      if (r < seen) return binValue(bin);
+    }
+    return binValue(sorted.at(-1)![0]);
+  };
+  const q = (p: number) => {
+    const pos = (total - 1) * p;
+    const low = Math.floor(pos);
+    const a = at(low);
+    return round(a + (at(Math.ceil(pos)) - a) * (pos - low));
+  };
+  return { n: total, min: q(0), median: q(0.5), p90: q(0.9), p95: q(0.95), p99: q(0.99), max: q(1) };
+}
