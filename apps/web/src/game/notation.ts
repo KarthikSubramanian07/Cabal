@@ -26,6 +26,27 @@ export function describePhase(phase: string): { season: string; year: string; ki
   };
 }
 
+/** The button that resolves the current phase: `Adjudicate Spring 1901`, `Resolve Fall 1901 retreats`. */
+export function resolveLabel(phase: string): string {
+  const { season, year } = describePhase(phase);
+  switch (phaseKind(phase)) {
+    case "R":
+      return `Resolve ${season} ${year} retreats`;
+    case "A":
+      return `Resolve ${season} ${year} builds`;
+    default:
+      return `Adjudicate ${season} ${year}`;
+  }
+}
+
+/** The button that leaves the results for the next phase: `Continue to Fall 1901 retreats`. */
+export function continueLabel(next: string): string {
+  if (next === "COMPLETED") return "See the final position";
+  const { season, year } = describePhase(next);
+  const what = phaseKind(next) === "R" ? " retreats" : phaseKind(next) === "A" ? " builds" : "";
+  return `Continue to ${season} ${year}${what}`;
+}
+
 export function titleCase(power: string): string {
   return power.charAt(0) + power.slice(1).toLowerCase();
 }
@@ -100,4 +121,17 @@ export function parseOrder(text: string): ParsedOrder | null {
 /** Province code of a region (`STP/NC` -> `STP`). */
 export function provinceOf(region: string): string {
   return region.slice(0, 3);
+}
+
+/**
+ * Make an order name the unit it is for. In a retreat phase the engine writes the order
+ * with the kind of whatever now stands in the province (the attacker), so a dislodged fleet's
+ * retreat reads `A TRI R ALB`. The unit key and `OrderResult.unit` are right; this puts
+ * them back on the front of the text. The engine accepts either spelling.
+ */
+export function forUnit(text: string, unit: string): string {
+  const mine = parseUnit(unit);
+  const written = parseUnit(text);
+  if (!mine || !written || written.province !== mine.province || written.unit === mine.unit) return text;
+  return mine.unit + text.trim().slice(written.unit.length);
 }

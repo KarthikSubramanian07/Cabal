@@ -29,9 +29,9 @@ Read by `cargo test` and embedded in the `cabal` command line tool (for `cabal d
 - **Why this is compatible with the MIT licence:** copyright protects expression, not facts. A position and its adjudicated result are facts about a game, in the same way the DATC's cases are; several of these cases record positions from real games played on other sites. The transcription keeps none of godip's code or wording, so we treat it as unencumbered factual data and distribute it with the rest of the repository.
 - **Isolation, in case anyone disagrees:** the file is test-only. It is read with `include_str!` by one integration test and by the checker script, and is not part of the engine library, the wasm module, the npm package, the Worker bundle or the web app, so no shipped artefact contains it. If the godip authors ask, or if the analysis above is ever found wrong, the file can be deleted (with `../tests/oracle.rs` and the checker) without changing any shipped behaviour. To the extent any of its content is found to be copyrightable expression of the godip authors, that content is offered under GPL-3.0, not under Cabal's MIT licence. The crate is not published to crates.io.
 
-### `../tests/data/cicero/game.json`
+### `../tests/data/games/external/cicero_433761.json`
 
-A two-phase, message-free excerpt of the publicly released Cicero redacted game `game_433761_ENGLAND_AG.json` from [facebookresearch/diplomacy_cicero](https://github.com/facebookresearch/diplomacy_cicero/blob/main/data/cicero_redacted_games/game_433761_ENGLAND_AG.json). That repository is MIT licensed outside its `fairdiplomacy_external` directory, which this file does not come from:
+The complete 36-phase record (35 adjudicated) of the publicly released Cicero redacted game `game_433761_ENGLAND_AG.json`, with messages and logs removed and `rules` set to `1982` (see `../tests/data/games/README.md` for why), from [facebookresearch/diplomacy_cicero](https://github.com/facebookresearch/diplomacy_cicero/blob/main/data/cicero_redacted_games/game_433761_ENGLAND_AG.json). That repository is MIT licensed outside its `fairdiplomacy_external` directory, which this file does not come from:
 
 > MIT License. Copyright (c) Meta, Inc. and its affiliates.
 >

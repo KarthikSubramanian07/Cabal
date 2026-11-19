@@ -16,7 +16,9 @@ use crate::state::GameState;
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct RetreatResult {
-    /// One order per dislodged unit (disband injected when missing), plus any stray orders received.
+    /// One order per dislodged unit (disband injected when missing or given
+    /// twice), plus any orders received for units that were not dislodged.
+    /// Orders for another power's dislodged unit are ignored and not listed.
     pub orders: Vec<RetreatOrder>,
     pub outcomes: Vec<RetreatOutcome>,
     /// Position with successful retreats placed. Ownership unchanged.
@@ -47,8 +49,13 @@ pub fn resolve_retreat(map: &Map, state: &GameState, orders: &[RetreatOrder]) ->
     for d in &state.dislodged {
         let unit = d.unit;
         let list = per_unit.remove(&unit.province()).unwrap_or_default();
-        let order = match list.as_slice() {
-            [o] if o.power == unit.power => **o,
+        // DATC 6.A.6 applies to retreats as it does to movement: an order for
+        // another power's unit is ignored. Counting it would let any power
+        // disband a rival's dislodged unit by filing a second order for it.
+        let own: Vec<&RetreatOrder> = list.into_iter().filter(|o| o.power == unit.power).collect();
+        let order = match own.as_slice() {
+            [o] => **o,
+            // no order, or several from the owner: the unit disbands
             _ => RetreatOrder {
                 power: unit.power,
                 unit: unit.province(),

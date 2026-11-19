@@ -1,0 +1,24 @@
+[package]
+name = "cabal-bot"
+description = "Deterministic heuristic Diplomacy player for Cabal: tactical candidates scored by a sampled best-response search over the real adjudicator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+cabal-engine = { path = "../cabal-engine" }
+serde.workspace = true
+
+[dev-dependencies]
+proptest = "1.11"
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "decide"
+harness = false

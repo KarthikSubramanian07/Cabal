@@ -6,7 +6,7 @@
  * Pure functions over a small context so every path is unit tested. Nothing is
  * composed that the engine did not list as legal.
  */
-import { type PhaseKind, parseOrder, parseUnit, provinceOf } from "./notation.js";
+import { type PhaseKind, parseOrder, parseUnit, provinceOf, titleCase } from "./notation.js";
 
 export type Mode = "move" | "via-convoy" | "support" | "convoy";
 
@@ -30,6 +30,12 @@ export interface ComposeContext {
   pieces: Piece[];
   /** Legal orders by power then unit. Adjustment orders are listed under `""`. */
   legal: Record<string, Record<string, string[]>>;
+  /** The power whose orders are open beside the board. A click on a province more than one power could act in goes to this one. */
+  active?: string | undefined;
+  /** Adjustment phases: builds (positive) or disbands (negative) each power is owed. */
+  allowance?: Record<string, number> | undefined;
+  /** Orders already written, by power then key, so adjustments can be capped at the allowance. */
+  orders?: Record<string, Record<string, string>> | undefined;
 }
 
 export type Effect =
@@ -100,6 +106,9 @@ export function click(ctx: ComposeContext, draft: Draft, province: string): Step
         return say(draft, `${unit} cannot ${wanted === "move" ? "move" : "retreat"} to ${province}.`);
       }
       if (wanted === "move") {
+        // Where the army could walk or be carried, the click gives the land route unless the
+        // convoy route was chosen first. The order's "by convoy" switch (see `viaAlternative`)
+        // changes it afterwards.
         if (draft.via) options = options.filter((o) => o.endsWith(" VIA"));
         else { const direct = options.filter((o) => !o.endsWith(" VIA")); if (direct.length > 0) options = direct; }
       }
@@ -169,6 +178,31 @@ export function disbandSelected(ctx: ComposeContext, draft: Draft): Step {
     : none(draft);
 }
 
+/**
+ * The same move by the other route, when both are legal: `A WAL - LON` and `A WAL - LON VIA`.
+ * Null when the order is not a move or only one route exists.
+ */
+export function viaAlternative(ctx: ComposeContext, power: string, text: string): string | null {
+  const parsed = parseOrder(text);
+  if (parsed?.type !== "move") return null;
+  const base = `${parsed.unit.unit} - ${parsed.dest}`;
+  const other = parsed.via ? base : `${base} VIA`;
+  return legalFor(ctx, power, parsed.unit.unit).includes(other) ? other : null;
+}
+
+/** How many more builds (or disbands) `power` may still write this adjustment phase. */
+export function adjustmentsLeft(ctx: ComposeContext, power: string): number {
+  const owed = Math.abs(ctx.allowance?.[power] ?? 0);
+  return Math.max(0, owed - Object.keys(ctx.orders?.[power] ?? {}).length);
+}
+
+/** The first free `WAIVE:n` key, so removing an earlier order never makes two waives collide. */
+export function nextWaiveKey(orders: Record<string, string>): string {
+  let n = 0;
+  while (`WAIVE:${n}` in orders) n++;
+  return `WAIVE:${n}`;
+}
+
 function adjustmentClick(ctx: ComposeContext, draft: Draft, province: string): Step {
   const found: { power: string; options: string[] }[] = [];
   for (const [power, byUnit] of Object.entries(ctx.legal)) {
@@ -178,11 +212,27 @@ function adjustmentClick(ctx: ComposeContext, draft: Draft, province: string): S
     });
     if (options.length) found.push({ power, options });
   }
-  const first = found[0];
-  if (!first) return say(draft, `No build or disband is possible in ${province}.`);
-  const { power, options } = first;
+  // The power the player is working on wins; only then anybody else with something to do here.
+  const chosen = found.find((f) => f.power === ctx.active) ?? found[0];
+  if (!chosen) return say(draft, `No build or disband is possible in ${province}.`);
+  const { power, options } = chosen;
   const isDisband = parseOrder(options[0]!)?.type === "disband";
   const key = `${isDisband ? "D" : "B"}:${province}`;
+  // Changing an order already written for this province is always allowed; a new one must fit the allowance.
+  const replacing = key in (ctx.orders?.[power] ?? {});
+  if (ctx.allowance && !replacing && adjustmentsLeft(ctx, power) === 0) {
+    const owed = Math.abs(ctx.allowance[power] ?? 0);
+    const noun = `${owed} ${owed === 1 ? "unit" : "units"}`;
+    return say(
+      draft,
+      isDisband
+        ? `${titleCase(power)} only has to disband ${noun}. Remove an order to choose a different one.`
+        : `${titleCase(power)} may only build ${noun}. Remove an order to choose a different one.`,
+    );
+  }
   if (options.length === 1) return orderStep(power, key, options[0]!);
-  return { draft: IDLE, effect: { kind: "choose", power, key, title: `Build in ${province}`, options } };
+  return {
+    draft: IDLE,
+    effect: { kind: "choose", power, key, title: `${isDisband ? "Disband" : "Build"} in ${province}`, options },
+  };
 }

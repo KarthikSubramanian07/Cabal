@@ -1,0 +1,15 @@
+{
+"id": "duel_build_anywhere",
+"map": "duel",
+"rules": ["2023"],
+"phases": [
+{"name":"S1901M","state":{"name":"S1901M","units":{"BLUE":["A BLUE"],"RED":["A RED"]},"centers":{"BLUE":["BLUE"],"RED":["RED"]},"homes":{"BLUE":["BLUE"],"RED":["RED"]},"retreats":{},"builds":{}},"orders":{"BLUE":["A BLUE - MID"],"RED":["A RED - MID"]},"results":{"A BLUE":["bounce"],"A RED":["bounce"]},"messages":[]},
+{"name":"F1901M","state":{"name":"F1901M","units":{"BLUE":["A BLUE"],"RED":["A RED"]},"centers":{"BLUE":["BLUE"],"RED":["RED"]},"homes":{"BLUE":["BLUE"],"RED":["RED"]},"retreats":{},"builds":{}},"orders":{"BLUE":["A BLUE - MID"],"RED":["A RED - MID"]},"results":{"A BLUE":["bounce"],"A RED":["bounce"]},"messages":[]},
+{"name":"S1902M","state":{"name":"S1902M","units":{"BLUE":["A BLUE"],"RED":["A RED"]},"centers":{"BLUE":["BLUE"],"RED":["RED"]},"homes":{"BLUE":["BLUE"],"RED":["RED"]},"retreats":{},"builds":{}},"orders":{"BLUE":["A BLUE H"],"RED":["A RED - MID"]},"results":{"A BLUE":[],"A RED":[]},"messages":[]},
+{"name":"F1902M","state":{"name":"F1902M","units":{"BLUE":["A BLUE"],"RED":["A MID"]},"centers":{"BLUE":["BLUE"],"RED":["RED"]},"homes":{"BLUE":["BLUE"],"RED":["RED"]},"retreats":{},"builds":{}},"orders":{"BLUE":["A BLUE H"],"RED":["A MID - RED"]},"results":{"A BLUE":[],"A MID":[]},"messages":[]},
+{"name":"S1903M","state":{"name":"S1903M","units":{"BLUE":["A BLUE"],"RED":["A RED"]},"centers":{"BLUE":["BLUE"],"RED":["RED"]},"homes":{"BLUE":["BLUE"],"RED":["RED"]},"retreats":{},"builds":{}},"orders":{"BLUE":["A BLUE - MID"],"RED":["A RED H"]},"results":{"A BLUE":[],"A RED":[]},"messages":[]},
+{"name":"F1903M","state":{"name":"F1903M","units":{"BLUE":["A MID"],"RED":["A RED"]},"centers":{"BLUE":["BLUE"],"RED":["RED"]},"homes":{"BLUE":["BLUE"],"RED":["RED"]},"retreats":{},"builds":{}},"orders":{"BLUE":["A MID - RED"],"RED":["A RED - MID"]},"results":{"A MID":["bounce"],"A RED":["bounce"]},"messages":[]},
+{"name":"COMPLETED","state":{"name":"W1903A","units":{"BLUE":["A MID"],"RED":["A RED"]},"centers":{"BLUE":["BLUE","MID"],"RED":["RED"]},"homes":{"BLUE":["BLUE"],"RED":["RED"]},"retreats":{},"builds":{"BLUE":{"count":1,"homes":["BLUE"]},"RED":{"count":0,"homes":[]}}},"orders":{},"results":{},"messages":[]}
+],
+"cabal": {"engine":"0.1.0","rulebook":{"edition":"e2023","convoy_intent":"same_power_fleet","disband_distance":"owned_centers","convoy_fallback":false,"build_anywhere":true,"fog_of_war":false,"victory_centers":2},"outcome":{"result":"solo","winner":"BLUE"}}
+}
