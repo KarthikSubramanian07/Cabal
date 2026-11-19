@@ -212,6 +212,24 @@ test.describe("ink and the keyboard while a phase plays", () => {
   });
 });
 
+test.describe("the sidebar on a laptop", () => {
+  test("keeps the main action on screen with What if and a Why? open, and the board in view", async ({ page }, info) => {
+    test.skip(isPhone(info), "phones dock the sidebar as a sheet");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await ready(page);
+    await write(page, "A PAR - BUR; A MUN - BUR; A MAR - BUR; F LON - NTH; F EDI - NTH");
+    await page.locator(".toolbar").getByRole("button", { name: "What if" }).click();
+    await page.getByRole("group", { name: "Predicted results" }).locator(".why-toggle").first().click();
+    const leave = page.getByRole("button", { name: "Leave what if" });
+    await expect(leave).toBeInViewport({ ratio: 1 });
+    // Reaching the order list scrolls the sidebar, not the page: the board stays where it is.
+    await page.getByRole("combobox", { name: "Write an order" }).scrollIntoViewIfNeeded();
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    await expect(leave).toBeInViewport({ ratio: 1 });
+    await expect(page.locator("svg.board")).toBeInViewport({ ratio: 0.9 });
+  });
+});
+
 test.describe("order arrows", () => {
   test("each kind of order has its own shape", async ({ page }) => {
     await ready(page);

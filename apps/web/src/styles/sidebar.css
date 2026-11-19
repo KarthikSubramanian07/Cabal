@@ -6,6 +6,31 @@
   min-height: 100%;
 }
 
+/*
+ * On a desktop the sidebar is a column of its own: it scrolls by itself, and the phase's main
+ * action is pinned to its foot. A what-if with its predicted receipts, or an open Why?, then
+ * never pushes the main action below the fold, and reaching the order list never scrolls the
+ * board and its prediction out of view. (Phones dock it as a sheet in responsive.css.)
+ */
+@media (min-width: 1001px) {
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: calc(100dvh - var(--topbar-h));
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .sidebar .actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    border-top: 1px solid var(--ink);
+    background: var(--paper);
+  }
+}
+
 /* The sheet handle is for phones (responsive.css); on a desktop the sidebar is always open. */
 .sheet-bar {
   display: none;

@@ -79,6 +79,8 @@ part of `pnpm test:e2e` (`apps/web/e2e`):
   well as tally strokes.
 - The replay scrubber is a native range input; its spoken value names the phase and what
   happened in it ("Spring 1901 movement results: 1 standoff").
+- On a desktop the sidebar scrolls as a column of its own with the phase's main action pinned
+  to its foot, so opening What if or a Why? never pushes the main action below the fold.
 - Automated: `e2e/feel.spec.ts` runs an axe scan with the explanation open, and checks Skip
   (and where focus goes after it), Escape, reduced motion, the disclosure state and the scrubber's spoken value on desktop and phone.
 
