@@ -198,6 +198,86 @@ jobs:
             exit 1
           fi
 
+  cold-start:
+    # GameRoom cold start (#61). Each run is a fresh workerd process: create a game, start it with
+    # AI seats and play the first phase through the public API, reading the engine's own timings
+    # from the structured log lines it writes once per isolate. The medians are held to ceilings
+    # (apps/server/cold-start-budget.json) and, like the bench job, to the base commit measured on
+    # the same runner, because runners differ from one another by more than any useful threshold.
+    name: "Cold start: GameRoom engine in workerd"
+    runs-on: ubuntu-latest
+    needs: wasm
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+      WRANGLER_SEND_METRICS: "false"
+      COLD_START_RUNS: "7"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-pkg
+          path: packages/engine/pkg
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Does the base commit have the harness, and a different engine?
+        id: base
+        run: |
+          if git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null && git cat-file -e "$BASE_SHA:apps/server/scripts/cold-start.mjs" 2>/dev/null; then
+            echo "measure=true" >> "$GITHUB_OUTPUT"
+            if git diff --quiet "$BASE_SHA" HEAD -- crates Cargo.toml Cargo.lock; then
+              echo "engine=same" >> "$GITHUB_OUTPUT"
+            else
+              echo "engine=changed" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "measure=false" >> "$GITHUB_OUTPUT"
+            echo "the base commit has no cold start harness; only the ceilings apply"
+          fi
+      - if: steps.base.outputs.measure == 'true' && steps.base.outputs.engine == 'changed'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.97.0
+          targets: wasm32-unknown-unknown
+      - if: steps.base.outputs.measure == 'true' && steps.base.outputs.engine == 'changed'
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        with:
+          tool: wasm-pack
+      - name: Measure the base commit
+        if: steps.base.outputs.measure == 'true'
+        env:
+          ENGINE: ${{ steps.base.outputs.engine }}
+        run: |
+          git worktree add -q ../base "$BASE_SHA"
+          cd ../base
+          pnpm install --frozen-lockfile
+          if [ "$ENGINE" = "same" ]; then
+            cp -R "$GITHUB_WORKSPACE/packages/engine/pkg" packages/engine/pkg
+          else
+            wasm-pack build crates/cabal-wasm --target web --profile wasm-release --out-dir ../../packages/engine/pkg --out-name cabal_engine
+          fi
+          cd apps/server
+          node scripts/sync-wasm.mjs
+          node scripts/cold-start.mjs --runs "$COLD_START_RUNS" --out "$RUNNER_TEMP/cold-start-base.json"
+      - name: Measure this commit and gate it
+        working-directory: apps/server
+        run: |
+          node scripts/sync-wasm.mjs
+          compare=()
+          if [ -f "$RUNNER_TEMP/cold-start-base.json" ]; then compare=(--compare "$RUNNER_TEMP/cold-start-base.json"); fi
+          node scripts/cold-start.mjs --runs "$COLD_START_RUNS" --budget cold-start-budget.json --out "$RUNNER_TEMP/cold-start.json" "${compare[@]}"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cold-start
+          path: ${{ runner.temp }}/cold-start*.json
+          retention-days: 30
+
   e2e:
     name: End-to-end (Playwright)
     runs-on: ubuntu-latest

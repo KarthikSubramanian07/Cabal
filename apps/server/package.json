@@ -12,6 +12,7 @@
     "lint": "oxlint --deny-warnings src test",
     "test": "vitest run",
     "load:sockets": "node scripts/load-sockets.mjs",
+    "cold-start": "node scripts/sync-wasm.mjs && node scripts/cold-start.mjs",
     "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types",
     "engine:sync": "node scripts/sync-wasm.mjs",
