@@ -280,7 +280,7 @@ test.describe("saving and loading", () => {
 test.describe("when the board cannot load", () => {
   test("says so and offers a way back, instead of waiting forever", async ({ page }) => {
     await page.route("**/*.wasm", (route) => route.abort());
-    await page.goto("/");
+    await page.goto("/sandbox");
     await expect(page.getByRole("heading", { level: 1, name: "The board did not load." })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole("button", { name: "Reload the page" })).toBeVisible();
     await expect(page.getByText("Setting up the board.")).toHaveCount(0);
@@ -293,7 +293,7 @@ test.describe("when the board cannot load", () => {
 
   test("a failed map download gets the same treatment", async ({ page }) => {
     await page.route("**/assets/board-*.js", (route) => route.abort());
-    await page.goto("/");
+    await page.goto("/sandbox");
     await expect(page.getByRole("heading", { level: 1, name: "The board did not load." })).toBeVisible({ timeout: 20_000 });
   });
 });
