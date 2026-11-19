@@ -154,6 +154,11 @@
   gap: 6px;
 }
 
+/* Room round a choice brought into view, so its focus outline is never cut off at an edge. */
+.tool.choice {
+  scroll-margin: 12px;
+}
+
 .tool.choice {
   font-weight: 450;
   font-size: 13.5px;

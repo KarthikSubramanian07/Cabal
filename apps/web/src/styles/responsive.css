@@ -422,6 +422,11 @@
     display: none;
   }
 
+  /* On a phone the docked sheet covers the bottom of the window. */
+  .tool.choice {
+    scroll-margin-bottom: calc(var(--sheet-h) + 12px);
+  }
+
   .tool {
     min-height: var(--hit);
     padding: 0 12px;
