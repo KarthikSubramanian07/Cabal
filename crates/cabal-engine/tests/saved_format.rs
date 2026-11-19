@@ -519,3 +519,40 @@ fn golden_playouts_are_deterministic() {
     let b = common::playout(Map::standard(), Rulebook::default(), 7, 30);
     assert_eq!(a.to_saved("x"), b.to_saved("x"));
 }
+
+/// The server's replay endpoint puts its own summary under the `cabal` key
+/// (protocol version, status, pledges, phase summaries). Such a file is a
+/// saved game with an annotation, not a broken one.
+#[test]
+fn a_cabal_key_holding_a_hosts_own_data_does_not_stop_the_file_loading() {
+    let map = Map::standard();
+    let mut game = Game::new(map, Rulebook::edition_1971());
+    game.process_movement(&movement(map, &["FRA: A PAR - BUR"]));
+    let mut json = serde_json::to_value(game.to_saved("annotated")).unwrap();
+    json["cabal"] = serde_json::json!({
+        "protocol": 3,
+        "status": "active",
+        "finished": null,
+        "pledges": [{
+            "id": "p1", "pledger": "FRANCE", "audience": "ALL", "phase": "S1901M", "sealed": true,
+            "commitment": "ab", "nonce": "cd", "orders": ["A PAR - BUR"], "receipt": "kept",
+        }],
+        "history": [{ "phase": "S1901M" }],
+    });
+    let saved: SavedGame = serde_json::from_value(json).unwrap();
+    assert!(saved.cabal.is_none(), "a foreign block is read as absent");
+
+    // with no record of its own the edition comes from `rules`, as for any other tool's file
+    let replayed = Game::from_saved(&saved, Rulebook::default()).unwrap();
+    assert_eq!(replayed.state, game.state);
+    assert_eq!(replayed.rulebook, game.rulebook);
+    let resumed = Game::resume(&saved, Rulebook::default()).unwrap();
+    assert_eq!(resumed.state, game.state);
+    let report = Game::verify_saved(&saved, Rulebook::default()).unwrap();
+    assert!(report.divergences.is_empty(), "{:?}", report.divergences);
+    assert!(!report.strict);
+
+    // the engine's own block still reads back in full
+    let own = through_json(&game.to_saved("own"));
+    assert!(own.cabal.is_some());
+}

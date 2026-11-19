@@ -161,8 +161,44 @@ pub struct SavedGame {
     pub rules: Vec<String>,
     pub phases: Vec<MilaPhase>,
     /// Absent in files written by other tools and by Cabal before 0.1.0 recorded it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// A `cabal` key holding something else (the server's replay endpoint puts its
+    /// own summary there) is read as absent rather than refused.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "own_meta_or_none"
+    )]
     pub cabal: Option<CabalMeta>,
+}
+
+/// `cabal` on a saved game is only this engine's record when it has this
+/// engine's shape. Hosts attach their own data under the same key, and a file
+/// must not become unreadable because of an annotation the replay does not need.
+/// The engine's record always names the engine and the rulebook; a block
+/// without both is somebody else's.
+fn own_meta_or_none<'de, D>(deserializer: D) -> Result<Option<CabalMeta>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    struct Block {
+        engine: Option<String>,
+        rulebook: Option<Rulebook>,
+        #[serde(default)]
+        outcome: SavedOutcome,
+        #[serde(default)]
+        pledges: Vec<SavedPledge>,
+    }
+    let block = Option::<Block>::deserialize(deserializer)?;
+    Ok(block.and_then(|b| match (b.engine, b.rulebook) {
+        (Some(engine), Some(rulebook)) => Some(CabalMeta {
+            engine,
+            rulebook,
+            outcome: b.outcome,
+            pledges: b.pledges,
+        }),
+        _ => None,
+    }))
 }
 
 pub(crate) fn power_name(map: &Map, p: Power) -> String {
