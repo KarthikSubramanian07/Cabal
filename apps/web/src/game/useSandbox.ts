@@ -68,8 +68,12 @@ export interface Sandbox {
   undo: () => void;
   reset: () => void;
   exportSaved: () => string;
-  /** Throws `ImportError` with a message fit to show when the text is not a saved game. */
-  importSaved: (json: string) => void;
+  /**
+   * Read a saved game without touching the one on the board, so the caller can ask before
+   * replacing a game in progress. Throws `ImportError` with a message fit to show when the
+   * text is not a saved game.
+   */
+  openSaved: (json: string) => OpenedGame;
   /** Remember which power is open, for the autosave. */
   noteActive: (power: string) => void;
 }
@@ -283,7 +287,7 @@ export function useSandbox(): SandboxLoad {
 
   const exportSaved = useCallback(() => game?.toSaved("cabal-sandbox") ?? "", [game]);
 
-  const importSaved = useCallback((json: string) => {
+  const openSaved = useCallback((json: string): OpenedGame => {
     const loaded = loadSaved(json);
     return {
       phase: loaded.game.phase(),
@@ -330,7 +334,7 @@ export function useSandbox(): SandboxLoad {
       undo,
       reset,
       exportSaved,
-      importSaved,
+      openSaved,
       noteActive,
     },
   };

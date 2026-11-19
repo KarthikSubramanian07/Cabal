@@ -34,7 +34,7 @@ import {
   titleCase,
 } from "../game/notation.js";
 import { ImportError } from "../game/persist.js";
-import { type Sandbox, useSandbox } from "../game/useSandbox.js";
+import { type OpenedGame, type Sandbox, useSandbox } from "../game/useSandbox.js";
 import { Board, type DrawnOrder } from "../map/Board.jsx";
 
 interface Picker {
@@ -95,6 +95,8 @@ function Table({ sb }: { sb: Sandbox }) {
   const [sheet, setSheet] = useState(false);
   const [confirmNew, setConfirmNew] = useState(false);
   const [importError, setImportError] = useState<{ message: string; detail: string } | null>(null);
+  /** A file that has been read and is waiting for the player to agree to replace the game on the board. */
+  const [pendingImport, setPendingImport] = useState<{ name: string; game: OpenedGame } | null>(null);
   /** Bumped when the player picks a power by name, so a small board re-frames on it. */
   const [refocus, setRefocus] = useState(0);
   const boardWrap = useRef<HTMLDivElement>(null);
@@ -421,16 +423,24 @@ function Table({ sb }: { sb: Sandbox }) {
     URL.revokeObjectURL(url);
   };
 
+  const loadImport = (pending: { name: string; game: OpenedGame }) => {
+    pending.game.load();
+    setPendingImport(null);
+    setViewing(null);
+    cancel();
+    announce(`Game loaded from ${pending.name}: ${phaseLine(pending.game.phase)}.`);
+  };
+
   const upload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
     try {
-      sb.importSaved(await file.text());
-      setViewing(null);
+      const game = sb.openSaved(await file.text());
       setImportError(null);
-      cancel();
-      announce(`Game loaded from ${file.name}.`);
+      // The file is good. A game in progress is only replaced once the player says so.
+      if (touched) setPendingImport({ name: file.name, game });
+      else loadImport({ name: file.name, game });
     } catch (err) {
       // Never the parser's own words in the player's face: a sentence, with the detail tucked away.
       const shown =
@@ -747,6 +757,21 @@ function Table({ sb }: { sb: Sandbox }) {
         <p>
           This board{sb.history.length ? ` and its ${sb.history.length} resolved ${sb.history.length === 1 ? "phase" : "phases"}` : ""} will
           be cleared from this device. Export it first if you want to keep it.
+        </p>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={pendingImport !== null}
+        title="Replace this game?"
+        confirmLabel="Load the file"
+        cancelLabel="Keep playing"
+        onConfirm={() => pendingImport && loadImport(pendingImport)}
+        onCancel={() => setPendingImport(null)}
+      >
+        <p>
+          Loading <code>{pendingImport?.name}</code> replaces the board
+          {sb.history.length ? ` and its ${sb.history.length} resolved ${sb.history.length === 1 ? "phase" : "phases"}` : ""} on
+          this device. Export the game you have first if you want to keep it.
         </p>
       </ConfirmDialog>
     </>

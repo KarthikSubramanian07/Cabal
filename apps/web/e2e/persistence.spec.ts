@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
-import { closeSheet, openSheet, primary, ready, resolveAndContinue, tap } from "./helpers.js";
+import { closeSheet, openSheet, primary, ready, resolveAndContinue, selectPower, tap } from "./helpers.js";
 
 test.describe("saving and loading", () => {
   test("a reload brings the game back, orders and all", async ({ page }) => {
@@ -24,6 +24,151 @@ test.describe("saving and loading", () => {
     await closeSheet(page);
     await notice.getByRole("button", { name: "Dismiss" }).click();
     await expect(notice).toHaveCount(0);
+  });
+
+  test("a reload does not turn the units left alone into written orders", async ({ page }) => {
+    await ready(page);
+    await tap(page, "PAR");
+    await tap(page, "BUR");
+    await primary(page).click();
+    await openSheet(page);
+    const receipts = page.getByLabel("Adjudication results").locator(".receipt code");
+    await expect(receipts).toHaveCount(1);
+    await closeSheet(page);
+    await expect(page.locator("svg.board .order.hold")).toHaveCount(0);
+
+    await page.reload();
+    await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
+    await openSheet(page);
+    await page.getByRole("button", { name: "Previous phase" }).click();
+    // One order was written, so one receipt, and no hold rings round the other 21 units.
+    await expect(receipts).toHaveCount(1);
+    await expect(receipts).toContainText("A PAR - BUR");
+    await closeSheet(page);
+    await expect(page.locator("svg.board .order.hold")).toHaveCount(0);
+  });
+
+  test("undo after a reload brings back only what was written", async ({ page }) => {
+    await ready(page);
+    await tap(page, "PAR");
+    await tap(page, "BUR");
+    // A hold that really was written is an order like any other and must survive.
+    await tap(page, "MAR");
+    await tap(page, "MAR");
+    await resolveAndContinue(page);
+
+    await page.reload();
+    await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
+    await openSheet(page);
+    await page.getByRole("button", { name: "Undo last phase" }).click();
+    await selectPower(page, "France");
+    await openSheet(page);
+    const given = page.getByLabel("France orders").locator(".row.given code");
+    await expect(given).toHaveCount(2);
+    await expect(given.filter({ hasText: "A MAR H" })).toHaveCount(1);
+    await expect(given.filter({ hasText: "A PAR - BUR" })).toHaveCount(1);
+    await expect(page.getByLabel("France orders").locator(".row.missing code")).toHaveText(["F BRE"]);
+    for (const power of ["Austria", "England", "Germany", "Italy", "Russia", "Turkey"]) {
+      await selectPower(page, power);
+      await openSheet(page);
+      await expect(page.getByLabel(`${power} orders`).locator(".row.given")).toHaveCount(0);
+    }
+  });
+
+  test("the open power survives a reload even when no order changed after choosing it", async ({ page }) => {
+    await ready(page);
+    await tap(page, "PAR");
+    await tap(page, "BUR");
+    await selectPower(page, "Russia");
+    await page.reload();
+    await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
+    await openSheet(page);
+    await expect(page.locator("table.powers tr.active")).toContainText("Russia");
+  });
+
+  test("a save that names a power that does not exist opens France", async ({ page }) => {
+    await ready(page);
+    await tap(page, "PAR");
+    await tap(page, "BUR");
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("cabal.sandbox"))).toContain("A PAR - BUR");
+    await page.evaluate(() => {
+      const save = JSON.parse(localStorage.getItem("cabal.sandbox")!);
+      localStorage.setItem("cabal.sandbox", JSON.stringify({ ...save, active: "ATLANTIS" }));
+    });
+    // Leave before the page can write its own save over the edited one.
+    await page.goto("/about");
+    await ready(page);
+    await expect(page.locator(".resume")).toContainText("Saved game restored.");
+    await openSheet(page);
+    await expect(page.locator("table.powers tr.active")).toContainText("France");
+    await expect(page.locator(".sidebar h2", { hasText: "Atlantis" })).toHaveCount(0);
+  });
+
+  test("a save from before the written orders were kept still loads", async ({ page }) => {
+    await ready(page);
+    await tap(page, "PAR");
+    await tap(page, "BUR");
+    await resolveAndContinue(page);
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("cabal.sandbox"))).toContain("F1901M");
+    await page.evaluate(() => {
+      const { written: _written, ...save } = JSON.parse(localStorage.getItem("cabal.sandbox")!);
+      localStorage.setItem("cabal.sandbox", JSON.stringify({ ...save, schema: 1 }));
+    });
+    await page.goto("/about");
+    await ready(page);
+    await expect(page.locator(".resume")).toContainText("Fall 1901 movement");
+    await openSheet(page);
+    await page.getByRole("button", { name: "Previous phase" }).click();
+    await expect(page.getByLabel("Adjudication results").locator(".receipt code")).toHaveCount(1);
+  });
+
+  test("Import asks before it replaces a game in progress", async ({ page }) => {
+    // A fresh game, as Export writes it.
+    await ready(page);
+    await openSheet(page);
+    const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Export" }).click()]);
+    const fresh = await readFile((await download.path())!);
+    await closeSheet(page);
+
+    await tap(page, "PAR");
+    await tap(page, "BUR");
+    await resolveAndContinue(page);
+    await resolveAndContinue(page);
+    await openSheet(page);
+    await expect(page.locator(".phase-title")).toContainText("Spring 1902");
+    const saved = await page.evaluate(() => localStorage.getItem("cabal.sandbox"));
+
+    const input = page.locator('input[type="file"]');
+    await input.setInputFiles({ name: "fresh.json", mimeType: "application/json", buffer: fresh });
+    const dialog = page.getByRole("dialog", { name: "Replace this game?" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("fresh.json");
+    await expect(dialog).toContainText("2 resolved phases");
+    await expect(dialog.getByRole("button", { name: "Keep playing" })).toBeFocused();
+    // Nothing has been replaced yet, on the board or on the device.
+    expect(await page.evaluate(() => localStorage.getItem("cabal.sandbox"))).toBe(saved);
+    await dialog.getByRole("button", { name: "Keep playing" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.locator(".phase-title")).toContainText("Spring 1902");
+    expect(await page.evaluate(() => localStorage.getItem("cabal.sandbox"))).toBe(saved);
+
+    await input.setInputFiles({ name: "fresh.json", mimeType: "application/json", buffer: fresh });
+    await dialog.getByRole("button", { name: "Load the file" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.locator(".phase-title")).toContainText("Spring 1901");
+    await expect(page.getByLabel("Phase history")).toHaveCount(0);
+  });
+
+  test("a bad file never opens the replace question", async ({ page }) => {
+    await ready(page);
+    await tap(page, "PAR");
+    await tap(page, "BUR");
+    await resolveAndContinue(page);
+    await openSheet(page);
+    await page.locator('input[type="file"]').setInputFiles({ name: "notes.json", mimeType: "application/json", buffer: Buffer.from("{}") });
+    await expect(page.locator(".import-error p")).toHaveText("That file is not a Cabal game export. It has no phases in it.");
+    await expect(page.getByRole("dialog", { name: "Replace this game?" })).toBeHidden();
+    await expect(page.locator(".phase-title")).toContainText("Fall 1901");
   });
 
   test("New game asks first, in a dialog, and a new game stays new after a reload", async ({ page }) => {
@@ -74,7 +219,14 @@ test.describe("saving and loading", () => {
     await page.addInitScript(() => {
       localStorage.setItem(
         "cabal.sandbox",
-        JSON.stringify({ schema: 1, game: '{"phases":[{"name":"S1901M","state":{"nonsense":true},"orders":{}}]}', orders: {}, active: "FRANCE", savedAt: 1 }),
+        JSON.stringify({
+          schema: 2,
+          game: '{"phases":[{"name":"S1901M","state":{"nonsense":true},"orders":{}}]}',
+          written: [],
+          orders: {},
+          active: "FRANCE",
+          savedAt: 1,
+        }),
       );
     });
     await ready(page);

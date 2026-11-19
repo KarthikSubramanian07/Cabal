@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useId, useRef } from "react";
 
 /**
  * A modal question with a safe default. Native <dialog>: focus is trapped, Escape cancels,
@@ -24,6 +24,8 @@ export function ConfirmDialog({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const keep = useRef<HTMLButtonElement>(null);
+  // A page can hold more than one of these, so each names itself with its own id.
+  const titleId = useId();
 
   useEffect(() => {
     const d = ref.current;
@@ -36,8 +38,8 @@ export function ConfirmDialog({
   }, [open]);
 
   return (
-    <dialog ref={ref} className="confirm" onClose={onCancel} aria-labelledby="confirm-title">
-      <h2 id="confirm-title">{title}</h2>
+    <dialog ref={ref} className="confirm" onClose={onCancel} aria-labelledby={titleId}>
+      <h2 id={titleId}>{title}</h2>
       <div className="confirm-body">{children}</div>
       <div className="confirm-actions">
         <button ref={keep} type="button" className="btn brass" onClick={onCancel}>
