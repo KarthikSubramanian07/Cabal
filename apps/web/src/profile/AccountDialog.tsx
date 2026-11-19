@@ -185,7 +185,7 @@ function DeviceSection({ me, onSignedOut }: { me: MeResponse; onSignedOut: () =>
     <div className="account-device">
       <p>
         {me.account.sessions === 1 ? "This is the only device signed in to your account." : `${me.account.sessions} devices are signed in to your account.`} Signing out here ends this
-        device's session only. Seats you hold at tables stay on this device.
+        device's session only. Your seats leave this device with you, and return when you sign in here again; this device stops being told about your games.
       </p>
       {sure ? (
         <div className="account-confirm" role="group" aria-label="Confirm signing out">

@@ -108,6 +108,32 @@ test.describe("the player's account", () => {
     expect(await page.evaluate(() => localStorage.getItem("cabal.player"))).toBeNull();
   });
 
+  test("signing out takes the account's seats off the device, so the next person cannot play as it", async ({ page }) => {
+    const server = await fakeServer(page);
+    accountRoutes(server);
+    await signedIn(page);
+    await page.addInitScript(() => {
+      const seat = (gameId: string, extra: Record<string, unknown>) =>
+        localStorage.setItem(`cabal.seat.${gameId}`, JSON.stringify({ gameId, power: "ENGLAND", token: `${gameId}.secret-seat-token`, savedAt: 1, ...extra }));
+      seat("Z2BSVX", { name: "ada_l", userId: "pl_test_ada" });
+      // Taken under the handle before seats recorded their account.
+      seat("K7Q2XZ", { name: "ada_l" });
+      // Somebody else's, sat down without an account.
+      seat("ABCDEF", { name: "Guest" });
+    });
+    await page.goto("/games");
+    await openMenu(page);
+    await page.getByRole("button", { name: "Sign out" }).click();
+    const card = page.getByRole("dialog", { name: "Your account" });
+    await expect(card.getByText("Your seats leave this device with you")).toBeVisible();
+    await card.getByRole("button", { name: "Sign out of this device" }).click();
+    await card.getByRole("group", { name: "Confirm signing out" }).getByRole("button", { name: "Sign out of this device" }).click();
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("cabal.player"))).toBeNull();
+    const left = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("cabal.seat.")));
+    expect(left).toEqual(["cabal.seat.ABCDEF"]);
+    expect(server.calls).toContain("POST /api/me/logout");
+  });
+
   test("a secret the server no longer knows signs the device out instead of acting as nobody", async ({ page }) => {
     const server = await fakeServer(page);
     accountRoutes(server);

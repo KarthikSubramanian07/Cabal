@@ -8,6 +8,8 @@ import { useCallback, useSyncExternalStore } from "react";
 import { isApiFailure } from "../net/failure.js";
 import { loadApi, localRefusal } from "../net/lazy.js";
 import { type StoredPlayer, forgetPlayer, readPlayer, renameStoredPlayer, savePlayer, subscribePlayer, tidyRecoveryCode } from "../net/player.js";
+import { turnOffPush } from "../net/push.js";
+import { forgetSeatsOf } from "../net/seats.js";
 
 export function usePlayer(): StoredPlayer | null {
   return useSyncExternalStore(subscribePlayer, readPlayer, () => null);
@@ -19,22 +21,48 @@ function signedOutIfRefused(error: unknown): never {
   throw error;
 }
 
+/**
+ * Let go of an account on this device: stop this browser's notifications for it, end its session
+ * with the server, and forget the seats it took here, so the next person at the device can neither
+ * play as it nor be told about its games. Best effort: a server that cannot be reached still leaves
+ * the device clean.
+ */
+export async function leaveDevice(account: StoredPlayer): Promise<void> {
+  try {
+    const { api } = await loadApi();
+    await turnOffPush((endpoint) => api.unsubscribePush(account.secret, endpoint)).catch(() => undefined);
+    await api.logout(account.secret).catch(() => undefined);
+  } catch {
+    // The client did not load: nothing reached the server, but the device is still cleared.
+  }
+  forgetSeatsOf(account);
+}
+
+/** Another account is now this device's: the one it replaced lets go of the device. */
+async function replaced(before: StoredPlayer | null, after: { id: string }): Promise<void> {
+  if (before && before.id !== after.id) await leaveDevice(before);
+}
+
 export function useAccount() {
   const player = usePlayer();
 
   /** Make a guest account. Without a handle the server picks one. */
   const create = useCallback(async (handle?: string): Promise<StoredPlayer> => {
     const { api } = await loadApi();
+    const before = readPlayer();
     const session = await api.createPlayer(handle);
     const stored = { id: session.player.id, handle: session.player.handle, secret: session.secret };
     savePlayer(stored);
+    await replaced(before, stored);
     return readPlayer() ?? { ...stored, savedAt: Date.now() };
   }, []);
 
   const recover = useCallback(async (code: string): Promise<StoredPlayer> => {
     const { api } = await loadApi();
+    const before = readPlayer();
     const session = await api.recoverPlayer(tidyRecoveryCode(code));
     savePlayer({ id: session.player.id, handle: session.player.handle, secret: session.secret });
+    await replaced(before, session.player);
     return readPlayer()!;
   }, []);
 
@@ -75,16 +103,15 @@ export function useAccount() {
     }
   }, []);
 
-  /** End this device's session. The account stays; a recovery code brings it back. */
+  /**
+   * End this device's session. The account stays; a recovery code brings it back. Its seats and
+   * notifications on this device go with it.
+   */
   const signOut = useCallback(async (): Promise<void> => {
     const current = readPlayer();
     if (!current) return;
-    try {
-      const { api } = await loadApi();
-      await api.logout(current.secret);
-    } catch {
-      // Signed out here whatever the server said; a secret it no longer knows is harmless.
-    }
+    // Signed out here whatever the server said; a secret it no longer knows is harmless.
+    await leaveDevice(current);
     forgetPlayer();
   }, []);
 

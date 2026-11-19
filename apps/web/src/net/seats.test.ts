@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { forgetSeat, listSeats, readName, readSeat, saveName, saveSeat } from "./seats.js";
+import { forgetSeat, forgetSeatsOf, listSeats, readName, readSeat, saveName, saveSeat } from "./seats.js";
 
 class MemoryStorage implements Storage {
   private map = new Map<string, string>();
@@ -35,7 +35,7 @@ describe("seats kept on this device", () => {
 
   it("keeps a seat per game and reads it back", () => {
     expect(saveSeat({ gameId: "K7Q2XZ", power: "FRANCE", token: TOKEN, name: "Ada", savedAt: 5 })).toBe(true);
-    expect(readSeat("K7Q2XZ")).toEqual({ gameId: "K7Q2XZ", power: "FRANCE", token: TOKEN, name: "Ada", savedAt: 5 });
+    expect(readSeat("K7Q2XZ")).toEqual({ gameId: "K7Q2XZ", power: "FRANCE", token: TOKEN, name: "Ada", userId: null, savedAt: 5 });
     expect(store.getItem("cabal.seat.K7Q2XZ")).toContain(TOKEN);
     expect(readSeat("ABCDEF")).toBeNull();
   });
@@ -50,6 +50,19 @@ describe("seats kept on this device", () => {
     expect(readSeat("K7Q2XZ")).toBeNull();
     store.setItem("cabal.seat.K7Q2XZ", JSON.stringify({ power: "PRUSSIA", token: TOKEN }));
     expect(readSeat("K7Q2XZ")).toBeNull();
+  });
+
+  it("forgets the seats an account took when it leaves the device, and nobody else's", () => {
+    const seat = (gameId: string, name: string, userId?: string) =>
+      saveSeat({ gameId, power: "FRANCE", token: `${gameId}.FRANCE.${"a".repeat(48)}`, name, ...(userId ? { userId } : {}), savedAt: 1 });
+    seat("AAAAAA", "ada_l", "pl_ada");
+    // Taken under the handle before seats recorded their account.
+    seat("BBBBBB", "Ada_L");
+    // Another account on this device, and a seat taken without one.
+    seat("CCCCCC", "bea", "pl_bea");
+    seat("DDDDDD", "Guest");
+    expect(forgetSeatsOf({ id: "pl_ada", handle: "ada_l" }).sort()).toEqual(["AAAAAA", "BBBBBB"]);
+    expect(listSeats().map((s) => s.gameId).sort()).toEqual(["CCCCCC", "DDDDDD"]);
   });
 
   it("lists every seat held, newest first, and forgets one", () => {
