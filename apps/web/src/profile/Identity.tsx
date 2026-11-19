@@ -38,16 +38,28 @@ export function useIdentity(): Identity {
 
 type Mode = "choose" | "restore";
 
+/**
+ * The account a restore would replace on this device, and whether a recovery code could bring it
+ * back. `safe` is null while the server is being asked.
+ */
+interface Replacing {
+  handle: string;
+  safe: boolean | null;
+}
+
 function HandleDialog({
   open,
   reason,
   startIn,
   onDone,
+  onMakeCode,
 }: {
   open: boolean;
   reason: string;
   startIn: Mode;
   onDone: (player: StoredPlayer | null) => void;
+  /** Leave this dialog for the account card's recovery code, to keep the account on this device. */
+  onMakeCode: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -60,7 +72,11 @@ function HandleDialog({
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { create, recover } = useAccount();
+  const [replacing, setReplacing] = useState<Replacing | null>(null);
+  const [leave, setLeave] = useState(false);
+  const leaveRef = useRef<HTMLInputElement>(null);
+  const warnId = useId();
+  const { create, recover, me } = useAccount();
 
   useEffect(() => {
     const d = ref.current;
@@ -69,10 +85,40 @@ function HandleDialog({
       setMode(startIn);
       setError(null);
       setBusy(false);
+      setLeave(false);
       d.showModal();
     }
     if (!open && d.open) d.close();
   }, [open, startIn]);
+
+  // Restoring while signed in replaces the account on this device. Find out, before anything is
+  // pressed, whether that account could be brought back.
+  useEffect(() => {
+    if (!open) return;
+    const current = readPlayer();
+    if (!current) {
+      setReplacing(null);
+      return;
+    }
+    let live = true;
+    setReplacing({ handle: current.handle, safe: null });
+    me().then(
+      (m) => live && setReplacing({ handle: m.player.handle, safe: m.account.recoveryIssuedAt !== null }),
+      // The server no longer knows it (the device was signed out), or could not say: warn.
+      () => live && setReplacing(readPlayer() ? { handle: current.handle, safe: false } : null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, me]);
+
+  /** Replacing an account nobody could restore needs the player to say so first. */
+  function mayReplace(): boolean {
+    if (!replacing || replacing.safe === true || leave) return true;
+    setError(`Tick the box to leave ${replacing.handle} behind, or make a recovery code for it first.`);
+    leaveRef.current?.focus();
+    return false;
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -100,6 +146,7 @@ function HandleDialog({
       input.current?.focus();
       return;
     }
+    if (!mayReplace()) return;
     void run(() => create(handle.trim()));
   }
 
@@ -110,8 +157,36 @@ function HandleDialog({
       codeInput.current?.focus();
       return;
     }
+    if (!mayReplace()) return;
     void run(() => recover(code));
   }
+
+  const warning = replacing ? (
+    <div className={`replace-note${replacing.safe === false ? " unsafe" : ""}`} id={warnId}>
+      {replacing.safe === false ? (
+        <>
+          <p>
+            You are signed in as <strong>{replacing.handle}</strong>, and that account has no recovery code. Restoring another account here signs {replacing.handle} out of this
+            device, and nobody can get it back, nor the seats it holds.
+          </p>
+          <div className="replace-actions">
+            <button type="button" className="btn small" onClick={onMakeCode}>
+              Make a recovery code first
+            </button>
+            <label className="replace-leave">
+              <input ref={leaveRef} type="checkbox" checked={leave} onChange={(e) => setLeave(e.target.checked)} />
+              <span>Leave {replacing.handle} behind for good</span>
+            </label>
+          </div>
+        </>
+      ) : (
+        <p>
+          You are signed in as <strong>{replacing.handle}</strong>. Restoring another account signs {replacing.handle} out of this device
+          {replacing.safe ? "; its recovery code brings it back." : "."}
+        </p>
+      )}
+    </div>
+  ) : null;
 
   return (
     <dialog ref={ref} className="how seal-dialog" onClose={() => onDone(null)} aria-labelledby={titleId}>
@@ -124,6 +199,7 @@ function HandleDialog({
       {mode === "choose" ? (
         <form className="seal-form" onSubmit={take} noValidate>
           <p className="seal-lede">{reason}</p>
+          {warning}
           <div className="field">
             <label htmlFor="handle-input">Handle</label>
             <input
@@ -166,6 +242,7 @@ function HandleDialog({
       ) : (
         <form className="seal-form" onSubmit={restore} noValidate>
           <p className="seal-lede">Enter the recovery code you saved. This device signs in as you; your other devices stay signed in.</p>
+          {warning}
           <div className="field">
             <label htmlFor="recovery-input">Recovery code</label>
             <textarea
@@ -192,9 +269,16 @@ function HandleDialog({
             <button type="submit" className="btn brass" disabled={busy}>
               {busy ? "Checking the code" : "Restore my account"}
             </button>
-            <button type="button" className="btn" disabled={busy} onClick={() => setMode("choose")}>
-              Choose a new handle instead
-            </button>
+            {replacing ? (
+              // A new account would replace this one too: that is signing out, from the account card.
+              <button type="button" className="btn" disabled={busy} onClick={() => onDone(null)}>
+                Keep playing as {replacing.handle}
+              </button>
+            ) : (
+              <button type="button" className="btn" disabled={busy} onClick={() => setMode("choose")}>
+                Choose a new handle instead
+              </button>
+            )}
           </div>
         </form>
       )}
@@ -229,12 +313,24 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const closeAccount = useCallback(() => setAccount(null), []);
-  const value = useMemo<Identity>(() => ({ player, ensurePlayer, openAccount: (section = "handle") => setAccount(section), openRestore }), [player, ensurePlayer, openRestore]);
+  const value = useMemo<Identity>(
+    () => ({ player, ensurePlayer, openAccount: (section = "handle") => setAccount(section), openRestore }),
+    [player, ensurePlayer, openRestore],
+  );
 
   return (
     <IdentityContext.Provider value={value}>
       {children}
-      <HandleDialog open={ask !== null} reason={ask?.reason ?? DEFAULT_REASON} startIn={ask?.mode ?? "choose"} onDone={done} />
+      <HandleDialog
+        open={ask !== null}
+        reason={ask?.reason ?? DEFAULT_REASON}
+        startIn={ask?.mode ?? "choose"}
+        onDone={done}
+        onMakeCode={() => {
+          done(null);
+          setAccount("recovery");
+        }}
+      />
       {account !== null ? (
         <Suspense fallback={null}>
           <AccountDialog open section={account} onClose={closeAccount} />

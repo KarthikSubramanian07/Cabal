@@ -170,6 +170,59 @@ dialog.seal-dialog {
   padding: 0 12px;
 }
 
+/* Restoring over a signed-in account: who would be signed out, and whether they could come back. */
+.replace-note {
+  margin: 0 0 var(--space-4);
+  padding: 10px 12px;
+  border-left: 3px solid var(--rule);
+  background: var(--bone-2);
+  font-size: var(--text-md);
+  line-height: 1.5;
+}
+
+.replace-note p {
+  margin: 0;
+}
+
+.replace-note.unsafe {
+  border-left-color: var(--vermilion);
+  color: var(--vermilion-deep);
+}
+
+.replace-note.unsafe strong {
+  color: var(--ink);
+}
+
+.replace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: var(--space-3);
+}
+
+.replace-actions .btn.small {
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.replace-leave {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  color: var(--ink);
+  font-weight: 560;
+  cursor: pointer;
+}
+
+.replace-leave input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--vermilion-deep);
+}
+
 .seal-fine {
   margin: var(--space-5) 0 0;
   padding-top: var(--space-3);

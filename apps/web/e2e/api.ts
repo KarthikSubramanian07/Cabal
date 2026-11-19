@@ -70,7 +70,8 @@ export function accountRoutes(server: FakeServer, opts: { taken?: string[] } = {
     const body = request.postDataJSON() as { code: string };
     if (!body.code.toUpperCase().startsWith("CABAL")) return { status: 401, body: { error: "that recovery code is not valid", code: "bad_recovery_code" } };
     state.handle = "restored_one";
-    return { body: { player: { ...PLAYER, handle: state.handle }, secret: SECRET } };
+    // Another account than the one a signed-in device holds.
+    return { body: { player: { ...PLAYER, id: "pl_test_restored", handle: state.handle }, secret: SECRET } };
   });
   server.on("GET", /^\/api\/me$/, (request) => (request.headers()["authorization"] === `Bearer ${SECRET}` && !state.signedOut ? { body: me() } : { status: 401, body: { error: "sign in again" } }));
   server.on("PATCH", /^\/api\/me$/, (request) => {

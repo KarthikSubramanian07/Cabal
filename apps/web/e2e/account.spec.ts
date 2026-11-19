@@ -134,6 +134,54 @@ test.describe("the player's account", () => {
     expect(server.calls).toContain("POST /api/me/logout");
   });
 
+  test("restoring another account warns first when the one on the device has no recovery code", async ({ page }) => {
+    const server = await fakeServer(page);
+    accountRoutes(server);
+    await signedIn(page);
+    await page.addInitScript(() => {
+      localStorage.setItem("cabal.seat.Z2BSVX", JSON.stringify({ gameId: "Z2BSVX", power: "ENGLAND", token: "Z2BSVX.secret-seat-token", name: "ada_l", userId: "pl_test_ada", savedAt: 1 }));
+    });
+    await page.goto("/ledger");
+    await openMenu(page);
+    await page.getByRole("button", { name: "Restore another account" }).click();
+    const dialog = page.getByRole("dialog", { name: "Restore your account" });
+    await expect(dialog.getByText("that account has no recovery code")).toBeVisible();
+    // A new handle would lose the account just the same: that way is not offered here.
+    await expect(dialog.getByRole("button", { name: "Choose a new handle instead" })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Keep playing as ada_l" })).toBeVisible();
+    await dialog.getByLabel("Recovery code").fill("CABAL-7K2M-QX9P-H4TR-W8NB-3DFG");
+    await dialog.getByRole("button", { name: "Restore my account" }).click();
+    await expect(dialog.getByRole("alert")).toContainText("Tick the box to leave ada_l behind");
+    await expect(dialog.getByLabel("Leave ada_l behind for good")).toBeFocused();
+    expect(server.calls).not.toContain("POST /api/players/recover");
+
+    const { violations } = await new AxeBuilder({ page }).withTags(TAGS).analyze();
+    expect(violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => v.id)).toEqual([]);
+
+    await dialog.getByLabel("Leave ada_l behind for good").check();
+    await dialog.getByRole("button", { name: "Restore my account" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.locator(".player-button")).toHaveAccessibleName("Your account, restored_one");
+    // The account left behind is signed out of the device, seats and all.
+    expect(server.calls).toContain("POST /api/me/logout");
+    expect(await page.evaluate(() => localStorage.getItem("cabal.seat.Z2BSVX"))).toBeNull();
+  });
+
+  test("Make a recovery code first leads to the code, and keeps the account", async ({ page }) => {
+    const server = await fakeServer(page);
+    accountRoutes(server);
+    await signedIn(page);
+    await page.goto("/ledger");
+    await openMenu(page);
+    await page.getByRole("button", { name: "Restore another account" }).click();
+    const dialog = page.getByRole("dialog", { name: "Restore your account" });
+    await dialog.getByRole("button", { name: "Make a recovery code first" }).click();
+    await expect(dialog).toBeHidden();
+    const card = page.getByRole("dialog", { name: "Your account" });
+    await expect(card.getByRole("button", { name: "Make a recovery code" })).toBeFocused();
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("cabal.player")!).id)).toBe("pl_test_ada");
+  });
+
   test("a secret the server no longer knows signs the device out instead of acting as nobody", async ({ page }) => {
     const server = await fakeServer(page);
     accountRoutes(server);
