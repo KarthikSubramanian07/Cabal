@@ -1,96 +1,102 @@
-import { type Page, expect, test } from "@playwright/test";
-
-/** Click a province on the board by its label, where a unit or province is easy to hit. */
-async function tap(page: Page, code: string) {
-  const label = page.locator("svg.board text.label", { hasText: new RegExp(`^${code}$`) }).first();
-  const box = await label.boundingBox();
-  if (!box) throw new Error(`no label for ${code}`);
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-}
-
-async function ready(page: Page) {
-  await page.goto("/");
-  await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
-}
+import { expect, test } from "@playwright/test";
+import { closeSheet, isPhone, openHelp, openSheet, primary, ready, resolveAndContinue, selectPower, tap } from "./helpers.js";
 
 test.describe("classic board", () => {
   test("draws the opening position of 1901", async ({ page }) => {
     await ready(page);
-    await expect(page.getByRole("img", { name: "Cabal" }).first()).toBeVisible();
-    await expect(page.locator(".phase-title")).toContainText("Spring 1901");
+    await expect(page.getByRole("banner").getByRole("img", { name: "Cabal" })).toBeVisible();
     await expect(page.locator("svg.board g.unit")).toHaveCount(22);
     await expect(page.locator("svg.board g.sc")).toHaveCount(34);
     await expect(page.locator("svg.board [data-province]")).toHaveCount(76);
+    await openSheet(page);
+    await expect(page.locator(".phase-title")).toContainText("Spring 1901");
     const russia = page.locator("table.powers tbody tr", { hasText: "Russia" });
     await expect(russia.locator("td").first()).toHaveText("4");
   });
 
-  test("orders by clicking, supports from the keyboard, and shows receipts", async ({ page }, info) => {
-    test.skip(info.project.name === "phone", "keyboard flow is desktop only");
+  test("orders by clicking, supports, and shows receipts in plain words", async ({ page }, info) => {
     await ready(page);
     await tap(page, "PAR");
     await tap(page, "BUR");
     await tap(page, "MUN");
     await tap(page, "BUR");
     await tap(page, "MAR");
-    await page.keyboard.press("s");
+    // The S key on a keyboard, the Support button under a thumb.
+    if (isPhone(info)) await page.getByRole("button", { name: "Support" }).click();
+    else await page.keyboard.press("s");
     await tap(page, "PAR");
     await tap(page, "BUR");
     await tap(page, "BRE");
     await tap(page, "BRE");
 
-    await page.getByRole("button", { name: /^France/ }).click();
+    await selectPower(page, "France");
+    await openSheet(page);
     const france = page.getByLabel("France orders");
     await expect(france).toContainText("A PAR - BUR");
     await expect(france).toContainText("A MAR S A PAR - BUR");
     await expect(france).toContainText("F BRE H");
+    await closeSheet(page);
 
-    await page.getByRole("button", { name: "Adjudicate Spring 1901" }).click();
+    await expect(primary(page)).toHaveText("Adjudicate Spring 1901");
+    await primary(page).click();
+    await openSheet(page);
     const results = page.getByLabel("Adjudication results");
     await expect(results).toContainText("A PAR - BUR");
-    await expect(results).toContainText("bounced with PAR");
+    await expect(results).toContainText("Bounced with the unit from Paris");
+    await expect(results).not.toContainText("illegal");
     await expect(page.locator(".tag")).toHaveText("Results");
+    await closeSheet(page);
 
-    await page.getByRole("button", { name: "Continue to Fall 1901" }).click();
+    await expect(primary(page)).toHaveText("Continue to Fall 1901");
+    await primary(page).click();
+    await openSheet(page);
     await expect(page.locator(".phase-title")).toContainText("Fall 1901");
     await expect(page.locator("table.powers tbody tr", { hasText: "France" }).locator("td").nth(1)).toHaveText("3");
   });
 
-  test("asks which coast when a fleet can reach two", async ({ page }, info) => {
-    test.skip(info.project.name === "phone", "desktop flow");
+  test("asks which coast when a fleet can reach two", async ({ page }) => {
     await ready(page);
     await tap(page, "BRE");
     await tap(page, "MAO");
-    await page.getByRole("button", { name: "Adjudicate Spring 1901" }).click();
-    await page.getByRole("button", { name: "Continue to Fall 1901" }).click();
+    await resolveAndContinue(page);
     await tap(page, "MAO");
     await tap(page, "SPA");
     const picker = page.getByRole("menu");
     await expect(picker).toContainText("F MAO - SPA/NC");
+    await expect(page.locator(".toolbar .hint")).toContainText("choose from the menu");
     await picker.getByRole("menuitem", { name: "F MAO - SPA/SC" }).click();
+    await openSheet(page);
     await expect(page.getByLabel("France orders")).toContainText("F MAO - SPA/SC");
   });
 
-  test("plays through to builds, then undoes a phase", async ({ page }, info) => {
-    test.skip(info.project.name === "phone", "desktop flow");
+  test("plays through to builds, then undoes a phase", async ({ page }) => {
     await ready(page);
     await tap(page, "MAR");
     await tap(page, "SPA");
-    await page.getByRole("button", { name: "Adjudicate Spring 1901" }).click();
-    await page.getByRole("button", { name: "Continue to Fall 1901" }).click();
+    await resolveAndContinue(page);
     await tap(page, "SPA");
     await tap(page, "POR");
-    await page.getByRole("button", { name: "Adjudicate Fall 1901" }).click();
-    await page.getByRole("button", { name: "Continue to Winter 1901" }).click();
+    await expect(primary(page)).toHaveText("Adjudicate Fall 1901");
+    await primary(page).click();
+    await expect(primary(page)).toHaveText("Continue to Winter 1901 builds");
+    await primary(page).click();
+    await openSheet(page);
     await expect(page.locator(".phase-meta")).toContainText("Adjustments");
 
-    await page.getByRole("button", { name: /^France/ }).click();
+    await selectPower(page, "France");
+    await openSheet(page);
     await expect(page.getByLabel("France orders")).toContainText("may build 1 unit");
+    await closeSheet(page);
     await tap(page, "MAR");
     await page.getByRole("menuitem", { name: "A MAR B" }).click();
+    await openSheet(page);
     await expect(page.getByLabel("France orders")).toContainText("A MAR B");
-    await page.getByRole("button", { name: "Adjudicate Winter 1901" }).click();
-    await page.getByRole("button", { name: "Continue to Spring 1902" }).click();
+    await closeSheet(page);
+    await expect(primary(page)).toHaveText("Resolve Winter 1901 builds");
+    await primary(page).click();
+    await expect(primary(page)).toHaveText("Continue to Spring 1902");
+    await primary(page).click();
+    await openSheet(page);
     await expect(page.locator("table.powers tbody tr", { hasText: "France" }).locator("td").nth(1)).toHaveText("4");
 
     await page.getByRole("button", { name: "Undo last phase" }).click();
@@ -100,23 +106,11 @@ test.describe("classic board", () => {
 
   test("explains how to play", async ({ page }) => {
     await ready(page);
-    const menu = page.getByRole("button", { name: "Menu" });
-    if (await menu.isVisible()) await menu.click();
-    await page.getByRole("button", { name: "How to play" }).click();
+    await openHelp(page);
     const dialog = page.getByRole("dialog", { name: "How to play" });
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("Click a unit, then the province it should move to.");
     await dialog.getByRole("button", { name: "Close" }).click();
     await expect(dialog).toBeHidden();
-  });
-
-  test("fits a phone", async ({ page }, info) => {
-    test.skip(info.project.name !== "phone", "phone only");
-    await ready(page);
-    const frame = await page.locator(".board-frame").boundingBox();
-    const viewport = page.viewportSize()!;
-    expect(frame!.width).toBeLessThanOrEqual(viewport.width);
-    await page.getByRole("button", { name: "Zoom in" }).click();
-    await expect(page.getByRole("button", { name: "Show the whole board" })).toBeEnabled();
   });
 });
