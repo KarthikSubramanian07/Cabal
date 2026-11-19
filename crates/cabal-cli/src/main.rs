@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use cabal_engine::adjudicate::movement::{resolve_movement, resolve_movement_with_dependencies};
+use cabal_engine::adjudicate::movement::{explain_movement, resolve_movement_with_dependencies};
 use cabal_engine::geo::Map;
 use cabal_engine::json::SavedGame;
 use cabal_engine::order::{Order, Unit};
@@ -19,7 +19,7 @@ use cabal_engine::outcome::OrderOutcome;
 use cabal_engine::parse::parse;
 use cabal_engine::rulebook::Rulebook;
 use cabal_engine::state::Position;
-use cabal_engine::text::order_text;
+use cabal_engine::text::{explain_sentence, order_text};
 use cabal_engine::{Game, VERSION};
 
 /// The conformance harness is the one `cargo test` runs, compiled in from the
@@ -35,7 +35,13 @@ fn main() -> ExitCode {
         Some("legal") => legal(&args[1..]),
         Some("replay") => replay(&args[1..]),
         Some("version") | None => {
-            println!("cabal {VERSION}");
+            println!(
+                "cabal {VERSION} ({}, {} opt-level {}, {})",
+                cabal_engine::build::COMMIT,
+                cabal_engine::build::PROFILE,
+                cabal_engine::build::OPT_LEVEL,
+                cabal_engine::build::TARGET
+            );
             ExitCode::SUCCESS
         }
         Some(other) => {
@@ -95,14 +101,25 @@ fn explain(lines: &[String]) -> ExitCode {
         print!("{}", dependencies.to_dot(map, &pos));
         return ExitCode::SUCCESS;
     }
-    let result = resolve_movement(map, &pos, Rulebook::default(), &orders);
-    for (o, out) in result.orders.iter().zip(&result.outcomes) {
+    let (result, explanation) = explain_movement(map, &pos, Rulebook::default(), &orders);
+    for (i, (o, out)) in result.orders.iter().zip(&result.outcomes).enumerate() {
         let mark = if out.succeeds() { "ok " } else { "no " };
         println!(
             "{mark} {:<26} {}",
             order_text(map, &pos, o),
-            describe(map, out)
+            describe(map, &pos, out)
         );
+        if !out.succeeds() {
+            // the full sentence, with strengths and the units responsible
+            let submitted = orders
+                .iter()
+                .find(|s| s.unit == o.unit)
+                .map(|s| order_text(map, &pos, s));
+            println!(
+                "       {}",
+                explain_sentence(map, &pos, &explanation, i, submitted.as_deref())
+            );
+        }
     }
     for d in &result.dislodged {
         println!(
@@ -122,8 +139,8 @@ fn explain(lines: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn describe(map: &Map, out: &OrderOutcome) -> String {
-    cabal_engine::text::describe_outcome(map, out)
+fn describe(map: &Map, pos: &Position, out: &OrderOutcome) -> String {
+    cabal_engine::text::describe_outcome_in(map, pos, out)
 }
 
 fn legal(args: &[String]) -> ExitCode {
