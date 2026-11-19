@@ -20,6 +20,7 @@ import {
   type ClientMessage,
   type CreateGameRequest,
   CreateGameResponse,
+  type DatcReport,
   GameListing,
   GameRecord,
   GameSummary,
@@ -29,18 +30,25 @@ import {
   LeaderboardResponse,
   LedgerResponse,
   MeResponse,
+  type MetricSample,
+  MetricsSummary,
   MyGamesResponse,
+  NotificationPreferences,
+  NotificationsResponse,
   PlayerProfile,
   PlayerSession,
   type PledgeInput,
   type PowerName,
   PressPage,
+  PushKeyResponse,
+  type PushSubscriptionRequest,
   type Recipient,
   RecoveryCodeResponse,
   SeatTokenResponse,
   ServerMessage,
   SubstituteInviteResponse,
   TrustLeaderboardResponse,
+  type UpdateNotificationPreferences,
 } from "./index.js";
 import { z } from "zod";
 
@@ -590,7 +598,7 @@ export function createApi(options: ApiOptions = {}) {
   const base = (options.baseUrl ?? "").replace(/\/$/, "");
   const doFetch = options.fetch ?? ((input: string, init?: RequestInit) => fetch(input, init));
 
-  async function call<S extends z.ZodType>(schema: S, method: "GET" | "POST" | "PATCH", path: string, opts: { token?: string; body?: unknown } = {}): Promise<z.infer<S>> {
+  async function call<S extends z.ZodType>(schema: S, method: "GET" | "POST" | "PATCH" | "DELETE", path: string, opts: { token?: string; body?: unknown } = {}): Promise<z.infer<S>> {
     const headers: Record<string, string> = {};
     if (opts.token) headers.authorization = `Bearer ${opts.token}`;
     if (opts.body !== undefined) headers["content-type"] = "application/json";
@@ -655,6 +663,26 @@ export function createApi(options: ApiOptions = {}) {
     myGames: (secret: string) => call(MyGamesResponse, "GET", "/api/me/games", { token: secret }).then((r) => r.games),
     leaderboard: (p: { offset?: number; limit?: number } = {}) => call(LeaderboardResponse, "GET", `/api/leaderboard${page(p)}`),
     trustLedger: (p: { offset?: number; limit?: number } = {}) => call(TrustLeaderboardResponse, "GET", `/api/ledger${page(p)}`),
+
+    // ---------- notifications ----------
+
+    /** The key `pushManager.subscribe` takes as `applicationServerKey`; null where push is off. */
+    pushKey: () => call(PushKeyResponse, "GET", "/api/push/key").then((r) => r.publicKey),
+    /** Register this device for push: pass `subscription.toJSON()`. */
+    subscribePush: (secret: string, subscription: PushSubscriptionRequest) => call(z.object({ devices: z.number().int() }), "POST", "/api/me/push", { token: secret, body: subscription }),
+    unsubscribePush: (secret: string, endpoint: string) => call(z.null(), "DELETE", "/api/me/push", { token: secret, body: { endpoint } }),
+    notifications: (secret: string) => call(NotificationsResponse, "GET", "/api/me/notifications", { token: secret }),
+    setNotifications: (secret: string, change: UpdateNotificationPreferences) =>
+      call(NotificationsResponse, "PATCH", "/api/me/notifications", { token: secret, body: change }).then((r) => NotificationPreferences.parse(r.preferences)),
+
+    // ---------- metrics ----------
+
+    /** Report timings this browser measured. Anonymous; see the privacy page. */
+    sendMetrics: (samples: MetricSample[]) => call(z.null(), "POST", "/api/metrics", { body: { samples } }),
+    /** Admin only: the phase 1 metrics over the last `days` days. */
+    metrics: (adminToken: string, days?: number) => call(MetricsSummary, "GET", `/api/metrics${query({ days })}`, { token: adminToken }),
+    /** Admin only: record the DATC totals for a commit. */
+    reportDatc: (adminToken: string, report: DatcReport) => call(z.object({ recorded: z.boolean() }), "POST", "/api/metrics/datc", { token: adminToken, body: report }),
   };
 }
 

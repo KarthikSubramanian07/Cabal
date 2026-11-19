@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   ClientMessage,
+  DatcReport,
   GameRecord,
+  MetricsBeacon,
+  PushSubscriptionRequest,
+  UpdateNotificationPreferences,
   GameSettings,
   PACING_PRESETS,
   ServerMessage,
@@ -195,5 +199,36 @@ describe("envelope", () => {
     expect(ServerMessage.safeParse({ t: "pledge.receipt", p: { pledgeId: "x", receipt: "kept", revealed: ["A PAR H"] } }).success).toBe(false);
     expect(ServerMessage.safeParse({ t: "pledge.receipt", p: { pledgeId: "x", receipt: "kept", revealed: ["A PAR H"], nonce: "00".repeat(16) } }).success).toBe(true);
     expect(ClientMessage.safeParse({ t: "press.send", p: { to: "ALL", body: "x", pledge: { orders: ["A PAR H"], commitment: "nope" } } }).success).toBe(false);
+  });
+});
+
+describe("notifications and metrics", () => {
+  it("takes a browser's PushSubscription.toJSON() as it is", () => {
+    const fromChrome = {
+      endpoint: "https://fcm.googleapis.com/fcm/send/dQw4w9WgXcQ:APA91bH",
+      expirationTime: null,
+      keys: { p256dh: "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4", auth: "BTBZMqHH6r4Tts7J_aSIgg" },
+    };
+    expect(PushSubscriptionRequest.parse(fromChrome)).toEqual(fromChrome);
+    expect(PushSubscriptionRequest.safeParse({ ...fromChrome, keys: { p256dh: "short", auth: "x" } }).success).toBe(false);
+  });
+
+  it("changes at least one preference at a time", () => {
+    expect(UpdateNotificationPreferences.safeParse({}).success).toBe(false);
+    expect(UpdateNotificationPreferences.parse({ press: false })).toEqual({ press: false });
+    expect(UpdateNotificationPreferences.safeParse({ press: "no" }).success).toBe(false);
+  });
+
+  it("accepts only bounded, anonymous timings from a browser", () => {
+    expect(MetricsBeacon.parse({ samples: [{ metric: "order_rtt", ms: 81.5 }, { metric: "landing_to_game", ms: 41_000 }] }).samples).toHaveLength(2);
+    for (const bad of [{ samples: [] }, { samples: [{ metric: "order_rtt", ms: -1 }] }, { samples: [{ metric: "order_rtt", ms: 61_000 }] }, { samples: [{ metric: "datc", ms: 1 }] }]) {
+      expect(MetricsBeacon.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    }
+    expect(MetricsBeacon.safeParse({ samples: Array.from({ length: 51 }, () => ({ metric: "order_rtt", ms: 1 })) }).success).toBe(false);
+  });
+
+  it("names the commit a DATC report is for", () => {
+    expect(DatcReport.safeParse({ passed: 171, failed: 0, skipped: 0, commit: "a582be1" }).success).toBe(true);
+    expect(DatcReport.safeParse({ passed: 171, failed: 0, skipped: 0, commit: "main" }).success).toBe(false);
   });
 });

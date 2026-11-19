@@ -934,6 +934,124 @@ export type TrustLeaderboardResponse = z.infer<typeof TrustLeaderboardResponse>;
 export const SeatTokenResponse = CreateGameResponse;
 export type SeatTokenResponse = z.infer<typeof SeatTokenResponse>;
 
+// ---------- notifications ----------
+
+/**
+ * What a signed-in player can be told by Web Push while away from a game (no socket open for
+ * their seat): their orders are due soon, a phase resolved, a private dispatch arrived, the game
+ * began, the game ended.
+ */
+export const NotificationKind = z.enum(["deadline", "phase", "press", "started", "finished"]);
+export type NotificationKind = z.infer<typeof NotificationKind>;
+
+/** One switch per kind, all on until the player turns one off. */
+export const NotificationPreferences = z.object({
+  deadline: z.boolean(),
+  phase: z.boolean(),
+  press: z.boolean(),
+  started: z.boolean(),
+  finished: z.boolean(),
+});
+export type NotificationPreferences = z.infer<typeof NotificationPreferences>;
+export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = { deadline: true, phase: true, press: true, started: true, finished: true };
+
+/** `PATCH /api/me/notifications`: any of the switches; the rest are kept. */
+export const UpdateNotificationPreferences = NotificationPreferences.partial().refine((p) => Object.keys(p).length > 0, "change at least one preference");
+export type UpdateNotificationPreferences = z.infer<typeof UpdateNotificationPreferences>;
+
+/** `GET /api/me/notifications`: the switches, how many devices are subscribed, and the reminder lead. */
+export const NotificationsResponse = z.object({
+  preferences: NotificationPreferences,
+  devices: z.number().int().min(0),
+  /** How long before a deadline the reminder goes out, for phases long enough to have one. */
+  reminderMinutes: z.number().int().min(1),
+});
+export type NotificationsResponse = z.infer<typeof NotificationsResponse>;
+
+/** `GET /api/push/key`: the VAPID public key for `pushManager.subscribe`, null where push is off. */
+export const PushKeyResponse = z.object({ publicKey: z.string().nullable() });
+export type PushKeyResponse = z.infer<typeof PushKeyResponse>;
+
+/** `POST /api/me/push`: exactly what `PushSubscription.toJSON()` gives in a browser. */
+export const PushSubscriptionRequest = z.object({
+  endpoint: z.string().max(1024),
+  expirationTime: z.number().nullable().optional(),
+  keys: z.object({ p256dh: z.string().min(80).max(100), auth: z.string().min(16).max(32) }),
+});
+export type PushSubscriptionRequest = z.infer<typeof PushSubscriptionRequest>;
+
+/** `DELETE /api/me/push`: forget one device's subscription. */
+export const PushUnsubscribeRequest = z.object({ endpoint: z.string().max(1024) });
+export type PushUnsubscribeRequest = z.infer<typeof PushUnsubscribeRequest>;
+
+/**
+ * What a service worker receives in a push message (decrypted). Never carries orders, press text or
+ * anything sealed: only enough to say what happened and where to look.
+ */
+export const PushPayload = z.object({
+  kind: NotificationKind,
+  gameId: z.string(),
+  title: z.string(),
+  body: z.string(),
+  /** Where a click should land, a path on the web app such as `/g/K7Q2AB`. */
+  url: z.string(),
+  /** Notifications with the same tag replace one another on the device. */
+  tag: z.string(),
+  sentAt: z.number().int(),
+});
+export type PushPayload = z.infer<typeof PushPayload>;
+
+// ---------- phase 1 metrics ----------
+
+/** The four success metrics of docs/PLAN.md section 8. */
+export const MetricId = z.enum(["datc", "full_game", "landing_to_game", "order_rtt"]);
+export type MetricId = z.infer<typeof MetricId>;
+
+/**
+ * One timing a browser measured: an order's round trip (`orders.set` to `orders.ack`), or the time
+ * from opening the landing page to a game whose first phase accepts orders. Nothing identifies the
+ * player or the device; the server adds only the continent the request came from.
+ */
+export const MetricSample = z.discriminatedUnion("metric", [
+  z.object({ metric: z.literal("order_rtt"), ms: z.number().min(0).max(60_000) }),
+  z.object({ metric: z.literal("landing_to_game"), ms: z.number().min(0).max(3_600_000) }),
+]);
+export type MetricSample = z.infer<typeof MetricSample>;
+
+/** `POST /api/metrics`: up to 50 samples, as `navigator.sendBeacon` would send them. */
+export const MetricsBeacon = z.object({ samples: z.array(MetricSample).min(1).max(50) });
+export type MetricsBeacon = z.infer<typeof MetricsBeacon>;
+
+/** `POST /api/metrics/datc` (admin): the totals `cabal datc` printed for a commit. */
+export const DatcReport = z.object({
+  passed: z.number().int().min(0),
+  failed: z.number().int().min(0),
+  skipped: z.number().int().min(0),
+  commit: z.string().regex(/^[0-9a-f]{7,40}$/),
+  engine: z.string().max(32).optional(),
+});
+export type DatcReport = z.infer<typeof DatcReport>;
+
+/** One line of the metrics summary: the target, what was measured, and whether it is met. */
+export const MetricLine = z.object({
+  id: MetricId,
+  title: z.string(),
+  target: z.string(),
+  /** `unmeasured` until there is a sample in the window. */
+  status: z.enum(["pass", "fail", "unmeasured"]),
+  /** The figure the target is judged on (a p95, a count, a pass rate), in `unit`. */
+  value: z.number().nullable(),
+  unit: z.string(),
+  samples: z.number().int().min(0),
+  lastAt: z.number().int().nullable(),
+  detail: z.record(z.string(), z.unknown()),
+});
+export type MetricLine = z.infer<typeof MetricLine>;
+
+/** `GET /api/metrics` (admin): every metric over a window, by default the last 30 days. */
+export const MetricsSummary = z.object({ from: z.number().int(), to: z.number().int(), metrics: z.array(MetricLine) });
+export type MetricsSummary = z.infer<typeof MetricsSummary>;
+
 // ---------- scoring ----------
 
 /** Sum of Squares share of a draw for each surviving power. */

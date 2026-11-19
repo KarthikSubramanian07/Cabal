@@ -411,4 +411,32 @@ describe("createApi", () => {
     expect((calls[4]!.init!.headers as Record<string, string>).authorization).toBe("Bearer cps_secret");
     for (const call of calls) expect(call.url).not.toContain("secret");
   });
+
+  it("covers push, notification preferences and metrics, with secrets as bearers only", async () => {
+    const calls: { url: string; init: RequestInit | undefined }[] = [];
+    const preferences = { deadline: true, phase: false, press: true, started: true, finished: true };
+    const replies: Response[] = [
+      Response.json({ publicKey: "BPublicKey" }),
+      Response.json({ devices: 1 }, { status: 201 }),
+      new Response(null, { status: 204 }),
+      Response.json({ preferences, devices: 1, reminderMinutes: 60 }),
+      new Response(null, { status: 204 }),
+      Response.json({ from: 1, to: 2, metrics: [] }),
+    ];
+    const api = createApi({ fetch: async (url, init) => (calls.push({ url, init }), replies.shift()!) });
+    expect(await api.pushKey()).toBe("BPublicKey");
+    const subscription = { endpoint: "https://fcm.googleapis.com/fcm/send/x", expirationTime: null, keys: { p256dh: "B".repeat(87), auth: "a".repeat(22) } };
+    expect(await api.subscribePush("cps_secret", subscription)).toEqual({ devices: 1 });
+    expect(JSON.parse(calls[1]!.init!.body as string)).toEqual(subscription);
+    expect(await api.unsubscribePush("cps_secret", subscription.endpoint)).toBeNull();
+    expect(calls[2]!.init!.method).toBe("DELETE");
+    expect(await api.setNotifications("cps_secret", { phase: false })).toEqual(preferences);
+    expect(calls[3]!.init!.method).toBe("PATCH");
+    expect(await api.sendMetrics([{ metric: "order_rtt", ms: 42 }])).toBeNull();
+    expect((calls[4]!.init!.headers as Record<string, string>).authorization).toBeUndefined();
+    expect((await api.metrics("admin-token", 7)).metrics).toEqual([]);
+    expect(calls[5]!.url).toBe("/api/metrics?days=7");
+    expect((calls[5]!.init!.headers as Record<string, string>).authorization).toBe("Bearer admin-token");
+    for (const call of calls) expect(call.url).not.toMatch(/secret|admin-token/);
+  });
 });
