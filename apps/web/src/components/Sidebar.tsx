@@ -1,10 +1,15 @@
-import type { CSSProperties } from "react";
+import { type CSSProperties, useMemo } from "react";
+import { ReplayScrubber } from "../motion/ReplayScrubber.jsx";
+import { timeline } from "../motion/timeline.js";
 import type { PhaseRecord, PowerSummary } from "../game/useSandbox.js";
 import { type PhaseKind, describePhase, parseOrder, titleCase } from "../game/notation.js";
 import { receiptFor } from "../game/receipts.js";
 import { SPEEDS, type Speed, speedLabel } from "../game/replay.js";
 import { phaseLine } from "../game/describe.js";
 import { POWER_COLOR } from "../map/Board.jsx";
+import type { OrderResult } from "../engine.js";
+import { type Why, hasWhy } from "../game/explain/explain.js";
+import { WhyPanel } from "../game/explain/WhyPanel.jsx";
 
 export function PhaseHeader({ phase, status, viewing }: { phase: string; status: string; viewing: boolean }) {
   const { season, year, kind } = describePhase(phase);
@@ -180,7 +185,30 @@ export function OrderList({
 
 type Names = Record<string, { name: string } | undefined>;
 
-export function Results({ record, names }: { record: PhaseRecord; names?: Names }) {
+/**
+ * The key a receipt's "why" is opened by: its place in the phase's results, with its power and
+ * order. Not the unit alone, which is empty for every build and so is shared by two of them.
+ */
+export const whyKey = (r: { power: string; order: string }, index: number) => `${index}|${r.power}|${r.order}`;
+
+export function Results({
+  record,
+  names,
+  explain,
+  open,
+  onOpen,
+  label = "Adjudication results",
+}: {
+  record: Pick<PhaseRecord, "phase" | "orders" | "outcome">;
+  names?: Names;
+  /** The panel for a result, for every failed order that should offer one. */
+  explain?: ((result: OrderResult) => Why | null) | undefined;
+  /** The receipt whose panel is open (`whyKey`), if any. */
+  open?: string | null | undefined;
+  onOpen?: ((key: string | null) => void) | undefined;
+  /** Names the group for assistive technology ("Predicted results" in a what-if). */
+  label?: string;
+}) {
   const place = (code: string) => names?.[code]?.name ?? code;
   const given = new Set(Object.values(record.orders).flatMap((o) => Object.values(o)));
   const byPower = new Map<string, typeof record.outcome.results>();
@@ -194,7 +222,7 @@ export function Results({ record, names }: { record: PhaseRecord; names?: Names 
   }
   const { dislodged, standoffs, civil_disorder: removed } = record.outcome;
   return (
-    <div className="results" role="group" aria-label="Adjudication results">
+    <div className="results" role="group" aria-label={label}>
       {[...byPower.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([power, list]) => (
         <section key={power} style={{ "--power": POWER_COLOR[power] } as CSSProperties}>
           <h3>
@@ -203,8 +231,13 @@ export function Results({ record, names }: { record: PhaseRecord; names?: Names 
           </h3>
           {list.map((r, i) => {
             const receipt = receiptFor(r, record.phase, names, record.outcome.results);
+            // A disband or a waived build is neutral on the receipt: nothing failed to explain.
+            const why = explain && hasWhy(r) ? explain(r) : null;
+            const key = whyKey(r, record.outcome.results.indexOf(r));
+            const isOpen = why !== null && open === key;
+            const panelId = `why-${key.replace(/[^A-Za-z0-9]/g, "-")}`;
             return (
-              <div className={`receipt ${receipt.tone}`} key={`${r.order}-${i}`} data-code={r.code}>
+              <div className={`receipt ${receipt.tone}${isOpen ? " open" : ""}`} key={`${r.order}-${i}`} data-code={r.code}>
                 <span className="mark" aria-hidden="true">
                   {receipt.tone === "ok" ? "✓" : receipt.tone === "fail" ? "✕" : "–"}
                 </span>
@@ -215,6 +248,19 @@ export function Results({ record, names }: { record: PhaseRecord; names?: Names 
                   </span>
                 </code>
                 {receipt.detail ? <span className="why">{receipt.detail}</span> : null}
+                {why ? (
+                  <button
+                    type="button"
+                    className="why-toggle"
+                    aria-expanded={isOpen}
+                    aria-controls={panelId}
+                    onClick={() => onOpen?.(isOpen ? null : key)}
+                  >
+                    Why?
+                    <span className="sr-only"> {r.order}</span>
+                  </button>
+                ) : null}
+                {isOpen && why ? <WhyPanel why={why} id={panelId} /> : null}
               </div>
             );
           })}
@@ -261,6 +307,7 @@ export function PhaseStepper({
   onPause: () => void;
   onSpeed: (speed: Speed) => void;
 }) {
+  const marks = useMemo(() => timeline(history), [history]);
   if (history.length === 0) return null;
   const index = viewing ?? history.length;
   const go = (i: number) => onView(i >= history.length ? null : Math.max(0, i));
@@ -302,17 +349,12 @@ export function PhaseStepper({
         </button>
       </div>
       <div className="stepper-row scrub">
-        <input
-          type="range"
-          className="scrubber"
-          min={0}
-          max={history.length}
-          step={1}
-          value={index}
-          onChange={(e) => go(Number(e.target.value))}
-          aria-label="Scrub through the game"
-          aria-valuetext={name(index)}
-          style={{ "--at": `${(index / history.length) * 100}%` } as CSSProperties}
+        <ReplayScrubber
+          marks={marks}
+          index={index}
+          onSeek={go}
+          liveLabel={name(history.length)}
+          phaseLabel={(m) => `${phaseLine(m.phase)} results`}
         />
         <div className="speeds" role="group" aria-label="Replay speed">
           {SPEEDS.map((s) => (

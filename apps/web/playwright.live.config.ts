@@ -24,7 +24,8 @@ export default defineConfig({
   use: { baseURL: origin, trace: "retain-on-failure", serviceWorkers: "block" },
   webServer: [
     {
-      command: `node ../server/scripts/sync-wasm.mjs && pnpm --dir ../server exec wrangler dev --port ${serverPort} --persist-to .wrangler/e2e-live --show-interactive-dev-session=false`,
+      // The server's games index and players live in D1: its local copy gets the real migrations first.
+      command: `node ../server/scripts/sync-wasm.mjs && pnpm --dir ../server exec wrangler d1 migrations apply cabal --local --persist-to .wrangler/e2e-live && pnpm --dir ../server exec wrangler dev --port ${serverPort} --persist-to .wrangler/e2e-live --show-interactive-dev-session=false`,
       url: `http://localhost:${serverPort}/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,

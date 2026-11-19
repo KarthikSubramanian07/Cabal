@@ -174,6 +174,14 @@ export function HowToPlay({
             </span>{" "}
             to watch the whole game play back, each phase inked in turn, at half, normal or double speed.
           </p>
+          <p className="fine">
+            Each phase plays out on the board as it resolves. Choose Skip over the map
+            <span className="keys-only">
+              {" "}
+              (<kbd>Esc</kbd>)
+            </span>{" "}
+            to land every piece and stamp at once.
+          </p>
         </section>
         <section>
           <h3>Playing at a table</h3>
