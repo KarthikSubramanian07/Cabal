@@ -103,6 +103,134 @@ pub fn random_orders(game: &Game, rng: &mut Rng) -> Vec<AnyOrder> {
     out
 }
 
+/// [`random_orders`] plus the orders a careless or hostile caller sends: orders
+/// for units that are not there or not the sender's, a second order for a unit
+/// already ordered, commands that cannot be carried out, retreats to anywhere,
+/// builds and removals nobody is owed. `Game::process` takes all of it, so the
+/// record of it has to survive every way of loading a game.
+pub fn noisy_orders(game: &Game, rng: &mut Rng) -> Vec<AnyOrder> {
+    use cabal_engine::geo::{Coast, Region, UnitKind};
+    use cabal_engine::order::{AdjustOrder, Order, RetreatCommand, RetreatOrder};
+
+    let map = game.map();
+    let mut out = random_orders(game, rng);
+    let provinces: Vec<_> = map.province_ids().collect();
+    let powers: Vec<Power> = map.power_ids().collect();
+    let units: Vec<_> = game.state.position.units.clone();
+    let pick = |rng: &mut Rng| provinces[rng.below(provinces.len())];
+    let coast = |rng: &mut Rng| match rng.below(8) {
+        0 => Some(Coast::North),
+        1 => Some(Coast::South),
+        2 => Some(Coast::East),
+        3 => Some(Coast::West),
+        _ => None,
+    };
+    let extra = rng.below(6);
+    for _ in 0..extra {
+        let power = powers[rng.below(powers.len())];
+        match game.phase().kind {
+            PhaseKind::Movement => {
+                // mostly real units (anybody's), sometimes an empty province
+                let unit = if !units.is_empty() && rng.chance(80) {
+                    units[rng.below(units.len())].province()
+                } else {
+                    pick(rng)
+                };
+                let command = match rng.below(5) {
+                    0 => Command::Hold,
+                    1 => Command::Move {
+                        dest: pick(rng),
+                        coast: coast(rng),
+                        via_convoy: rng.chance(30),
+                    },
+                    2 => Command::SupportHold { target: pick(rng) },
+                    3 => Command::SupportMove {
+                        target: pick(rng),
+                        dest: pick(rng),
+                        coast: coast(rng),
+                    },
+                    _ => Command::Convoy {
+                        army: pick(rng),
+                        dest: pick(rng),
+                    },
+                };
+                // half the time the sender is the owner, so duplicates and
+                // plainly illegal orders are as common as foreign ones
+                let power = match game.state.position.unit_at(unit) {
+                    Some(u) if rng.chance(50) => u.power,
+                    _ => power,
+                };
+                out.push(AnyOrder::Movement(Order {
+                    power,
+                    unit,
+                    command,
+                }));
+            }
+            PhaseKind::Retreat => {
+                let dislodged = &game.state.dislodged;
+                let (unit, owner) = if !dislodged.is_empty() && rng.chance(85) {
+                    let d = &dislodged[rng.below(dislodged.len())];
+                    (d.unit.province(), Some(d.unit.power))
+                } else {
+                    (pick(rng), None)
+                };
+                let command = if rng.chance(30) {
+                    RetreatCommand::Disband
+                } else {
+                    RetreatCommand::Retreat {
+                        dest: pick(rng),
+                        coast: coast(rng),
+                    }
+                };
+                let power = match owner {
+                    Some(owner) if rng.chance(50) => owner,
+                    _ => power,
+                };
+                out.push(AnyOrder::Retreat(RetreatOrder {
+                    power,
+                    unit,
+                    command,
+                }));
+            }
+            PhaseKind::Adjustment => {
+                let command = match rng.below(3) {
+                    0 => AdjustCommand::Waive,
+                    1 => AdjustCommand::Disband { unit: pick(rng) },
+                    _ => AdjustCommand::Build {
+                        kind: match rng.below(3) {
+                            0 => Some(UnitKind::Army),
+                            1 => Some(UnitKind::Fleet),
+                            _ => None,
+                        },
+                        region: Region::new(pick(rng), coast(rng)),
+                    },
+                };
+                out.push(AnyOrder::Adjustment(AdjustOrder { power, command }));
+            }
+        }
+    }
+    // the noise goes anywhere among the real orders, not only after them
+    for i in (1..out.len()).rev() {
+        out.swap(i, rng.below(i + 1));
+    }
+    out
+}
+
+/// A game played with [`noisy_orders`] for up to `phases` phases.
+pub fn noisy_game(map: &'static Map, edition: &str, seed: u64, phases: usize) -> Game {
+    let mut rng = Rng::new(seed);
+    let mut game = Game::new(map, Rulebook::by_name(edition).unwrap());
+    for _ in 0..phases {
+        if game.is_finished() {
+            break;
+        }
+        let orders = noisy_orders(&game, &mut rng);
+        game.process(&orders)
+            .expect("an active game accepts orders");
+    }
+    game
+}
+
 /// Play up to `phases` phases of random legal orders from `game`'s current state.
 pub fn play(game: &mut Game, rng: &mut Rng, phases: usize) {
     for _ in 0..phases {
