@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Game, type State, ready } from "@cabal/engine";
+import { Game, type State, preview, ready } from "@cabal/engine";
 import { beforeAll, describe, expect, it } from "vitest";
-import type { OrderBook } from "../book.js";
+import { type OrderBook, flatten } from "../book.js";
+import { receiptFor } from "../receipts.js";
 import { explainPhase, hasWhy, indexOfUnit, namePlaces, whyOf, whyOfResult } from "./explain.js";
 import { predict } from "./whatIf.js";
 
@@ -98,6 +99,35 @@ describe("why a move failed", () => {
     expect(why.cycle?.note).toContain("Szykman");
     expect(why.cycle?.orders.length).toBeGreaterThanOrEqual(2);
     expect(why.convoys.map((c) => c.unit)).toContain("F ENG");
+  });
+});
+
+describe("the panel agrees with the receipt", () => {
+  it("stamps each order in a convoy paradox the way its receipt does (DATC 6.F.16, Pandin's paradox)", () => {
+    const state = position({ ENGLAND: ["F LON", "F WAL"], FRANCE: ["A BRE", "F ENG"], GERMANY: ["F NTH", "F BEL"] });
+    const orders = {
+      ENGLAND: { "F LON": "F LON S F WAL - ENG", "F WAL": "F WAL - ENG" },
+      FRANCE: { "A BRE": "A BRE - LON VIA", "F ENG": "F ENG C A BRE - LON" },
+      GERMANY: { "F NTH": "F NTH S F BEL - ENG", "F BEL": "F BEL - ENG" },
+    };
+    const out = preview(state, { orders: flatten(orders) });
+    const ex = explainPhase({ phase: state.name, state, orders })!;
+    const failed = out.results.filter((r) => !r.ok);
+    expect(failed.map((r) => r.unit)).toEqual(expect.arrayContaining(["F BEL", "A BRE"]));
+    for (const r of failed) {
+      const why = whyOf(ex, indexOfUnit(ex, r.power, r.unit))!;
+      expect(`${r.unit}: ${why.verdict}`).toBe(`${r.unit}: ${receiptFor(r, state.name, undefined, out.results).verdict}`);
+    }
+    // The circle is still explained.
+    expect(whyOf(ex, indexOfUnit(ex, "FRANCE", "A BRE"))!.cycle?.kind).toBe("convoy_paradox");
+  });
+
+  it("shows no holding ledger for an order nothing came at", () => {
+    // Tyrolia cannot reach Marseilles, so its support is illegal and it simply holds, unattacked.
+    const state = position({ AUSTRIA: ["A TYR"], ITALY: ["A PIE"] });
+    const why = explainFor(state, { AUSTRIA: { "A TYR": "A TYR S A PIE - MAR" } }, "AUSTRIA", "A TYR");
+    expect(why.ok).toBe(false);
+    expect(why.defence).toBeNull();
   });
 });
 

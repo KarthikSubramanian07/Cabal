@@ -111,7 +111,8 @@ export function whyOf(ex: Explanation, index: number, names?: Names): Why | null
     contest = { mine: { role: o.by_convoy ? "Crossing by convoy" : "This move", unit: o.unit, strength: o.attack }, against };
   }
   const defence =
-    o.hold !== null && o.hold !== undefined && (o.attacks.length > 0 || !o.ok)
+    // Only when something came at it: an illegal order turned into a hold has no ledger to show.
+    o.hold !== null && o.hold !== undefined && o.attacks.length > 0
       ? { hold: o.hold, attacks: o.attacks.map((a) => ({ unit: a.unit, strength: a.strength, succeeded: a.succeeded })) }
       : null;
   // A convoyed army is not in its convoy's circle itself, but the circle is why it failed.
@@ -154,7 +155,9 @@ export function whyOf(ex: Explanation, index: number, names?: Names): Why | null
     order: o.order,
     ok: o.ok,
     code: o.code,
-    verdict: o.ok ? "Succeeded" : cycleInfo?.kind === "convoy_paradox" ? "Paradox" : (VERDICTS[o.code] ?? "Failed"),
+    // The engine's own code, as on the receipt: in a paradox each order in the circle still failed
+    // its own way (a bounce, no convoy); the circle's note says why.
+    verdict: o.ok ? "Succeeded" : (VERDICTS[o.code] ?? "Failed"),
     sentence: namePlaces(o.sentence, names),
     contest,
     defence,
