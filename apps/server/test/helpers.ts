@@ -30,6 +30,16 @@ export interface Summary {
   settings: GameSettings;
   seats: { power: string; kind: string; name: string | null; missed: number; ready: boolean; eliminated: boolean; autopilot: boolean }[];
   finished: { result: string; winners: string[]; scores: Record<string, number>; reason: string | null } | null;
+  ai: {
+    brain: "bot" | "claude";
+    model: string | null;
+    claudeTurns: number;
+    claudeCalls: number;
+    spentUsd: number;
+    capUsd: number;
+    tokens: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number };
+    stopped: string | null;
+  };
 }
 
 export async function create(name: string, settings: Record<string, unknown> = {}): Promise<Seat> {
@@ -84,7 +94,12 @@ export interface RoomInternals {
     pause: { remainingMs: number; since: number; until: number } | null;
     idlePhases: number;
     gracePhase: string | null;
+    ai: { step: "negotiate" | "listen" | "order"; listenUntil: number } | null;
     claudeTurns: number;
+    claudeCalls: number;
+    claudeSpentMicros: number;
+    claudeStrikes: number;
+    claudeOff: string | null;
   };
   env: ServerEnv;
   armedAt: number | null;

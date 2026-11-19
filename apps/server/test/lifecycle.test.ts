@@ -61,7 +61,7 @@ describe("ready-advance", () => {
     // Every AI seat already has its orders in and is ready.
     expect((await summary(ann.gameId)).seats.filter((s) => s.kind === "ai").every((s) => s.ready)).toBe(true);
     await sql(ann.gameId, "UPDATE seats SET kind = 'civil_disorder', missed = 2 WHERE kind = 'human'");
-    const result = await stubOf(ann.gameId).agentSubmit(ai.power as "FRANCE", "S1901M", { orders: [], messages: [], pledge: null });
+    const result = await stubOf(ann.gameId).agentSubmit(ai.power as "FRANCE", "S1901M", "order", { orders: [], messages: [], pledge: null }, { model: null, usage: null, billed: "no" });
     expect(result.applied).toBe(false);
     await inRoom(ann.gameId, (room) => {
       room.advance();

@@ -19,6 +19,10 @@
  *    misses put it in civil disorder, where the bot covers it and the player takes it back by
  *    ordering. Only after four may a seated player invite a substitute.
  *  - Spectators are read-only: nothing a socket without a seat does can change the game.
+ *  - Every AI seat is played every phase through a `SeatBrain`. The bot's orders are on file the
+ *    moment a phase opens. A game that opted into Claude then asks the queue for better ones, in
+ *    two bounded steps (negotiate, then order), under a hard spend cap; whatever goes wrong, the
+ *    orders on file stand and the phase resolves on time.
  */
 import { DurableObject } from "cloudflare:workers";
 import {
@@ -39,12 +43,18 @@ import {
   sumOfSquares,
 } from "@cabal/protocol";
 import { adjudicateStrict } from "./adjudicate-guard.js";
-import { botOrders, canAct } from "./bot.js";
+import { DEFAULT_MODEL, MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS, MEMORY_LIMITS, type Memory, type Usage, costMicros, maxCallCostMicros } from "@cabal/agents";
+import { canAct } from "./bot.js";
+import { seatBrain } from "./brain.js";
 import {
+  AGENT_CALL_TTL_MS,
   AI_TURN_LIMIT_MS,
+  NEGOTIATE_LIMIT_MS,
+  NEGOTIATE_MIN_PHASE_MS,
   PAUSE_LIMIT_MS,
   LOBBY_TTL_MS,
   adjudicationRetryDelay,
+  listenMs,
   nextAlarmAt,
   outboxDelay,
   phaseSeconds,
@@ -94,12 +104,36 @@ export const LIMITS = {
   abandonAfter: 3,
   /** Phases one trigger may resolve in a row (bot-only retreats and builds chain through). */
   chain: 4,
-  /** Claude turns per game unless `CLAUDE_TURNS_PER_GAME` says otherwise. */
+  /** Claude turns (one seat, one phase) per game unless `CLAUDE_TURNS_PER_GAME` says otherwise. */
   claudeTurnsPerGame: 400,
-  /** Press an AI seat may send in one turn, and the longest body. */
+  /** What one game may spend on Claude, in US dollars, unless `CLAUDE_USD_PER_GAME` says otherwise. */
+  claudeUsdPerGame: 5,
+  /** Model failures in a row before a game stops asking Claude and plays on with the bot. */
+  claudeStrikes: 6,
+  /** Press an AI seat may send in one step, and the longest body. */
   agentMessages: 3,
   agentBodyChars: 1000,
+  /** Press handed to a Claude seat: this phase's, and what it sent or received before. */
+  briefPress: 60,
+  briefEarlierPress: 20,
+  /** Settled model calls kept for the record. */
+  agentCallsKept: 600,
 } as const;
+
+/** The model behind Claude seats. Prices and the spend cap are worked out for this model. */
+export const CLAUDE_MODEL = DEFAULT_MODEL;
+
+/**
+ * The most one model call can cost, reserved against the game's budget before the call is made.
+ * It assumes the prompt bound the brain enforces (two characters per token at the least) and the
+ * whole output allowance, so a reservation is never smaller than the bill.
+ */
+export function reservationMicros(kind: "M" | "R" | "A", step: Step): number {
+  const output = kind === "R" ? MAX_OUTPUT_TOKENS.retreat : kind === "A" ? MAX_OUTPUT_TOKENS.adjustment : step === "negotiate" ? MAX_OUTPUT_TOKENS.negotiate : MAX_OUTPUT_TOKENS.movement;
+  return maxCallCostMicros(CLAUDE_MODEL, MAX_INPUT_TOKENS, output);
+}
+
+type Step = AgentTurn["step"];
 
 interface Finished {
   result: GameResult;
@@ -127,10 +161,25 @@ interface Meta {
   idlePhases: number;
   /** Set while a failed adjudication waits for its next attempt. */
   retry: { attempts: number; at: number } | null;
-  /** Set while Claude seats are still thinking about the current phase. */
+  /** Set while Claude seats are still thinking about the current phase: when the room stops waiting. */
   aiDueAt: number | null;
-  /** Claude turns requested so far, against the per-game cap. */
+  /**
+   * Where the Claude seats are in the current phase: talking, waiting for the table to answer, or
+   * ordering. `listenUntil` is when the wait ends by itself. Null when no Claude turn is open.
+   */
+  ai: { step: "negotiate" | "listen" | "order"; listenUntil: number } | null;
+  /** Claude turns (one seat, one phase) requested so far, against the per-game cap. */
   claudeTurns: number;
+  /** Model calls put on the queue so far. */
+  claudeCalls: number;
+  /** What the game has spent on Claude, in micro-dollars, from the usage each call reported. */
+  claudeSpentMicros: number;
+  /** Tokens behind that spend. */
+  claudeTokens: Usage;
+  /** Model failures in a row. */
+  claudeStrikes: number;
+  /** Why this game stopped asking Claude, once it has. The bot plays on. */
+  claudeOff: string | null;
 }
 
 interface Outbox {
@@ -155,20 +204,58 @@ interface Attachment {
   power: PowerName | null;
 }
 
-/** What a Claude seat needs to decide a turn. Served over the Durable Object binding only. */
+/** What a Claude seat needs to decide one step of a turn. Served over the Durable Object binding only. */
 export interface AgentBrief {
   gameId: string;
   power: PowerName;
   phase: string;
+  step: Step;
   state: StateView;
+  /** Press of this phase that the seat may read, oldest first. */
   press: PressView[];
+  /** What the seat sent or received in earlier phases, oldest first. */
+  earlierPress: { phase: string; from: string; to: string; body: string }[];
   trust: Record<string, { kept: number; broken: number }>;
+  /** The seat's own diary and relationships, as it left them last turn. */
+  memory: Memory;
+  deadlineAt: number | null;
 }
 
 export interface AgentDecision {
   orders: string[];
   messages: { to: string; body: string }[];
   pledge: { to: string; orders: string[]; sealed: boolean } | null;
+}
+
+/** What the model call behind a submission cost, and what the seat wants remembered. */
+export interface AgentReport {
+  model: string | null;
+  usage: Usage | null;
+  /** `yes`: usage is the bill. `no`: nothing was billed. `unknown`: assume the worst. */
+  billed: "yes" | "no" | "unknown";
+  /** Set when the model call failed; a 401 or 403 stops the game asking again. */
+  failure?: { status: number | null; message: string } | null;
+  memory?: Memory | null;
+}
+
+/** What became of each part of a submission. One bad part never discards the others. */
+export interface AgentOutcome {
+  applied: boolean;
+  reason: string;
+  orders: { accepted: string[]; rejected: { text: string; reason: string }[] };
+  messages: { to: string; sent: boolean; code: string | null }[];
+  /** `sent` with a message, `dropped` when its orders or its message were refused, null when none was offered. */
+  pledge: "sent" | "dropped" | null;
+}
+
+interface CallRow extends Record<string, SqlStorageValue> {
+  phase: string;
+  power: PowerName;
+  step: Step;
+  reserved_micros: number;
+  dispatched_at: number | null;
+  claimed_at: number | null;
+  cost_micros: number | null;
 }
 
 const SCHEMA = `
@@ -241,6 +328,27 @@ CREATE TABLE IF NOT EXISTS phases (
   results_json TEXT NOT NULL,
   adjudicated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS agent_memory (
+  power TEXT PRIMARY KEY,
+  memory_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_calls (
+  phase TEXT NOT NULL,
+  power TEXT NOT NULL,
+  step TEXT NOT NULL,
+  reserved_micros INTEGER NOT NULL,
+  dispatched_at INTEGER,
+  claimed_at INTEGER,
+  cost_micros INTEGER,
+  model TEXT,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  outcome TEXT,
+  PRIMARY KEY (phase, power, step)
+);
 CREATE TABLE IF NOT EXISTS events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   audience TEXT NOT NULL,
@@ -308,7 +416,13 @@ export class GameRoom extends DurableObject<Env> {
         idlePhases: stored.idlePhases ?? 0,
         retry: stored.retry ?? null,
         aiDueAt: stored.aiDueAt ?? null,
+        ai: stored.ai ?? null,
         claudeTurns: stored.claudeTurns ?? 0,
+        claudeCalls: stored.claudeCalls ?? 0,
+        claudeSpentMicros: stored.claudeSpentMicros ?? 0,
+        claudeTokens: stored.claudeTokens ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        claudeStrikes: stored.claudeStrikes ?? 0,
+        claudeOff: stored.claudeOff ?? null,
       };
       this.meta = meta;
       const saved = this.kv.get<string>("saved");
@@ -437,7 +551,7 @@ export class GameRoom extends DurableObject<Env> {
         this.advance();
       }
       if (this.meta.status === "active" && this.meta.aiDueAt !== null && now >= this.meta.aiDueAt) {
-        this.releaseAiSeats("timeout");
+        this.aiTimeout();
       }
       if (this.meta.status === "active") {
         if (this.meta.retry) {
@@ -508,7 +622,13 @@ export class GameRoom extends DurableObject<Env> {
         idlePhases: 0,
         retry: null,
         aiDueAt: null,
+        ai: null,
         claudeTurns: 0,
+        claudeCalls: 0,
+        claudeSpentMicros: 0,
+        claudeTokens: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        claudeStrikes: 0,
+        claudeOff: null,
       };
       this.game = new Game(settings.rulebook);
       for (const p of POWERS) this.sql.exec("INSERT INTO seats (power, kind) VALUES (?, 'open')", p);
@@ -639,6 +759,23 @@ export class GameRoom extends DurableObject<Env> {
       pauseReason: this.meta?.pauseReason ?? null,
       pausedUntil: this.meta?.pause?.until ?? null,
       pausedRemainingMs: this.meta?.pause?.remainingMs ?? null,
+      ai: this.meta ? this.aiSummary() : null,
+    };
+  }
+
+  /** Who is playing the AI seats and what it has cost so far. Public: there is nothing secret in a bill. */
+  private aiSummary() {
+    const meta = this.meta!;
+    const brain = this.brain();
+    return {
+      brain: brain.deliberates && !meta.claudeOff ? ("claude" as const) : ("bot" as const),
+      model: brain.deliberates ? CLAUDE_MODEL : null,
+      claudeTurns: meta.claudeTurns,
+      claudeCalls: meta.claudeCalls,
+      spentUsd: meta.claudeSpentMicros / 1_000_000,
+      capUsd: this.claudeCapMicros() / 1_000_000,
+      tokens: meta.claudeTokens,
+      stopped: meta.claudeOff,
     };
   }
 
@@ -1114,7 +1251,11 @@ export class GameRoom extends DurableObject<Env> {
       this.sql.exec("UPDATE seats SET ready = ? WHERE power = ?", ready ? 1 : 0, power);
       this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
     });
-    if (ready) this.advance();
+    if (ready) {
+      // The table has finished talking: Claude seats need not listen any longer.
+      this.maybeBeginOrders();
+      this.advance();
+    }
   }
 
   /** Seats that have something to order this phase and somebody (or something) to order it. */
@@ -1238,6 +1379,23 @@ export class GameRoom extends DurableObject<Env> {
       }
     }
     return menu;
+  }
+
+  /** What `power` sent or received before `phase`, oldest first: the context a Claude seat reads. */
+  private pressHistory(power: PowerName, phase: string, limit: number): AgentBrief["earlierPress"] {
+    return this.sql
+      .exec<{ phase: string; sender: string; recipient: string; body: string }>(
+        `SELECT phase, sender, recipient, body FROM (
+           SELECT rowid AS rid, phase, sender, recipient, body, sent_at FROM press
+           WHERE phase <> ? AND (sender = ? OR recipient = ?) ORDER BY sent_at DESC, rowid DESC LIMIT ?
+         ) ORDER BY sent_at, rid`,
+        phase,
+        power,
+        power,
+        limit,
+      )
+      .toArray()
+      .map((r) => ({ phase: r.phase, from: r.sender, to: r.recipient, body: r.body }));
   }
 
   /** Store and deliver one press message. Fully synchronous; returns an error to show the sender, or null. */
@@ -1403,54 +1561,241 @@ export class GameRoom extends DurableObject<Env> {
     return Number.isFinite(configured) && configured >= 0 ? configured : LIMITS.claudeTurnsPerGame;
   }
 
+  /** The game's spend cap in micro-dollars. */
+  private claudeCapMicros(): number {
+    const configured = Number(this.env.CLAUDE_USD_PER_GAME);
+    const usd = this.env.CLAUDE_USD_PER_GAME !== undefined && Number.isFinite(configured) && configured >= 0 ? configured : LIMITS.claudeUsdPerGame;
+    return Math.round(usd * 1_000_000);
+  }
+
+  /** The brain behind this game's AI seats. */
+  private brain() {
+    return seatBrain(this.meta!.settings, { hasKey: !!this.env.ANTHROPIC_API_KEY, hasQueue: !!this.env.AGENT_QUEUE });
+  }
+
+  /** Spent so far plus everything reserved for calls that have not reported: what the cap is held against. */
+  private claudeCommittedMicros(): number {
+    const reserved = this.sql.exec<{ n: number | null }>("SELECT SUM(reserved_micros) AS n FROM agent_calls WHERE cost_micros IS NULL").one().n ?? 0;
+    return this.meta!.claudeSpentMicros + reserved;
+  }
+
   /**
-   * Open the current phase: set its clock and let every AI-played seat move. The bot's orders go
-   * on file at once for every such seat, so no AI seat can ever leave a phase without orders.
-   * Claude seats are then asked for better ones and stay un-ready until they answer or time out.
-   * Runs inside the caller's transaction.
+   * Reserve a Claude turn for one seat: one model call per step, each at its worst-case price.
+   * Refused when the game has stopped asking, when the turn cap is spent, or when the reservation
+   * would take the game past its spend cap. Because the reservation is never smaller than the
+   * bill, the cap holds whatever the calls turn out to cost. Runs inside the caller's transaction.
+   */
+  private reserveTurn(phase: string, power: PowerName, steps: Step[]): boolean {
+    const meta = this.meta!;
+    if (meta.claudeOff !== null || meta.claudeTurns >= this.claudeBudget()) return false;
+    const kind = this.phaseKind();
+    const wanted = steps.map((step) => ({ step, micros: reservationMicros(kind, step) }));
+    const total = wanted.reduce((sum, w) => sum + w.micros, 0);
+    if (this.claudeCommittedMicros() + total > this.claudeCapMicros()) {
+      if (meta.claudeSpentMicros + reservationMicros("R", "order") > this.claudeCapMicros()) {
+        // Not even the cheapest call fits any more: this game is done with Claude.
+        meta.claudeOff = "spend_cap";
+        this.log("claude_stopped", { why: "spend_cap", spentMicros: meta.claudeSpentMicros, capMicros: this.claudeCapMicros() });
+      }
+      return false;
+    }
+    for (const w of wanted) {
+      this.sql.exec(
+        "INSERT OR REPLACE INTO agent_calls (phase, power, step, reserved_micros) VALUES (?, ?, ?, ?)",
+        phase,
+        power,
+        w.step,
+        w.micros,
+      );
+    }
+    meta.claudeTurns += 1;
+    return true;
+  }
+
+  /** Put one step of the reserved turns on the queue (after the change commits). Runs inside the caller's transaction. */
+  private dispatch(phase: string, powers: PowerName[], step: Step): void {
+    const meta = this.meta!;
+    const now = Date.now();
+    for (const power of powers) {
+      this.sql.exec("UPDATE agent_calls SET dispatched_at = ? WHERE phase = ? AND power = ? AND step = ?", now, phase, power, step);
+      this.turns.push({ gameId: meta.id, power, phase, step });
+    }
+    meta.claudeCalls += powers.length;
+  }
+
+  /**
+   * Tidy the call ledger as a phase opens. A reservation for a call that was never made is handed
+   * back. A call that was handed to the consumer and never reported is charged its whole
+   * reservation once it is certainly dead, because it may well have been billed. Runs inside the
+   * caller's transaction.
+   */
+  private sweepCalls(phase: string, now: number): void {
+    const meta = this.meta!;
+    this.sql.exec("DELETE FROM agent_calls WHERE cost_micros IS NULL AND dispatched_at IS NULL AND phase <> ?", phase);
+    // Queued for a phase that is over and never picked up: closed at no charge, so a late delivery
+    // finds nothing to claim and no model call is ever made for it.
+    this.sql.exec(
+      "UPDATE agent_calls SET cost_micros = 0, outcome = 'undelivered' WHERE cost_micros IS NULL AND claimed_at IS NULL AND phase <> ?",
+      phase,
+    );
+    const lost = this.sql
+      .exec<CallRow>("SELECT * FROM agent_calls WHERE cost_micros IS NULL AND dispatched_at IS NOT NULL AND dispatched_at < ?", now - AGENT_CALL_TTL_MS)
+      .toArray();
+    for (const call of lost) {
+      meta.claudeSpentMicros += call.reserved_micros;
+      this.sql.exec(
+        "UPDATE agent_calls SET cost_micros = reserved_micros, outcome = 'unreported' WHERE phase = ? AND power = ? AND step = ?",
+        call.phase,
+        call.power,
+        call.step,
+      );
+      this.log("agent_call_unreported", { call: `${call.phase}:${call.power}:${call.step}`, chargedMicros: call.reserved_micros }, "error");
+    }
+    this.sql.exec(
+      "DELETE FROM agent_calls WHERE cost_micros IS NOT NULL AND rowid <= (SELECT MAX(rowid) FROM agent_calls) - ?",
+      LIMITS.agentCallsKept,
+    );
+  }
+
+  /**
+   * Open the current phase: set its clock and let every AI-played seat move.
+   *
+   * The in-room brain's orders go on file at once for every such seat, so no AI seat can ever
+   * leave a phase without orders. If the game's brain also deliberates (Claude), each AI seat that
+   * the budget can cover is then asked for better ones and stays un-ready until it answers or
+   * times out. A movement phase with press and enough time opens with a round of negotiation;
+   * every other phase goes straight to orders. Runs inside the caller's transaction.
    */
   private startPhase(): void {
     const meta = this.meta!;
     const game = this.game!;
     const phase = game.phase();
     const now = Date.now();
-    meta.deadlineAt = now + phaseSeconds(phase, meta.settings) * 1000;
+    const phaseMs = phaseSeconds(phase, meta.settings) * 1000;
+    meta.deadlineAt = now + phaseMs;
     meta.retry = null;
     meta.aiDueAt = null;
+    meta.ai = null;
     meta.pausedMsThisPhase = 0;
     this.sql.exec("UPDATE seats SET ready = 0");
-    const humansPlaying = this.activeHumans().length > 0;
-    const claude =
-      meta.settings.aiBrain === "claude" && !!this.env.ANTHROPIC_API_KEY && !!this.env.AGENT_QUEUE && humansPlaying;
+    this.sweepCalls(phase, now);
+    const brain = this.brain();
+    // Nobody to play against, nobody to pay for: a game no human is playing is left to the bot.
+    const deliberate = brain.deliberates && this.activeHumans().length > 0;
+    const talks = this.phaseKind() === "M" && meta.settings.press !== "gunboat" && phaseMs >= NEGOTIATE_MIN_PHASE_MS;
     const asked: PowerName[] = [];
     for (const seat of this.seats()) {
       if (seat.eliminated === 1 || !(seat.kind === "ai" || this.autopilot(seat)) || !canAct(game, seat.power)) continue;
-      this.writeOrders(phase, seat.power, botOrders(game, seat.power, meta.id), "bot");
-      if (claude && seat.kind === "ai" && meta.claudeTurns < this.claudeBudget()) {
-        meta.claudeTurns += 1;
+      this.writeOrders(phase, seat.power, brain.orders(game, seat.power, meta.id), "bot");
+      if (deliberate && seat.kind === "ai" && this.reserveTurn(phase, seat.power, talks ? ["negotiate", "order"] : ["order"])) {
         asked.push(seat.power);
       } else {
         this.sql.exec("UPDATE seats SET ready = 1 WHERE power = ?", seat.power);
       }
     }
     if (asked.length > 0) {
-      meta.aiDueAt = Math.min(now + AI_TURN_LIMIT_MS, meta.deadlineAt);
-      for (const power of asked) this.turns.push({ gameId: meta.id, power, phase });
+      if (talks) {
+        meta.ai = { step: "negotiate", listenUntil: now + listenMs(phaseMs) };
+        meta.aiDueAt = Math.min(now + NEGOTIATE_LIMIT_MS, meta.deadlineAt);
+        this.dispatch(phase, asked, "negotiate");
+      } else {
+        meta.ai = { step: "order", listenUntil: now };
+        meta.aiDueAt = Math.min(now + AI_TURN_LIMIT_MS, meta.deadlineAt);
+        this.dispatch(phase, asked, "order");
+      }
     }
     this.broadcast({ t: "deadline", p: { phase, deadlineAt: meta.deadlineAt } }, "ALL");
   }
 
-  /** Put Claude turns on the queue. If the queue is down the bot's orders simply stand. */
+  /** Put Claude turns on the queue. If the queue is down the orders on file simply stand. */
   private async dispatchTurns(turns: AgentTurn[]): Promise<void> {
     try {
       await this.env.AGENT_QUEUE!.sendBatch(turns.map((body) => ({ body })));
     } catch (error) {
       this.log("agent_queue_failed", { error: String(error), turns: turns.length }, "error");
+      // Nothing was delivered, so nothing can be billed: hand the reservations back.
+      for (const turn of turns) {
+        this.sql.exec(
+          "DELETE FROM agent_calls WHERE phase = ? AND power = ? AND step = ? AND cost_micros IS NULL AND claimed_at IS NULL",
+          turn.phase,
+          turn.power,
+          turn.step,
+        );
+      }
       if (this.game?.phase() === turns[0]?.phase) {
         this.releaseAiSeats("queue_failed");
         this.settle();
       }
     }
+  }
+
+  /** The room has waited long enough for the current step. */
+  private aiTimeout(): void {
+    const ai = this.meta!.ai;
+    if (ai && ai.step !== "order") this.beginOrderStep(ai.step === "negotiate" ? "talks_timed_out" : "listened");
+    else this.releaseAiSeats("timeout");
+  }
+
+  /**
+   * Move from talking to ordering once every Claude seat has had its say and either the listening
+   * time is up or every human who can act is ready (the table has stopped talking). Until then the
+   * alarm is left pointing at whichever comes first.
+   */
+  private maybeBeginOrders(): void {
+    const meta = this.meta!;
+    const ai = meta.ai;
+    if (!ai || ai.step === "order" || (meta.status !== "active" && meta.status !== "paused")) return;
+    const phase = this.game!.phase();
+    const talking = this.sql
+      .exec<{ n: number }>("SELECT COUNT(*) AS n FROM agent_calls WHERE phase = ? AND step = 'negotiate' AND dispatched_at IS NOT NULL AND cost_micros IS NULL", phase)
+      .one().n;
+    if (talking > 0) return;
+    // A game that has stopped asking Claude has nobody left to listen for.
+    if (meta.claudeOff !== null) return this.beginOrderStep("claude_stopped");
+    const humans = this.activeHumans().filter((seat) => canAct(this.game!, seat.power));
+    const tableReady = this.activeHumans().length > 0 && humans.every((seat) => seat.ready === 1);
+    const now = Date.now();
+    if (now >= ai.listenUntil || tableReady) return this.beginOrderStep(tableReady ? "table_ready" : "listened");
+    if (ai.step === "negotiate") {
+      this.atomic(() => {
+        meta.ai = { step: "listen", listenUntil: ai.listenUntil };
+        meta.aiDueAt = Math.min(ai.listenUntil, meta.deadlineAt ?? ai.listenUntil);
+      });
+    }
+  }
+
+  /** Ask every Claude seat that is still in the phase for its final orders. */
+  private beginOrderStep(why: string): void {
+    const meta = this.meta!;
+    const game = this.game!;
+    if (meta.status !== "active" && meta.status !== "paused") return;
+    const phase = game.phase();
+    const now = Date.now();
+    const asked: PowerName[] = [];
+    this.atomic(() => {
+      // Talks that never reported are over; whatever they cost is settled when they report or expire.
+      const waiting = this.seats().filter((s) => s.kind === "ai" && s.eliminated === 0 && s.ready === 0 && canAct(game, s.power));
+      for (const seat of waiting) {
+        const reserved = this.sql
+          .exec<CallRow>("SELECT * FROM agent_calls WHERE phase = ? AND power = ? AND step = 'order' AND dispatched_at IS NULL", phase, seat.power)
+          .toArray()[0];
+        if (reserved && meta.claudeOff === null) asked.push(seat.power);
+        else this.sql.exec("UPDATE seats SET ready = 1 WHERE power = ?", seat.power);
+      }
+      if (asked.length > 0) {
+        meta.ai = { step: "order", listenUntil: now };
+        meta.aiDueAt = Math.min(now + AI_TURN_LIMIT_MS, meta.deadlineAt ?? Number.MAX_SAFE_INTEGER);
+        this.dispatch(phase, asked, "order");
+      } else {
+        meta.ai = null;
+        meta.aiDueAt = null;
+      }
+      // An order step that was reserved and will not be asked for costs nothing: hand it back.
+      this.sql.exec("DELETE FROM agent_calls WHERE phase = ? AND dispatched_at IS NULL AND cost_micros IS NULL", phase);
+      if (waiting.length !== asked.length) this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
+    });
+    this.log("agent_orders_requested", { why, powers: asked });
+    this.advance();
   }
 
   /** Stop waiting for Claude: every AI seat is ready with the orders it already has on file. */
@@ -1460,6 +1805,9 @@ export class GameRoom extends DurableObject<Env> {
     const waiting = this.seats().filter((s) => s.kind === "ai" && s.eliminated === 0 && s.ready === 0 && canAct(this.game!, s.power));
     this.atomic(() => {
       meta.aiDueAt = null;
+      meta.ai = null;
+      // Steps that were reserved and will now never be asked for cost nothing: hand them back.
+      this.sql.exec("DELETE FROM agent_calls WHERE phase = ? AND dispatched_at IS NULL AND cost_micros IS NULL", this.game!.phase());
       if (waiting.length === 0) return;
       this.sql.exec("UPDATE seats SET ready = 1 WHERE kind = 'ai' AND eliminated = 0");
       this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
@@ -1619,6 +1967,7 @@ export class GameRoom extends DurableObject<Env> {
     const meta = this.meta!;
     meta.retry = null;
     meta.aiDueAt = null;
+    meta.ai = null;
 
     // No-moves-received: only movement phases count, and only for seats that had units to order.
     if (kind === "M") {
@@ -1727,6 +2076,7 @@ export class GameRoom extends DurableObject<Env> {
     meta.pauseReason = null;
     meta.retry = null;
     meta.aiDueAt = null;
+    meta.ai = null;
     meta.finished = { result, winners, scores, reason };
     this.sql.exec("UPDATE seats SET ready = 0");
     this.kv.put("saved", game.toSaved(meta.id));
@@ -1800,68 +2150,258 @@ export class GameRoom extends DurableObject<Env> {
 
   // ---------- Claude seats (RPC over the Durable Object binding; not reachable from the internet) ----------
 
-  /** What a Claude seat needs for its turn, or null when the turn is stale or no longer wanted. */
-  agentBrief(power: PowerName, phase: string): AgentBrief | null {
-    const meta = this.meta;
-    const game = this.game;
-    if (!meta || !game || (meta.status !== "active" && meta.status !== "paused")) return null;
-    if (game.phase() !== phase) return null;
-    const seat = this.seat(power);
-    if (!seat || seat.kind !== "ai" || seat.eliminated === 1 || seat.ready === 1) return null;
-    const ledger = this.ledger();
-    return {
-      gameId: meta.id,
+  private call(phase: string, power: PowerName, step: Step): CallRow | undefined {
+    return this.sql.exec<CallRow>("SELECT * FROM agent_calls WHERE phase = ? AND power = ? AND step = ?", phase, power, step).toArray()[0];
+  }
+
+  private agentMemory(power: PowerName): Memory {
+    const row = this.sql.exec<{ memory_json: string }>("SELECT memory_json FROM agent_memory WHERE power = ?", power).toArray()[0];
+    try {
+      const value = row ? (JSON.parse(row.memory_json) as Partial<Memory>) : {};
+      return { diary: Array.isArray(value.diary) ? value.diary : [], relationships: Array.isArray(value.relationships) ? value.relationships : [] };
+    } catch {
+      return { diary: [], relationships: [] };
+    }
+  }
+
+  /** Store a seat's memory, bounded and reduced to plain strings and numbers whatever was sent. */
+  private rememberAgent(power: PowerName, memory: Memory): void {
+    const diary = (Array.isArray(memory.diary) ? memory.diary : [])
+      .filter((entry): entry is string => typeof entry === "string")
+      .slice(-MEMORY_LIMITS.diaryEntries)
+      .map((entry) => entry.slice(0, MEMORY_LIMITS.diaryChars));
+    const relationships = (Array.isArray(memory.relationships) ? memory.relationships : [])
+      .filter((r) => r && typeof r.power === "string" && (POWERS as readonly string[]).includes(r.power) && r.power !== power)
+      .slice(0, MEMORY_LIMITS.relationships)
+      .map((r) => ({
+        power: r.power,
+        stance: Number.isFinite(Number(r.stance)) ? Math.max(-2, Math.min(2, Math.round(Number(r.stance)))) : 0,
+        note: String(r.note ?? "").slice(0, MEMORY_LIMITS.noteChars),
+      }));
+    this.sql.exec(
+      "INSERT INTO agent_memory (power, memory_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(power) DO UPDATE SET memory_json = excluded.memory_json, updated_at = excluded.updated_at",
       power,
-      phase,
-      state: game.state() as StateView,
-      press: this.pressFor(power, phase),
-      trust: Object.fromEntries(Object.entries(ledger).map(([p, l]) => [p, { kept: l.kept, broken: l.broken }])),
-    };
+      JSON.stringify({ diary, relationships } satisfies Memory),
+      Date.now(),
+    );
   }
 
   /**
-   * Apply a Claude seat's turn. `null` means the model had nothing usable, so the bot's orders
-   * stand. A turn for a phase that has already resolved is refused, never applied late.
+   * Hand one step of a Claude turn to the consumer, or null when it is stale or no longer wanted.
+   *
+   * Asking is claiming: a step is handed out once. Queues deliver at least once, and a second
+   * delivery of the same message must never become a second model call. A step that is refused
+   * here was never sent to the model, so its reservation is released.
    */
-  agentSubmit(power: PowerName, phase: string, decision: AgentDecision | null): { applied: boolean; reason: string } {
+  agentBrief(power: PowerName, phase: string, step: Step = "order"): AgentBrief | null {
     const meta = this.meta;
     const game = this.game;
+    if (!meta || !game) return null;
     try {
-      if (!meta || !game || (meta.status !== "active" && meta.status !== "paused")) return { applied: false, reason: "not_active" };
-      if (game.phase() !== phase) return { applied: false, reason: "stale_phase" };
+      const call = this.call(phase, power, step);
+      // No reservation, already answered, or already handed to another delivery.
+      if (!call || call.dispatched_at === null || call.cost_micros !== null || call.claimed_at !== null) return null;
       const seat = this.seat(power);
-      if (!seat || seat.kind !== "ai" || seat.eliminated === 1) return { applied: false, reason: "not_an_ai_seat" };
-      if (seat.ready === 1) return { applied: false, reason: "turn_already_closed" };
-      let applied = false;
+      const wanted =
+        (meta.status === "active" || meta.status === "paused") &&
+        game.phase() === phase &&
+        !!seat &&
+        seat.kind === "ai" &&
+        seat.eliminated === 0 &&
+        seat.ready === 0 &&
+        meta.claudeOff === null &&
+        meta.ai?.step === step;
+      if (!wanted) {
+        this.atomic(() => this.closeCall(call, 0, null, null, "stale"));
+        // The last of the talks may just have closed without a word: do not keep the table waiting.
+        if (step === "negotiate" && game.phase() === phase) this.maybeBeginOrders();
+        return null;
+      }
+      this.sql.exec("UPDATE agent_calls SET claimed_at = ? WHERE phase = ? AND power = ? AND step = ?", Date.now(), phase, power, step);
+      const ledger = this.ledger();
+      return {
+        gameId: meta.id,
+        power,
+        phase,
+        step,
+        state: game.state() as StateView,
+        press: this.pressFor(power, phase).slice(-LIMITS.briefPress),
+        earlierPress: this.pressHistory(power, phase, LIMITS.briefEarlierPress),
+        trust: Object.fromEntries(Object.entries(ledger).map(([p, l]) => [p, { kept: l.kept, broken: l.broken }])),
+        memory: this.agentMemory(power),
+        deadlineAt: meta.deadlineAt,
+      };
+    } finally {
+      this.settle();
+    }
+  }
+
+  /** Record what a call cost and close it. Runs inside the caller's transaction. */
+  private closeCall(call: CallRow, cost: number, model: string | null, usage: Usage | null, outcome: string): void {
+    const meta = this.meta!;
+    meta.claudeSpentMicros += cost;
+    if (usage) {
+      meta.claudeTokens = {
+        inputTokens: meta.claudeTokens.inputTokens + usage.inputTokens,
+        outputTokens: meta.claudeTokens.outputTokens + usage.outputTokens,
+        cacheReadTokens: meta.claudeTokens.cacheReadTokens + usage.cacheReadTokens,
+        cacheWriteTokens: meta.claudeTokens.cacheWriteTokens + usage.cacheWriteTokens,
+      };
+    }
+    this.sql.exec(
+      "UPDATE agent_calls SET cost_micros = ?, model = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cache_write_tokens = ?, outcome = ? WHERE phase = ? AND power = ? AND step = ?",
+      cost,
+      model,
+      usage?.inputTokens ?? 0,
+      usage?.outputTokens ?? 0,
+      usage?.cacheReadTokens ?? 0,
+      usage?.cacheWriteTokens ?? 0,
+      outcome,
+      call.phase,
+      call.power,
+      call.step,
+    );
+  }
+
+  /**
+   * Settle the bill for one call from what the API said it used. This happens whether or not the
+   * answer is still wanted: a call that was paid for counts against the cap even when its phase
+   * has moved on. A call whose cost is unknown is charged its whole reservation.
+   */
+  private settleCall(power: PowerName, phase: string, step: Step, report: AgentReport, outcome: string): void {
+    const meta = this.meta!;
+    const call = this.call(phase, power, step);
+    // Each call is settled once; a duplicate report changes nothing.
+    if (!call || call.cost_micros !== null) return;
+    const usage = report.usage && report.billed !== "no" ? cleanUsage(report.usage) : null;
+    const model = report.model ?? CLAUDE_MODEL;
+    const cost = report.billed === "no" ? 0 : usage ? costMicros(model, usage) : call.reserved_micros;
+    this.atomic(() => {
+      this.closeCall(call, cost, report.model, usage, outcome);
+      if (report.failure) {
+        meta.claudeStrikes += 1;
+        const status = report.failure.status;
+        // A key the API rejects will be rejected for every seat in every phase: stop at once.
+        const why = status === 401 || status === 403 ? "model_unauthorised" : meta.claudeStrikes >= LIMITS.claudeStrikes ? "model_failing" : null;
+        if (why && meta.claudeOff === null) {
+          meta.claudeOff = why;
+          this.log("claude_stopped", { why, status, strikes: meta.claudeStrikes, error: report.failure.message.slice(0, 300) }, "error");
+        }
+      } else if (report.billed === "yes") {
+        meta.claudeStrikes = 0;
+      }
+    });
+    this.log("agent_call", {
+      call: `${phase}:${power}:${step}`,
+      outcome,
+      model: report.model,
+      costMicros: cost,
+      ...usage,
+      spentMicros: meta.claudeSpentMicros,
+      capMicros: this.claudeCapMicros(),
+    });
+    if (meta.claudeSpentMicros > this.claudeCapMicros()) {
+      // Cannot happen while reservations bound bills. If it ever does, say so loudly and stop.
+      this.atomic(() => (meta.claudeOff ??= "spend_cap"));
+      this.log("claude_cap_exceeded", { spentMicros: meta.claudeSpentMicros, capMicros: this.claudeCapMicros() }, "error");
+    }
+  }
+
+  /**
+   * Apply one step of a Claude seat's turn and settle what it cost.
+   *
+   * `decision` is null when the model produced nothing usable: the orders on file stand. Each part
+   * of a decision is judged on its own and reported back, so a refused message or pledge never
+   * costs the seat its orders. A step for a phase that has resolved is refused, never applied late.
+   */
+  agentSubmit(power: PowerName, phase: string, step: Step, decision: AgentDecision | null, report: AgentReport): AgentOutcome {
+    const meta = this.meta;
+    const game = this.game;
+    const outcome: AgentOutcome = { applied: false, reason: "", orders: { accepted: [], rejected: [] }, messages: [], pledge: null };
+    const refuse = (reason: string): AgentOutcome => ({ ...outcome, reason });
+    if (!meta || !game) return refuse("no_such_game");
+    try {
+      const seat = this.seat(power);
+      const reason = !(meta.status === "active" || meta.status === "paused")
+        ? "not_active"
+        : game.phase() !== phase
+          ? "stale_phase"
+          : !seat || seat.kind !== "ai" || seat.eliminated === 1
+            ? "not_an_ai_seat"
+            : seat.ready === 1
+              ? "turn_already_closed"
+              : step === "negotiate" && meta.ai?.step !== "negotiate"
+                ? "talks_closed"
+                : null;
+      this.settleCall(power, phase, step, report, reason ?? (decision ? "answered" : report.failure ? "model_failed" : "no_decision"));
+      if (reason !== null) return refuse(reason);
+
       if (decision) {
-        const outcome = this.setOrders(power, phase, decision.orders.slice(0, 34), "claude");
-        applied = "accepted" in outcome && outcome.accepted.length > 0;
-        const accepted = "accepted" in outcome ? outcome.accepted : [];
+        if (step === "order") {
+          const set = this.setOrders(power, phase, decision.orders.slice(0, 34), "claude");
+          if ("accepted" in set) outcome.orders = set;
+          outcome.applied = outcome.orders.accepted.length > 0;
+        }
         if (meta.status === "active") {
+          // In the talks the orders are a plan: a pledge may name any of the seat's legal orders.
+          const pledgeable = step === "order" ? new Set(outcome.orders.accepted) : null;
+          const pledgeTo = decision.pledge?.to.trim().toUpperCase() ?? null;
           for (const message of decision.messages.slice(0, LIMITS.agentMessages)) {
             const to = message.to.trim().toUpperCase();
             const body = message.body.trim().slice(0, LIMITS.agentBodyChars);
-            if (!body || (to !== "ALL" && !(POWERS as readonly string[]).includes(to)) || to === power) continue;
-            const pledged = decision.pledge?.to.trim().toUpperCase() === to ? decision.pledge.orders.filter((o) => accepted.includes(o)) : [];
-            this.press(
-              power,
-              to as PowerName | "ALL",
-              body,
-              pledged.length > 0 ? { orders: pledged, sealed: decision.pledge!.sealed } : undefined,
-            );
+            if (!body || (to !== "ALL" && !(POWERS as readonly string[]).includes(to)) || to === power) {
+              outcome.messages.push({ to: to.slice(0, 16), sent: false, code: "bad_message" });
+              continue;
+            }
+            let pledge: { orders: string[]; sealed: boolean } | undefined;
+            if (decision.pledge && pledgeTo === to && outcome.pledge === null) {
+              const orders = decision.pledge.orders.slice(0, 34).filter((o) => pledgeable === null || pledgeable.has(o));
+              if (orders.length > 0) pledge = { orders, sealed: decision.pledge.sealed === true };
+              else outcome.pledge = "dropped";
+            }
+            let error = this.press(power, to as PowerName | "ALL", body, pledge);
+            if (error?.code === "bad_pledge") {
+              // The pledge was refused; the message itself is still worth sending.
+              outcome.pledge = "dropped";
+              pledge = undefined;
+              error = this.press(power, to as PowerName | "ALL", body, undefined);
+            }
+            if (!error && pledge) outcome.pledge = "sent";
+            outcome.messages.push({ to, sent: error === null, code: error?.code ?? null });
           }
+          if (decision.pledge && outcome.pledge === null) outcome.pledge = "dropped";
         }
+        if (report.memory) this.rememberAgent(power, report.memory);
+      }
+
+      if (step === "negotiate") {
+        this.maybeBeginOrders();
+        return { ...outcome, applied: outcome.messages.some((m) => m.sent), reason: decision ? "ok" : "said_nothing" };
       }
       this.atomic(() => {
         this.sql.exec("UPDATE seats SET ready = 1 WHERE power = ?", power);
         const waiting = this.seats().some((s) => s.kind === "ai" && s.eliminated === 0 && s.ready === 0 && canAct(game, s.power));
-        if (!waiting) meta.aiDueAt = null;
+        if (!waiting) {
+          meta.aiDueAt = null;
+          meta.ai = null;
+        }
         this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
       });
       this.advance();
-      return { applied, reason: applied ? "ok" : "bot_orders_stand" };
+      return { ...outcome, reason: outcome.applied ? "ok" : "bot_orders_stand" };
     } finally {
       if (this.meta) this.settle();
     }
   }
+}
+
+/** Token counts from the consumer, reduced to non-negative whole numbers. */
+function cleanUsage(usage: Usage): Usage {
+  const n = (value: unknown) => (Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : 0);
+  return {
+    inputTokens: n(usage.inputTokens),
+    outputTokens: n(usage.outputTokens),
+    cacheReadTokens: n(usage.cacheReadTokens),
+    cacheWriteTokens: n(usage.cacheWriteTokens),
+  };
 }

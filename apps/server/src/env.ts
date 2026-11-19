@@ -1,11 +1,17 @@
 import type { GameRoom } from "./room.js";
 import type { Registry } from "./registry.js";
 
-/** One Claude turn for one AI seat. It names a phase so a late message is dropped, never replayed. */
+/**
+ * One Claude turn for one AI seat: one model call. It names the phase and the step, so a message
+ * that arrives late is dropped, never replayed. It carries no credential: the consumer reaches the
+ * room through the Durable Object binding, which is the trust boundary.
+ */
 export interface AgentTurn {
   gameId: string;
   power: string;
   phase: string;
+  /** `negotiate` opens a movement phase with press; `order` closes every phase with orders. */
+  step: "negotiate" | "order";
 }
 
 export interface Env {
@@ -16,8 +22,10 @@ export interface Env {
   AGENT_QUEUE?: Queue<AgentTurn>;
   /** Secret. Without it every AI seat is played by the built-in bot. */
   ANTHROPIC_API_KEY?: string;
-  /** Hard cap on Claude turns per game; the bot plays every turn after it. Defaults to 400. */
+  /** Hard cap on Claude turns (one seat, one phase) per game; the bot plays every turn after it. Defaults to 400. */
   CLAUDE_TURNS_PER_GAME?: string;
+  /** Hard cap on what one game may spend on Claude, in US dollars; the bot plays on after it. Defaults to 5. */
+  CLAUDE_USD_PER_GAME?: string;
   /** Per-seat limit on press. */
   PRESS_LIMITER?: RateLimit;
   /** Per-IP limit on creating games. Optional so tests and local dev run without it. */

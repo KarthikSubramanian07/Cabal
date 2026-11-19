@@ -102,10 +102,32 @@ describe("AI seats hold no credentials", () => {
     expect(seats.filter((s) => s.kind === "ai")).toHaveLength(6);
     expect(seats.filter((s) => s.kind === "ai").every((s) => s.token_hash === null)).toBe(true);
     expect(await sql(ann.gameId, "SELECT name FROM sqlite_master WHERE name = 'agent_tokens'")).toHaveLength(0);
-    for (const path of ["agent/state", "agent/act", "agentBrief", "agentSubmit", "create", "summary"]) {
+    // Neither do the tables the Claude seats use, and nothing in the room stores a raw token.
+    expect(await sql(ann.gameId, "SELECT name FROM pragma_table_info('agent_calls') WHERE name LIKE '%token' AND name NOT LIKE '%\\_tokens' ESCAPE '\\'")).toHaveLength(0);
+    const human = await sql<{ token_hash: string }>(ann.gameId, "SELECT token_hash FROM seats WHERE kind = 'human'");
+    expect(human[0]!.token_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(human[0]!.token_hash).not.toContain(ann.token.split(".")[2]!);
+    for (const path of ["agent/state", "agent/act", "agent/brief", "agentBrief", "agentSubmit", "create", "summary", "memory"]) {
       const res = await SELF.fetch(`http://cabal/api/games/${ann.gameId}/${path}`, { method: "POST", headers: { "cf-connecting-ip": nextIp() } });
       expect(res.status).toBe(404);
     }
+  });
+
+  it("keeps a Claude seat's private memory and the cost ledger out of everything a client can read", async () => {
+    const ann = await create("Ann", { aiFill: true });
+    await start(ann);
+    const ai = (await summary(ann.gameId)).seats.find((s) => s.kind === "ai")!;
+    await sql(ann.gameId, "INSERT INTO agent_memory (power, memory_json, updated_at) VALUES (?, ?, 0)", ai.power, JSON.stringify({ diary: ["PRIVATE-DIARY-XYZ"], relationships: [] }));
+    const a = await Client.connect(ann.gameId, ann.token);
+    const sp = await Client.connect(ann.gameId);
+    const welcome = await a.next("welcome");
+    await sp.next("welcome");
+    a.send({ t: "sync", p: { since: 0 } });
+    await a.next("synced");
+    const replay = await (await SELF.fetch(`http://cabal/api/games/${ann.gameId}/replay`, { headers: { "cf-connecting-ip": nextIp() } })).text();
+    const ledger = await (await SELF.fetch(`http://cabal/api/games/${ann.gameId}/ledger`, { headers: { "cf-connecting-ip": nextIp() } })).text();
+    const everything = JSON.stringify([welcome, a.frames, sp.frames, await summary(ann.gameId)]) + replay + ledger;
+    expect(everything).not.toContain("PRIVATE-DIARY-XYZ");
   });
 
   it("cannot be claimed with a forged token for an AI seat", async () => {

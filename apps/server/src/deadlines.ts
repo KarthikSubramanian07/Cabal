@@ -15,6 +15,25 @@ export const PAUSE_LIMIT_MS = 10 * 60_000;
 /** A Claude seat that has not answered by then is played by the bot orders already on file. */
 export const AI_TURN_LIMIT_MS = 90_000;
 
+/**
+ * Claude seats play a movement phase in two steps: they negotiate, the table gets time to answer,
+ * and only then do they order. Each part is bounded, so the three together are too:
+ * talks close after NEGOTIATE_LIMIT_MS, listening ends LISTEN_MAX_MS after the phase opened at the
+ * latest, and orders are due AI_TURN_LIMIT_MS after that. A phase shorter than
+ * NEGOTIATE_MIN_PHASE_MS has no room for it and is played in one step.
+ */
+export const NEGOTIATE_LIMIT_MS = 60_000;
+export const LISTEN_MAX_MS = 120_000;
+export const NEGOTIATE_MIN_PHASE_MS = 240_000;
+
+/** How long Claude seats listen after a phase opens: a quarter of the phase, at most LISTEN_MAX_MS. */
+export function listenMs(phaseMs: number): number {
+  return Math.min(LISTEN_MAX_MS, Math.floor(phaseMs / 4));
+}
+
+/** A model call that has not reported its cost after this long is charged its full reservation. */
+export const AGENT_CALL_TTL_MS = 5 * 60_000;
+
 /** A lobby nobody starts is closed after a week. */
 export const LOBBY_TTL_MS = 7 * 24 * 3600_000;
 
