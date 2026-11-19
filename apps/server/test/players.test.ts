@@ -35,6 +35,23 @@ describe("guest accounts", () => {
     expect((await post("x")).status).toBe(400);
   });
 
+  it("refuses a handle that only reads like one already taken, and a look-alike of the house", async () => {
+    const post = (h: string) => call("/api/players", null, { method: "POST", body: JSON.stringify({ handle: h }) });
+    const victim = `${freshHandle("Envoy").slice(0, 14)}-ll`;
+    await newPlayer(victim);
+    for (const impostor of [victim.replace("-", "_"), victim.replace("-ll", "-Il"), victim.replace("-ll", "-1I")]) {
+      const res = await post(impostor);
+      expect(res.status, impostor).toBe(409);
+      expect(await res.json()).toMatchObject({ code: "handle_taken" });
+    }
+    // The profile answers to any way of writing the handle, and always shows it as it was chosen.
+    const profile = PlayerProfile.parse(await (await call(`/api/players/${victim.replace("-ll", "_1i")}`, null)).json());
+    expect(profile.player.handle).toBe(victim);
+    const house = await post("CabaI-Official");
+    expect(house.status).toBe(400);
+    expect(await house.json()).toMatchObject({ code: "handle_reserved" });
+  });
+
   it("answers 401 to a missing, malformed or revoked secret, and never treats one as anonymous", async () => {
     expect((await call("/api/me", null)).status).toBe(401);
     expect((await call("/api/me", "cps_" + "0".repeat(48))).status).toBe(401);

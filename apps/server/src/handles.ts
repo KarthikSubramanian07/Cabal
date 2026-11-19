@@ -2,8 +2,10 @@
  * Handles: the names players are known by. Pure functions, no I/O.
  *
  * A handle is 3 to 20 letters, digits, `_` or `-`, starting with a letter (the `Handle` schema in
- * @cabal/protocol). It is unique whatever its case: `handleKey` folds it for the unique index. On
- * top of the shape, a light filter refuses names that impersonate the house and the worst abuse.
+ * @cabal/protocol). It is unique by how it reads, not only whatever its case: `handleKey` folds it
+ * to a skeleton for the unique index, so `Envoy_4821` cannot sit beside `Envoy-4821` and `TaIleyrand`
+ * (a capital i) beside `Talleyrand`. On top of the shape, a light filter refuses names that
+ * impersonate the house and the worst abuse.
  * It is deliberately small: it matches whole roots after undoing common letter swaps, so it stops
  * the obvious and does not pretend to moderate. Reports and moderation are a later layer.
  */
@@ -14,9 +16,27 @@ export const RENAME_COOLDOWN_MS = 14 * 24 * 3600_000;
 /** How long a handle a player gave up stays theirs: old links resolve and nobody else can take it. */
 export const ALIAS_HOLD_MS = 90 * 24 * 3600_000;
 
-export const handleKey = (handle: string) => handle.trim().toLowerCase();
+/**
+ * How a handle reads, for uniqueness: lower case, `_` as `-`, and the characters that pass for one
+ * another in the interface's sans-serif face folded together (`0` and `o`; `1`, `i` and `l`; `5`
+ * and `s`; `rn` and `m`; `vv` and `w`). It is a key only: a handle is always shown as it was typed.
+ * Folding again changes nothing, so a key is its own key.
+ */
+export const handleKey = (handle: string) =>
+  handle
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "-")
+    .replace(/0/g, "o")
+    .replace(/[1i]/g, "l")
+    .replace(/5/g, "s")
+    .replace(/rn/g, "m")
+    .replace(/vv/g, "w");
 
-/** Names that would pass for the house, a system message or an AI seat. Matched exactly. */
+/**
+ * Names that would pass for the house, a system message or an AI seat. Matched as the whole handle
+ * (trailing digits aside: `Automaton2`), after undoing letter swaps and look-alikes.
+ */
 const RESERVED = new Set([
   "admin",
   "administrator",
@@ -42,8 +62,15 @@ const RESERVED = new Set([
   "undefined",
 ]);
 
-/** Prefixes that pass for the house however they end: `cabal_official`, `admin2`. */
-const RESERVED_PREFIXES = ["admin", "cabal", "moderator", "official", "system"];
+/** Prefixes that pass for the house however they end: `cabal_official`, `admin2`, `AutomatonPrime`. */
+const RESERVED_PREFIXES = ["admin", "anthropic", "automaton", "cabal", "moderator", "official", "system"];
+
+/**
+ * Words that pass for the house as one part of a handle (parts split at `_`, `-`, digits and
+ * capitals): `Claude_AI`, `Mod_Team`, `Staff1`, `ClaudeBot`. Parts, not prefixes, so `Claudette`,
+ * `Modena` and `Stafford` stay fine.
+ */
+const RESERVED_PARTS = ["admin", "administrator", "anthropic", "automaton", "bot", "cabal", "claude", "mod", "moderator", "official", "staff", "support", "system"];
 
 /**
  * Words refused anywhere in a handle, after undoing letter swaps. Only words with no innocent use
@@ -71,22 +98,32 @@ function decode(text: string): string {
     .replace(/9/g, "g");
 }
 
+/** Letter swaps undone, then look-alikes folded: what a name reads as, for the reserved checks. */
+const fold = (text: string) => handleKey(decode(text));
+
+const RESERVED_FOLDED = new Set([...RESERVED].map(fold));
+const RESERVED_PREFIXES_FOLDED = RESERVED_PREFIXES.map(fold);
+const RESERVED_PARTS_FOLDED = new Set(RESERVED_PARTS.map(fold));
+
+/** A handle's parts: split at `_` and `-`, at a capital after a small letter, and around digits. */
+const partsOf = (handle: string) => handle.trim().split(/[_-]+|(?<=[a-z])(?=[A-Z])|(?<=[A-Za-z])(?=[0-9])|(?<=[0-9])(?=[A-Za-z])/);
+
+/** The abuse filter's parts: as `partsOf`, but a single digit stays inside its word (`sh1t`). */
+const abuseParts = (handle: string) => handle.trim().split(/[_-]+|(?<=[a-z])(?=[A-Z])|(?<=[A-Za-z])(?=[0-9]{2,})|(?<=[0-9]{2,})(?=[A-Za-z])/);
+
 export type HandleProblem = "shape" | "reserved" | "abusive";
 
 /** Why a handle may not be used, or null when it may. Uniqueness is the database's job. */
 export function handleProblem(handle: string): HandleProblem | null {
   if (!Handle.safeParse(handle).success) return "shape";
-  const key = handleKey(handle);
-  const bare = key.replace(/[_-]/g, "");
+  const bare = handle.trim().toLowerCase().replace(/[_-]/g, "");
+  const whole = [fold(bare), fold(bare.replace(/[0-9]+$/, ""))];
+  if (whole.some((form) => RESERVED_FOLDED.has(form))) return "reserved";
+  if (RESERVED_PREFIXES_FOLDED.some((prefix) => whole[0]!.startsWith(prefix))) return "reserved";
+  if (partsOf(handle).some((part) => !/^[0-9]+$/.test(part) && RESERVED_PARTS_FOLDED.has(fold(part)))) return "reserved";
   const decoded = decode(bare);
-  if (RESERVED.has(key) || RESERVED.has(bare) || RESERVED.has(decoded)) return "reserved";
-  if (RESERVED_PREFIXES.some((prefix) => bare.startsWith(prefix) || decoded.startsWith(prefix))) return "reserved";
   if (ABUSIVE_ANYWHERE.some((word) => decoded.includes(word))) return "abusive";
-  const parts = handle
-    .trim()
-    .split(/[_-]+|(?<=[a-z])(?=[A-Z])|(?<=[A-Za-z])(?=[0-9]{2,})|(?<=[0-9]{2,})(?=[A-Za-z])/)
-    .map(decode);
-  if (parts.some((part) => ABUSIVE_WORDS.has(part))) return "abusive";
+  if (abuseParts(handle).map(decode).some((part) => ABUSIVE_WORDS.has(part))) return "abusive";
   return null;
 }
 

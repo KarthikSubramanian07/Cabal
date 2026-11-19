@@ -5,7 +5,8 @@
 CREATE TABLE IF NOT EXISTS players (
   id TEXT PRIMARY KEY,
   handle TEXT NOT NULL,
-  -- The handle folded to lower case: handles are unique whatever their case.
+  -- The handle folded to how it reads (handles.ts `handleKey`: lower case, `_` as `-`, look-alikes
+  -- such as `1`, `i` and `l` as one): handles are unique by how they read, not only whatever their case.
   handle_key TEXT NOT NULL UNIQUE,
   recovery_hash TEXT UNIQUE,
   recovery_issued_at INTEGER,

@@ -598,7 +598,7 @@ export class D1Index implements GameIndex, PlayerStore {
     const row = await this.db.prepare("SELECT * FROM players WHERE id = ?").bind(playerId).first<PlayerRow & { handle_key: string }>();
     if (!row) return { ok: false, status: 404, code: "handle_taken", message: "no such player" };
     const key = handleKey(handle);
-    // Changing only the case of one's own handle is always allowed and costs nothing.
+    // Changing only how one's own handle is written (its case, `_` for `-`) is always allowed and costs nothing.
     if (key === row.handle_key) {
       await this.db.prepare("UPDATE players SET handle = ? WHERE id = ?").bind(handle.trim(), playerId).run();
       return { ok: true };
