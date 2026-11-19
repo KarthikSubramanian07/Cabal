@@ -687,8 +687,10 @@ export class D1Index implements GameIndex, PlayerStore {
       const isEstablished = r.games >= RATING_RULES.establishedGames && r.rd <= RATING_RULES.establishedRd && r.last_game_at > now - LEADERBOARD_ACTIVE_MS;
       const ahead = isEstablished
         ? ((await this.db
-            .prepare("SELECT COUNT(*) AS n FROM ratings WHERE ladder = ? AND games >= ? AND rd <= ? AND last_game_at > ? AND (conservative > ? OR (conservative = ? AND player_id < ?))")
-            .bind(LADDER, RATING_RULES.establishedGames, RATING_RULES.establishedRd, now - LEADERBOARD_ACTIVE_MS, r.conservative, r.conservative, r.player_id)
+            // `conservative >= ?` as a plain range, so the count reads the board index from this
+            // player up rather than every rating on the ladder; the tie-break is a residual filter.
+            .prepare("SELECT COUNT(*) AS n FROM ratings WHERE ladder = ? AND conservative >= ? AND games >= ? AND rd <= ? AND last_game_at > ? AND (conservative > ? OR player_id < ?)")
+            .bind(LADDER, r.conservative, RATING_RULES.establishedGames, RATING_RULES.establishedRd, now - LEADERBOARD_ACTIVE_MS, r.conservative, r.player_id)
             .first<{ n: number }>())?.n ?? 0)
         : 0;
       const grown = decayed(r, r.last_game_at, now);
