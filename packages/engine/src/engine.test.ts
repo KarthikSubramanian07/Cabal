@@ -272,37 +272,109 @@ describe("botOrders", () => {
     expect(after.results[0]?.ok).toBe(true);
   });
 
-  it("decides well inside the 30 ms budget at the default level", () => {
+  // FNV-1a over the bytes of an ASCII string: the same hash as `cabal_bot::seed_from_str`.
+  const fnv1a64 = (text: string): string => {
+    let h = 0xcbf29ce484222325n;
+    for (let i = 0; i < text.length; i++) {
+      h ^= BigInt(text.charCodeAt(i));
+      h = (h * 0x100000001b3n) & 0xffffffffffffffffn;
+    }
+    return h.toString(16).padStart(16, "0");
+  };
+
+  it("decides exactly what the native build decides (golden transcript)", () => {
+    // The native half is `bot_decisions_match_the_golden_transcript` in
+    // crates/cabal-wasm/src/lib.rs. Both play the same games, write one line per
+    // decision from the same fields, and compare with the same file, so the two
+    // targets cannot drift apart unnoticed.
+    const golden = readFileSync(
+      fileURLToPath(
+        new URL("../../../crates/cabal-wasm/tests/bot-golden.txt", import.meta.url),
+      ),
+      "utf8",
+    );
+    const rows = golden
+      .split("\n")
+      .filter((line) => line !== "" && !line.startsWith("#"))
+      .map((line) => line.split(" "));
+    expect(rows.map((r) => r[1])).toEqual(["easy", "standard", "hard"]);
+    for (const [seed, level, until, decisions, hash] of rows) {
+      const game = new Game();
+      let text = "";
+      let count = 0;
+      while (
+        game.status() === "active" &&
+        Number(game.phase().slice(1, 5)) < Number(until)
+      ) {
+        const orders: Record<string, string[]> = {};
+        for (const power of POWERS) {
+          const d = botOrders(game, power, {
+            seed: seed ?? "",
+            level: level as "easy" | "standard" | "hard",
+          });
+          orders[power] = d.orders;
+          const i = d.intent;
+          const supports = i.supports.map(
+            (s) => `${s.unit}>${s.supports}>${s.into ?? "-"}>${s.power}`,
+          );
+          const fears = i.fears.map((f) => `${f.power}:${f.threat}`);
+          text +=
+            `${d.phase} ${d.power} ${d.level}: ${d.orders.join("; ")} | ` +
+            `targets=${i.targets.join(",")} against=${i.against.join(",")} ` +
+            `defends=${i.defends.join(",")} supports=${supports.join(",")} ` +
+            `fears=${fears.join(",")} c=${i.candidates} a=${i.adjudications}\n`;
+          count++;
+        }
+        game.process({ orders });
+      }
+      expect(`${level} ${count} ${fnv1a64(text)}`).toBe(
+        `${level} ${decisions} ${hash}`,
+      );
+    }
+  }, 300_000);
+
+  it("stays inside the 30 ms budget at the default level, measured in CPU time", () => {
     const game = new Game();
     while (game.status() === "active" && !game.phase().startsWith("S1905")) {
       game.process({ orders: playAll(game, "timing", "standard") });
     }
     playAll(game, "warm-up", "standard");
-    // The search is budgeted in adjudications, not time, so the count is exact
-    // and the same on every machine.
-    const times: number[] = [];
-    for (let round = 0; round < 6; round++) {
-      for (const power of POWERS) {
-        const started = performance.now();
-        const decision = botOrders(game, power, { seed: `timing-${round}` });
-        times.push(performance.now() - started);
-        expect(decision.intent.adjudications).toBeLessThanOrEqual(200);
+    playAll(game, "warm-up", "hard");
+    // CPU time, not wall-clock time: a decision is single threaded and pure, so
+    // the processor time this process spends on it barely moves when the machine
+    // is busy with other work, which is what made a wall-clock median useless as
+    // a gate. The adjudication counts are exact and identical on every machine.
+    const measure = (level: "standard" | "hard", rounds: number, cap: number) => {
+      const ms: number[] = [];
+      for (let round = 0; round < rounds; round++) {
+        for (const power of POWERS) {
+          const before = process.cpuUsage();
+          const decision = botOrders(game, power, { seed: `timing-${round}`, level });
+          const spent = process.cpuUsage(before);
+          ms.push((spent.user + spent.system) / 1000);
+          expect(decision.intent.adjudications).toBeLessThanOrEqual(cap);
+        }
       }
-    }
-    times.sort((a, b) => a - b);
-    const fastest = times[0] ?? Infinity;
-    const median = times[Math.floor(times.length / 2)] ?? Infinity;
-    const slowest = times[times.length - 1] ?? Infinity;
-    console.info(
-      `botOrders in wasm, standard level, ${times.length} decisions on a 1905 board: ` +
-        `fastest ${fastest.toFixed(2)} ms, median ${median.toFixed(2)} ms, slowest ${slowest.toFixed(2)} ms`,
-    );
-    // Wall-clock time measures the machine as much as the code, so the gate is on
-    // the fastest sample: a quiet runner sits near 1 ms, and a machine shared with
-    // forty other builds still gets one clean run. The adjudication cap above is
-    // the exact guard; this one catches an order-of-magnitude slowdown per adjudication.
-    expect(fastest).toBeLessThan(30);
-  }, 120_000);
+      ms.sort((a, b) => a - b);
+      const at = (q: number) => ms[Math.min(ms.length - 1, Math.floor(q * ms.length))] ?? Infinity;
+      const stats = { fastest: at(0), median: at(0.5), p90: at(0.9), slowest: at(1) };
+      console.info(
+        `botOrders in wasm, ${level} level, ${ms.length} decisions on a 1905 board, CPU time: ` +
+          `fastest ${stats.fastest.toFixed(2)} ms, median ${stats.median.toFixed(2)} ms, ` +
+          `90th percentile ${stats.p90.toFixed(2)} ms, slowest ${stats.slowest.toFixed(2)} ms`,
+      );
+      return stats;
+    };
+    const standard = measure("standard", 6, 200);
+    // The promise is 30 ms a decision. The median must keep a twofold margin
+    // and nine decisions in ten must keep the promise itself.
+    expect(standard.median).toBeLessThan(15);
+    expect(standard.p90).toBeLessThan(30);
+    // Hard spends up to fifteen times the adjudications and makes no 30 ms
+    // promise; it is measured and bounded so that a seat cannot stall a phase.
+    const hard = measure("hard", 2, 3000);
+    expect(hard.median).toBeLessThan(400);
+  }, 300_000);
 
   it("rejects unknown powers, unknown levels and finished games", () => {
     const game = new Game();
