@@ -72,9 +72,29 @@ pub fn order_text(map: &Map, position: &Position, order: &Order) -> String {
     }
 }
 
-/// Canonical retreat order text, e.g. `F BLA R SEV` or `A BUL D`.
+/// Canonical retreat order text for a retreat phase state, e.g. `F BLA R SEV`
+/// or `A BUL D`. The retreating unit is named in full: it is looked up among
+/// the dislodged units, which are not on the board.
+pub fn retreat_text_in(map: &Map, state: &crate::state::GameState, order: &RetreatOrder) -> String {
+    let me = match state
+        .dislodged
+        .iter()
+        .find(|d| d.unit.province() == order.unit)
+    {
+        Some(d) => unit_text(map, &d.unit),
+        None => unit_ref(map, &state.position, order.unit),
+    };
+    retreat_text_of(map, me, order)
+}
+
+/// Retreat order text when only the board is known. A dislodged unit is not on
+/// the board, so its kind is left out (`BLA R SEV`); prefer [`retreat_text_in`].
 pub fn retreat_text(map: &Map, position: &Position, order: &RetreatOrder) -> String {
     let me = unit_ref(map, position, order.unit);
+    retreat_text_of(map, me, order)
+}
+
+fn retreat_text_of(map: &Map, me: String, order: &RetreatOrder) -> String {
     match order.command {
         RetreatCommand::Retreat { dest, coast } => {
             format!("{me} R {}", map.region_name(Region::new(dest, coast)))
