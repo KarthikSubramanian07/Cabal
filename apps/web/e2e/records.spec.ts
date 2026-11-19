@@ -44,6 +44,24 @@ async function afterAFriendlyGame(page: Page) {
   return server;
 }
 
+test.describe("what the record pages download", () => {
+  for (const path of ["/ledger", "/u/kestrel", "/games"]) {
+    test(`${path} fetches neither the board nor the engine it never draws`, async ({ page }) => {
+      const server = await recorded(page);
+      server.on("GET", /^\/api\/games$/, () => ({ body: { games: [], total: 0 } }));
+      const heavy: string[] = [];
+      page.on("request", (r) => {
+        const u = new URL(r.url());
+        if (/\.wasm$|\/board-|\/SandboxPage-/.test(u.pathname)) heavy.push(u.pathname);
+      });
+      await page.goto(path);
+      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+      await page.waitForLoadState("networkidle");
+      expect(heavy).toEqual([]);
+    });
+  }
+});
+
 test.describe("a record after friendly games", () => {
   test("agrees with itself: the game played is listed for its player, and the Ledger says why it is empty", async ({ page }) => {
     await afterAFriendlyGame(page);

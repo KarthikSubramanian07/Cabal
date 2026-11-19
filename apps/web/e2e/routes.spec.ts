@@ -36,7 +36,7 @@ test.describe("routes", () => {
   });
 
   test("the app shell and the trust pages come back 200 with the edge's security headers", async ({ page }) => {
-    for (const path of ["/", "/sandbox", "/g/K7Q2", "/about", "/privacy"]) {
+    for (const path of ["/", "/sandbox", "/g/K7Q2XZ", "/about", "/privacy"]) {
       const response = await page.goto(path);
       expect(response?.status(), path).toBe(200);
       const headers = response!.headers();

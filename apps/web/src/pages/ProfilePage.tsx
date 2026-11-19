@@ -6,6 +6,7 @@
 import type { MyGame, PlayerProfile } from "@cabal/protocol";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { PageLoading } from "../app/PageLoading.jsx";
+import { applyHead, metaFor } from "../app/meta.js";
 import { StatusPage } from "../app/StatusPage.jsx";
 import { Link } from "../app/router.jsx";
 import { powerLabel } from "../lobby/terms.js";
@@ -258,7 +259,8 @@ export default function ProfilePage({ handle }: { handle: string }) {
   const shownHandle = load.kind === "ready" ? load.profile.player.handle : null;
   useEffect(() => {
     if (!shownHandle) return;
-    document.title = `${shownHandle} — Cabal`;
+    // Every spelling of the handle in the address shares the one its owner writes, as at the edge.
+    applyHead(metaFor(`/u/${encodeURIComponent(shownHandle)}`));
     heading.current?.focus();
   }, [shownHandle]);
 
