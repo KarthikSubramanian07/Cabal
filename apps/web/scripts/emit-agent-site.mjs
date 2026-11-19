@@ -128,6 +128,7 @@ function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHr
       <header class="topbar static">
         <a class="brand" href="/" aria-label="Cabal home">${wordmarkSvg()}</a>
         <nav aria-label="Site">
+          <a href="/games">Games</a>
           <a href="/sandbox">Sandbox</a>
           <a href="/sandbox#how-to-play">How to play</a>
           <a href="/about"${current("/about")}>About</a>
@@ -305,6 +306,7 @@ function enrichIndexHtml() {
           <a class="brand" href="/" aria-label="Cabal home">${wordmarkSvg()}</a>
           <button type="button" class="nav-toggle" aria-expanded="false">Menu</button>
           <nav aria-label="Site" data-open="false">
+            <a href="/games">Games</a>
             <a href="/sandbox" aria-current="page">Sandbox</a>
             <button type="button">How to play</button>
             <a href="/about">About</a>

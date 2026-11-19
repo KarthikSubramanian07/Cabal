@@ -64,6 +64,9 @@ export function Shell({ children }: { children: ReactNode }) {
           Menu
         </button>
         <nav id="site-nav" aria-label="Site" data-open={menu}>
+          <Link href="/games" aria-current={route?.name === "games" ? "page" : undefined}>
+            Games
+          </Link>
           <Link href="/sandbox" aria-current={route?.name === "sandbox" ? "page" : undefined}>
             Sandbox
           </Link>
