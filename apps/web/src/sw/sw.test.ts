@@ -53,8 +53,13 @@ describe("what the worker touches", () => {
 
 class MemoryCache implements CacheLike {
   readonly map = new Map<string, Response>();
-  async match(request: Request | string) {
-    return this.map.get(typeof request === "string" ? new URL(request, ORIGIN).href : request.url)?.clone();
+  /** Requests whose stored copy varies by Origin: a match without `ignoreVary` misses them. */
+  readonly varyOrigin = new Set<string>();
+  async match(request: Request | string, options: { ignoreVary?: boolean } = {}) {
+    const url = typeof request === "string" ? new URL(request, ORIGIN).href : request.url;
+    const sentOrigin = typeof request !== "string" && request.headers.has("origin");
+    if (this.varyOrigin.has(url) && sentOrigin && !options.ignoreVary) return undefined;
+    return this.map.get(url)?.clone();
   }
   async put(request: Request | string, response: Response) {
     this.map.set(typeof request === "string" ? new URL(request, ORIGIN).href : request.url, response);
@@ -136,6 +141,16 @@ describe("the worker's answers", () => {
     await worker.install();
     expect(await (await worker.respond(request("/games", "navigate"))!).text()).toBe("stored /index.html");
     await expect(worker.respond(request("/about", "navigate"))!).rejects.toThrow("offline");
+  });
+
+  it("serves a stored hashed file to a module script that sends an Origin, offline", async () => {
+    const { worker, caches } = setup(() => {
+      throw new TypeError("offline");
+    });
+    await worker.install();
+    (await caches.open("cabal-v2")).varyOrigin.add(at("/assets/index-abc.js"));
+    const moduleScript = new Request(at("/assets/index-abc.js"), { headers: { origin: ORIGIN } });
+    expect(await (await worker.respond(moduleScript))!.text()).toBe("stored /assets/index-abc.js");
   });
 
   it("does not store a 404, and asks the network again next time", async () => {
