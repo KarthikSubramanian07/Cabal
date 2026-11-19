@@ -234,3 +234,54 @@ describe("abuse limits", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("seats bound to players, when they change hands", () => {
+  it("never lets a player who left a seat come back as a substitute, and records both stints", async () => {
+    const [ann, bob, cat] = await Promise.all([newPlayer(), newPlayer(), newPlayer()]);
+    const game = await createAs(ann.secret, { aiFill: true });
+    const bobSeat = (await (await joinAs(bob.secret, game.gameId)).json()) as { token: string; power: string };
+    await start(game);
+    // Bob has been gone for four movement phases: his seat is vacant.
+    await inRoom(game.gameId, (room) => {
+      room.sql.exec("UPDATE seats SET kind = 'civil_disorder', missed = 4 WHERE power = ?", bobSeat.power);
+    });
+    const issued = await call(`/api/games/${game.gameId}/substitute`, null, {
+      method: "POST",
+      headers: { authorization: `Bearer ${game.token}` },
+      body: JSON.stringify({ power: bobSeat.power }),
+    });
+    const { invite } = (await issued.json()) as { invite: string };
+    // Bob, signed in, cannot take the seat back as somebody else, nor can Ann take a second one.
+    expect((await joinAs(bob.secret, game.gameId, { invite })).status).toBe(409);
+    expect((await joinAs(ann.secret, game.gameId, { invite })).status).toBe(409);
+    const taken = await joinAs(cat.secret, game.gameId, { invite });
+    expect(taken.status).toBe(200);
+    expect(((await taken.json()) as { power: string }).power).toBe(bobSeat.power);
+    const stints = await inRoom(game.gameId, (room) =>
+      room.sql.exec<{ stint: number; player_id: string; substitute: number; left_reason: string | null }>("SELECT * FROM stints WHERE power = ? ORDER BY stint", bobSeat.power).toArray(),
+    );
+    expect(stints).toMatchObject([
+      { stint: 0, player_id: bob.player.id, substitute: 0, left_reason: "replaced" },
+      { stint: 1, player_id: cat.player.id, substitute: 1, left_reason: null },
+    ]);
+    // Bob's own list says he left; Cat's says she is playing.
+    const bobGames = await until(async () => {
+      const games = MyGamesResponse.parse(await (await call("/api/me/games", bob.secret)).json()).games;
+      return games.find((g) => g.gameId === game.gameId && g.status === "left");
+    }, "Bob's game to show as left");
+    expect(bobGames.power).toBe(bobSeat.power);
+    const catGames = await until(async () => MyGamesResponse.parse(await (await call("/api/me/games", cat.secret)).json()).games.find((g) => g.gameId === game.gameId), "Cat's game");
+    expect(catGames.status).toBe("playing");
+  });
+
+  it("ignores a player a client names in the body: only the router says who a player is", async () => {
+    const victim = await newPlayer();
+    const game = await create("Ann");
+    const res = await joinRaw(game.gameId, { name: "Mallory", player: { id: victim.player.id, handle: victim.player.handle } });
+    expect(res.status).toBe(200);
+    const { power } = (await res.json()) as { power: string };
+    const seat = (await summary(game.gameId)).seats.find((s) => s.power === power)!;
+    expect(seat).toMatchObject({ name: "Mallory", handle: null });
+    expect(await inRoom(game.gameId, (room) => room.sql.exec<{ player_id: string | null }>("SELECT player_id FROM seats WHERE power = ?", power).one().player_id)).toBeNull();
+  });
+});

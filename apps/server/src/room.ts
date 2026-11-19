@@ -822,12 +822,13 @@ export class GameRoom extends DurableObject<Env> {
     // One player, one seat: a caller who already holds a seat here cannot take another. A signed-in
     // player is known by who they are, whatever token they send, and a seat once left stays left.
     if (this.authorise(bearer(request))) return bad("you already hold a seat in this game", 409);
-    if (player && this.playedHere(player.id)) return bad("you already hold, or have held, a seat in this game", 409);
     // The join that fills the table starts the game, so the Claude budget is asked first.
     if (meta.status === "lobby" && this.seats().filter((s) => s.kind === "open").length === 1) await this.admitClaude();
     // The room may have moved on during the awaits above: read it again.
     if (!this.meta) return bad("no such game", 404);
     meta = this.meta;
+    // Checked after the last await, so two joins by one player can never both pass it.
+    if (player && this.playedHere(player.id)) return bad("you already hold, or have held, a seat in this game", 409);
     // Everything from here to the write is synchronous, so two joins can never pick the same seat.
     if (meta.status === "lobby") {
       const open = this.seats().filter((s) => s.kind === "open");
