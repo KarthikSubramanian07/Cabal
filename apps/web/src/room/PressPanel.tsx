@@ -24,8 +24,6 @@ const ERRORS: Record<string, string> = {
   spectator: "Only players at this table can write.",
 };
 
-const CODE: Record<string, string> = { ALL: "Table", AUSTRIA: "AUS", ENGLAND: "ENG", FRANCE: "FRA", GERMANY: "GER", ITALY: "ITA", RUSSIA: "RUS", TURKEY: "TUR" };
-
 function when(sentAt: number): string {
   return new Date(sentAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
@@ -85,13 +83,14 @@ export function PressPanel(props: PressPanelProps) {
               style={{ "--power": t.id === "ALL" ? "var(--ink)" : `var(--p-${t.id.toLowerCase()})` } as CSSProperties}
               onClick={() => setOpen(t.id)}
             >
-              <span aria-hidden="true">{CODE[t.id]}</span>
-              <span className="sr-only">{threadLabel(t.id)}</span>
+              {threadLabel(t.id)}
               {t.unread > 0 ? (
-                <span className="unread">
-                  {t.unread}
-                  <span className="sr-only"> unread</span>
-                </span>
+                <>
+                  <span className="sr-only">, {t.unread} unread</span>
+                  <span className="unread" aria-hidden="true">
+                    {t.unread}
+                  </span>
+                </>
               ) : null}
             </button>
           ))}
