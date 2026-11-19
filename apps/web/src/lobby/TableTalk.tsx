@@ -43,7 +43,7 @@ export function TableTalk({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
-  const list = useRef<HTMLOListElement>(null);
+  const list = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const errorId = useId();
   const visible = press.filter((m) => m.to === "ALL");
@@ -82,7 +82,9 @@ export function TableTalk({
   return (
     <section className="talk" aria-labelledby={titleId}>
       <h2 id={titleId}>Table talk</h2>
-      <ol className="talk-log" ref={list} role="log" aria-labelledby={titleId} tabIndex={0}>
+      {/* The log is the scrolling region; the list inside keeps its list semantics. */}
+      <div className="talk-log" ref={list} role="log" aria-labelledby={titleId} tabIndex={0}>
+        <ol>
         {visible.length === 0 ? (
           <li className="talk-empty">Nothing said yet. Everything here is read by the whole table.</li>
         ) : (
@@ -97,7 +99,8 @@ export function TableTalk({
             </li>
           ))
         )}
-      </ol>
+        </ol>
+      </div>
       {canWrite ? (
         <form className="talk-compose" onSubmit={submit}>
           <label htmlFor="talk-body">Message the table</label>

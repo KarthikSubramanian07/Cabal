@@ -681,14 +681,15 @@ dialog.how.create {
 
 .live-board {
   margin: 0;
-  border: 1px solid var(--ink);
-  background: var(--sea);
 }
 
-.live-board svg {
-  display: block;
+/* The board's own frame flexes to fill the sandbox's phone layout; here it simply keeps the map's shape. */
+.live-board .board-frame {
+  flex: none;
   width: 100%;
-  height: auto;
+  min-width: 0;
+  aspect-ratio: var(--board-aspect, 1);
+  border-width: 1px;
 }
 
 /* ---- table talk: a pad of dispatches */
@@ -712,9 +713,12 @@ dialog.how.create {
 
 .talk-log {
   min-height: 220px;
+  overflow-y: auto;
+}
+
+.talk-log ol {
   margin: 0;
   padding: 0;
-  overflow-y: auto;
   list-style: none;
 }
 
