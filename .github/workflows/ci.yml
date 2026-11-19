@@ -138,11 +138,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: wasm
     env:
-      # Measured 755,828 bytes with the engine of this change (642,074 before it: the engine
-      # wasm grew by about 110 KB gzip with replay verification, snapshots, verdicts and
-      # explanations; see docs/PERFORMANCE.md). The budget leaves about 4 percent of headroom.
-      # Cloudflare's own limit is 3 MiB gzip on the free plan.
-      WORKER_GZIP_BUDGET_BYTES: 786432
+      # Measured 785,082 bytes with identity, ratings, push and the metrics of PR #84 (755,828
+      # before them; 642,074 before the engine's replay and explanation work). The budget is
+      # 832 KiB, about 8 percent of headroom, raised with the GameRoom cold start measured on
+      # this bundle (docs/PERFORMANCE.md). Cloudflare's own limit is 3 MiB gzip on the free plan.
+      WORKER_GZIP_BUDGET_BYTES: 851968
       WRANGLER_SEND_METRICS: "false"
     steps:
       - uses: actions/checkout@v7

@@ -38,7 +38,7 @@ change. Cold start figures are the median of seven fresh Node processes.
 | Legal orders, all powers, fleet-heavy midgame, one power at a time | `bench` job | same |
 | Legal orders, all powers, fleet-heavy midgame, shared convoy search | `bench` job | same |
 | Engine wasm, gzip | `wasm` job, `WASM_SIZE_BUDGET_BYTES` | 409,000 bytes, about 6 percent above the build |
-| Worker bundle, gzip | `deploy-dry-run` job | 786,432 bytes (measured 755,828) |
+| Worker bundle, gzip | `deploy-dry-run` job | 851,968 bytes, 832 KiB (measured 785,082) |
 | GameRoom cold start, seven fresh workerd processes | `cold-start` job | each median under its ceiling in `apps/server/cold-start-budget.json`, and the engine's three parts, the first request and the first adjudication no more than 1.5 times the base commit's median plus 5 ms, same runner |
 
 The base commit and the change are benchmarked back to back on one runner,
@@ -231,6 +231,16 @@ compares the change with its base commit on one runner instead of with a number 
 why the ceilings in `cold-start-budget.json` sit far above these figures: they catch a start-up that
 has gone badly wrong, the comparison with the base commit catches the gradual kind. Until `main`
 carries the harness, the job has no base to compare with and only the ceilings apply.
+
+### The Worker bundle budget
+
+Guest identity, ratings, Web Push and the phase 1 metrics (PR #84) took the Worker bundle from
+755,828 to 785,082 bytes gzip (`index.js` 400,859, the engine wasm 384,223), 1,350 bytes under the
+786,432 budget. The budget is now 851,968 bytes (832 KiB), within the 1 MiB the owner allows,
+because the cold start figures above were measured on this bundle and show it is not where a fresh
+room's time goes: the engine's three parts take about 4 ms on the CI runner and the first request
+about 50. The new code is plain TypeScript (Web Crypto for push, SQL for the index), and none of it
+runs before the first request that needs it.
 
 Engine start-up is not the expensive part of a fresh room: together the three parts are about 12 ms
 of a first request that takes about 90 locally. The JavaScript bundle (zod above all) and
