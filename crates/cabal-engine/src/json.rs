@@ -62,6 +62,11 @@ pub struct StateExtras {
     /// Provinces left vacant by a standoff in the preceding movement phase.
     #[serde(default)]
     pub standoffs: Vec<String>,
+    /// The two lists were rebuilt from a record that had only the retreat
+    /// options (see [`state_from_mila`]). They reproduce those options; they
+    /// are not a record of who attacked from where.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inferred: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
@@ -338,6 +343,7 @@ pub fn state_to_mila_with(map: &Map, state: &GameState, rulebook: Rulebook) -> M
                 .iter()
                 .map(|&p| province_code(map, p))
                 .collect(),
+            inferred: state.retreats_inferred,
         })
     };
     MilaState {
@@ -375,6 +381,10 @@ pub enum ImportError {
 /// that borders it and as the attacker's origin otherwise. The legal retreats
 /// of the result therefore match the record. With neither, a dislodged unit may
 /// retreat to any vacant neighbour.
+///
+/// A state rebuilt that way says so ([`GameState::retreats_inferred`]) and is
+/// written back with `inferred: true`, so a guess about why a province was
+/// closed never becomes part of a record as if it had been observed.
 pub fn state_from_mila(map: &Map, s: &MilaState) -> Result<GameState, ImportError> {
     let phase = Phase::parse(&s.name).ok_or_else(|| ImportError::BadPhase(s.name.clone()))?;
     let mut state = GameState::from_position(phase, Default::default());
@@ -428,8 +438,10 @@ pub fn state_from_mila(map: &Map, s: &MilaState) -> Result<GameState, ImportErro
             for name in &extras.standoffs {
                 state.standoffs.insert(province(name)?);
             }
+            state.retreats_inferred = extras.inferred;
         }
         None => {
+            state.retreats_inferred = !dislodged.is_empty();
             // candidate and recorded destinations per dislodged unit
             let mut known: Vec<(usize, BTreeSet<ProvinceId>, BTreeSet<ProvinceId>)> = Vec::new();
             for (i, (power, unit)) in dislodged.iter().enumerate() {

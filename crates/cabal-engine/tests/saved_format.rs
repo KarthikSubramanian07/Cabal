@@ -707,3 +707,56 @@ fn a_newer_engines_block_still_loads() {
         game.state
     );
 }
+
+/// A retreat state that arrives without Cabal's extras (a file from another
+/// tool, or one written before the extras existed) gets its restrictions
+/// worked out from the listed retreats. That is a guess about why each
+/// province is closed, and it must stay marked as one however often the game
+/// is saved and loaded again.
+#[test]
+fn rebuilt_retreat_restrictions_are_marked_as_inferred() {
+    let game = munich_dislodged();
+    assert!(!game.state.retreats_inferred);
+    let saved = game.to_saved("marked");
+    let current = saved.phases.last().unwrap();
+    assert!(!current.state.cabal.as_ref().unwrap().inferred);
+    let text = serde_json::to_string(&saved).unwrap();
+    assert!(
+        !text.contains("inferred"),
+        "nothing is written for an observed state"
+    );
+
+    // the same file as another tool would have written it
+    let mut stripped = saved.clone();
+    stripped.phases.last_mut().unwrap().state.cabal = None;
+    let resumed = Game::resume(&stripped, Rulebook::default()).unwrap();
+    assert!(resumed.state.retreats_inferred);
+    for p in game.map().power_ids() {
+        assert_eq!(
+            cabal_engine::legal::legal_retreats(game.map(), &resumed.state, p),
+            cabal_engine::legal::legal_retreats(game.map(), &game.state, p),
+        );
+    }
+
+    // saved again, the rebuilt lists say what they are, and keep saying it
+    let again = through_json(&resumed.to_saved("marked"));
+    assert!(
+        again
+            .phases
+            .last()
+            .unwrap()
+            .state
+            .cabal
+            .as_ref()
+            .unwrap()
+            .inferred
+    );
+    let twice = Game::resume(&again, Rulebook::default()).unwrap();
+    assert!(twice.state.retreats_inferred);
+    assert_eq!(twice.to_saved("marked"), again);
+
+    // once the retreats are played the mark is gone with the dislodged units
+    let mut played = twice;
+    played.process(&[]).unwrap();
+    assert!(!played.state.retreats_inferred);
+}

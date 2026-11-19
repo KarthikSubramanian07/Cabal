@@ -220,6 +220,12 @@ pub struct StateExtras {
     pub dislodged: Vec<DislodgedRecord>,
     /// Provinces left vacant by a standoff; closed to retreats.
     pub standoffs: Vec<String>,
+    /// Present and true when both lists were rebuilt from a record that only
+    /// listed the retreat options: they reproduce the options, but which closed
+    /// province was the attacker's origin and which a standoff is a guess.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[tsify(optional)]
+    pub inferred: bool,
 }
 
 #[derive(Tsify, Serialize, Deserialize, Clone, Debug, Default)]
@@ -274,6 +280,7 @@ impl From<MilaState> for State {
                     })
                     .collect(),
                 standoffs: c.standoffs,
+                inferred: c.inferred,
             }),
         }
     }
@@ -315,6 +322,7 @@ impl From<State> for MilaState {
                     })
                     .collect(),
                 standoffs: c.standoffs,
+                inferred: c.inferred,
             }),
         }
     }
