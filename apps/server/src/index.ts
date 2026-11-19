@@ -40,11 +40,11 @@ import { engineReady, version as engineVersion } from "./engine.js";
 import type { AgentTurn, Env } from "./env.js";
 import { D1_SCHEMA_REQUIRED, copyRegistryOnce, gameIndex, indexBackend, registrySchema } from "./game-index.js";
 import { REQUEST_ID_HEADER, currentRequestId, describeError, log, requestIdFrom, withLogContext } from "./log.js";
-import { gameCode } from "./tokens.js";
+import { gameCode, isPlayerSecret } from "./tokens.js";
 import { CORS, json, limited, readJson, tooMany, withCors } from "./http.js";
 import { metricsRoute } from "./metrics.js";
 import { vapidKeys } from "./notify.js";
-import { playerRoute, resolvePlayer } from "./players.js";
+import { bearerOf, playerRoute, resolvePlayer } from "./players.js";
 
 export { GameRoom } from "./room.js";
 export { Registry } from "./registry.js";
@@ -182,7 +182,8 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (m) {
     const [, id, action] = m;
     const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id!));
-    const authorization = { authorization: request.headers.get("authorization") ?? "" };
+    // A room only ever reads seat tokens; a player secret sent here by mistake goes no further.
+    const authorization = { authorization: isPlayerSecret(bearerOf(request)) ? "" : (request.headers.get("authorization") ?? "") };
     if (action === "join" && request.method === "POST") {
       if (await limited(env.JOIN_LIMITER, request, "join")) return tooMany();
       const who = await resolvePlayer(request, env);
@@ -191,7 +192,8 @@ async function route(request: Request, env: Env): Promise<Response> {
       if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
       const player = who === "none" ? undefined : { id: who.player.id, handle: who.player.handle };
       if (!player && !body.data.name) return withCors(json({ error: "a name is required to play without signing in" }, 400));
-      // The room is told who the player is in the body; a player secret is never handed to a room.
+      // The room is told who the player is in the body; a player secret is never handed to a room
+      // (nor is one forwarded on the other routes: `authorization` drops it).
       const headers = player ? {} : authorization;
       return withCors(await roomFetch(stub, "/join", { method: "POST", headers, body: JSON.stringify({ ...body.data, player }) }));
     }
