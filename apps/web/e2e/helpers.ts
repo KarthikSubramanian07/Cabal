@@ -9,29 +9,54 @@ export async function ready(page: Page, path = "/") {
 }
 
 /**
- * Click or tap a province on the board at its label, which is always inside the province.
- * Touch projects tap, so the phone run exercises the same pointer path a finger does. A
- * small board opens on one theatre; if the province is off screen the whole board is shown
- * first, as a player would do.
+ * Click or tap a province on the board. The point used is the province's code where that is
+ * unobstructed, or else the nearest free spot inside the province's own outline. Touch
+ * projects tap, so the phone run exercises the same pointer path a finger does. A small
+ * board opens on one theatre; if the province is off screen the whole board is shown first,
+ * as a player would do.
  */
 export async function tap(page: Page, code: string) {
-  const svg = page.locator("svg.board");
-  const label = svg.locator("text.label", { hasText: new RegExp(`^${code}$`) }).first();
-  const inView = async () => {
-    const [box, frame] = await Promise.all([label.boundingBox(), svg.boundingBox()]);
-    if (!box || !frame) throw new Error(`no label for ${code}`);
-    const x = box.x + box.width / 2;
-    const y = box.y + box.height / 2;
-    // Stay clear of the zoom and pan buttons laid over the map's right edge.
-    const clear = x > frame.x + 4 && x < frame.x + frame.width - 56 && y > frame.y + 4 && y < frame.y + frame.height - 4;
-    return { x, y, clear };
-  };
-  let at = await inView();
-  if (!at.clear) {
+  const find = () =>
+    page.evaluate((code) => {
+      const svg = document.querySelector("svg.board");
+      const path = svg?.querySelector(`[data-province="${code}"]`);
+      const label = [...(svg?.querySelectorAll("text.label") ?? [])].find((t) => t.textContent === code);
+      if (!svg || !path) return null;
+      const frame = svg.getBoundingClientRect();
+      const hits = (x: number, y: number) =>
+        // inside the map, clear of the zoom and pan buttons laid over it
+        x > frame.left + 3 &&
+        x < frame.right - 3 &&
+        y > frame.top + 3 &&
+        y < frame.bottom - 3 &&
+        y < window.innerHeight &&
+        document.elementFromPoint(x, y)?.closest("[data-province]") === path;
+      if (label) {
+        const b = label.getBoundingClientRect();
+        const x = b.left + b.width / 2;
+        const y = b.top + b.height / 2;
+        if (hits(x, y)) return { x, y };
+      }
+      const b = path.getBoundingClientRect();
+      const cx = b.left + b.width / 2;
+      const cy = b.top + b.height / 2;
+      let best: { x: number; y: number; d: number } | null = null;
+      for (let i = 1; i < 24; i++) {
+        for (let j = 1; j < 24; j++) {
+          const x = b.left + (b.width * i) / 24;
+          const y = b.top + (b.height * j) / 24;
+          const d = Math.hypot(x - cx, y - cy);
+          if ((!best || d < best.d) && hits(x, y)) best = { x, y, d };
+        }
+      }
+      return best ? { x: best.x, y: best.y } : null;
+    }, code);
+  let at = await find();
+  if (!at) {
     await page.getByRole("button", { name: "Show the whole board" }).click();
-    at = await inView();
-    if (!at.clear) throw new Error(`${code} is under the map controls`);
+    at = await find();
   }
+  if (!at) throw new Error(`cannot reach ${code} on the board`);
   const touch = await page.evaluate(() => navigator.maxTouchPoints > 0);
   if (touch) await page.touchscreen.tap(at.x, at.y);
   else await page.mouse.click(at.x, at.y);
