@@ -5,7 +5,7 @@
 import { SHELL, cacheName, cacheable, classify, shellServes, staleCaches } from "./policy.js";
 
 export interface CacheLike {
-  match(request: Request | string): Promise<Response | undefined>;
+  match(request: Request | string, options?: { ignoreVary?: boolean }): Promise<Response | undefined>;
   put(request: Request | string, response: Response): Promise<void>;
   addAll(requests: (Request | string)[]): Promise<void>;
 }
@@ -64,8 +64,13 @@ export function createWorker(deps: WorkerDeps) {
     }
   }
 
+  /**
+   * A hashed file never changes, so a stored copy answers whatever headers asked for it. Without
+   * `ignoreVary` a server that answers `Vary: Origin` would miss for a module script (sent with an
+   * Origin header) the copy stored at install (sent without one), and the offline app would not start.
+   */
   async function asset(request: Request): Promise<Response> {
-    const cached = await (await open()).match(request);
+    const cached = await (await open()).match(request, { ignoreVary: true });
     if (cached) return cached;
     const response = await deps.fetch(request);
     await store(request, response);
