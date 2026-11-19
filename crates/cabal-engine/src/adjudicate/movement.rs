@@ -704,7 +704,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // standoffs: no move in, at least one failed move in by a unit that was not itself dislodged
+        // standoffs: no move in, at least one failed move in that still contested the province
         // every PATH is now a function of resolved orders
         let path_ok: Vec<bool> = (0..n)
             .map(|i| self.entries[i].is_move() && self.path_final(i))
@@ -719,9 +719,17 @@ impl<'a> Resolver<'a> {
             if list.iter().any(|&m| ok[m]) {
                 continue;
             }
-            let contested = list
-                .iter()
-                .any(|&m| dislodged_by[m].is_none() && path_ok[m]);
+            // A move contests its destination when it has prevent strength (DATC 5.B.6).
+            // That is zero only without a path or for the loser of a head-to-head
+            // battle, which has no effect on the province its attacker came from.
+            // A unit dislodged from a third province still bounces what it meets.
+            let mut contested = false;
+            for &m in &list {
+                if path_ok[m] && self.prevent_strength(m, true) > 0 {
+                    contested = true;
+                    break;
+                }
+            }
             if !contested {
                 continue;
             }
