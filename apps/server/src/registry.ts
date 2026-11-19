@@ -2,49 +2,34 @@
  * Registry: the one global index of games, a singleton SQLite-backed Durable Object
  * (`env.REGISTRY`, `idFromName("global")`).
  *
- * Game rooms hand their final summary here over RPC when a game is finished or abandoned. The
- * schema lives in the numbered migrations below and is brought up to date in the constructor, so
- * a deploy never needs a separate migration step. Add a migration; never edit one that has shipped.
+ * Game rooms hand their final summary here when a game is finished or abandoned, and public games
+ * keep a live listing here while they are open or running. Nothing calls these methods directly:
+ * callers go through the `GameIndex` port (game-index.ts), of which this class is the SQLite
+ * adapter. The schema lives in numbered SQL files under `migrations/` and is brought up to date in
+ * the constructor, so a deploy never needs a separate migration step.
  */
 import { DurableObject } from "cloudflare:workers";
-import { GameRecord } from "@cabal/protocol";
+import { GameListing, GameRecord } from "@cabal/protocol";
+import m0001 from "../migrations/0001_games_index.sql";
+import m0002 from "../migrations/0002_games_index_seats_and_cluster.sql";
+import m0003 from "../migrations/0003_games_live.sql";
 import type { Env } from "./env.js";
 
 /** Name of the singleton instance. */
 export const REGISTRY_NAME = "global";
 
+/**
+ * Versioned schema, one plain SQL file per migration (valid for SQLite here and for D1 later).
+ * Add a file and a line; never edit a migration that has shipped.
+ */
 export const MIGRATIONS: readonly { version: number; name: string; sql: string }[] = [
-  {
-    version: 1,
-    name: "games_index",
-    // Justin Obomeghie's cross-game index from PR #68, moved here from D1. The result set also
-    // admits `abandoned`, so games that died are indexed alongside games that ended.
-    sql: `
-      CREATE TABLE IF NOT EXISTS games_index (
-        game_id TEXT PRIMARY KEY,
-        result TEXT NOT NULL CHECK (result IN ('solo', 'draw', 'abandoned')),
-        winners_json TEXT NOT NULL,
-        scores_json TEXT NOT NULL,
-        settings_json TEXT NOT NULL,
-        phase_count INTEGER NOT NULL,
-        finished_at INTEGER NOT NULL,
-        ledger_json TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS games_index_finished_at ON games_index(finished_at DESC);
-    `,
-  },
-  {
-    version: 2,
-    name: "games_index_seats_and_cluster",
-    sql: `
-      ALTER TABLE games_index ADD COLUMN reason TEXT;
-      ALTER TABLE games_index ADD COLUMN cluster TEXT NOT NULL DEFAULT 'standard:full:async';
-      ALTER TABLE games_index ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;
-      ALTER TABLE games_index ADD COLUMN seats_json TEXT NOT NULL DEFAULT '[]';
-      CREATE INDEX IF NOT EXISTS games_index_cluster ON games_index(cluster, finished_at DESC);
-    `,
-  },
+  { version: 1, name: "games_index", sql: m0001 },
+  { version: 2, name: "games_index_seats_and_cluster", sql: m0002 },
+  { version: 3, name: "games_live", sql: m0003 },
 ];
+
+/** A lobby is listed for as long as a room keeps one; a running game for as long as its longest phase. */
+const LISTING_TTL_MS = { lobby: 7 * 24 * 3600_000, active: 15 * 24 * 3600_000 } as const;
 
 interface GameRow extends Record<string, SqlStorageValue> {
   game_id: string;
@@ -59,6 +44,36 @@ interface GameRow extends Record<string, SqlStorageValue> {
   finished_at: number;
   ledger_json: string;
   seats_json: string;
+}
+
+interface LiveRow extends Record<string, SqlStorageValue> {
+  game_id: string;
+  status: string;
+  settings_json: string;
+  cluster: string;
+  host_name: string | null;
+  humans: number;
+  open_seats: number;
+  phase: string;
+  deadline_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+function toListing(row: LiveRow): GameListing {
+  return {
+    gameId: row.game_id,
+    status: row.status as GameListing["status"],
+    settings: JSON.parse(row.settings_json) as GameListing["settings"],
+    cluster: row.cluster,
+    hostName: row.host_name,
+    humans: row.humans,
+    openSeats: row.open_seats,
+    phase: row.phase,
+    deadlineAt: row.deadline_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function toRecord(row: GameRow): GameRecord {
@@ -137,7 +152,66 @@ export class Registry extends DurableObject<Env> {
       JSON.stringify(record.ledger),
       JSON.stringify(record.seats),
     );
+    // A game that has ended is no longer open or running.
+    this.sql.exec("DELETE FROM games_live WHERE game_id = ?", record.gameId);
     return { ok: true };
+  }
+
+  /** Insert or refresh the listing of a public game that is open or running. */
+  upsertListing(input: GameListing): { ok: true } {
+    const listing = GameListing.parse(input);
+    // A late refresh must never resurrect a game that has already been recorded as ended.
+    if (this.getGame(listing.gameId)) return { ok: true };
+    this.sql.exec(
+      `INSERT INTO games_live
+         (game_id, status, settings_json, cluster, host_name, humans, open_seats, phase, deadline_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(game_id) DO UPDATE SET
+         status = excluded.status, settings_json = excluded.settings_json, cluster = excluded.cluster,
+         host_name = excluded.host_name, humans = excluded.humans, open_seats = excluded.open_seats,
+         phase = excluded.phase, deadline_at = excluded.deadline_at, updated_at = excluded.updated_at`,
+      listing.gameId,
+      listing.status,
+      JSON.stringify(listing.settings),
+      listing.cluster,
+      listing.hostName,
+      listing.humans,
+      listing.openSeats,
+      listing.phase,
+      listing.deadlineAt,
+      listing.createdAt,
+      listing.updatedAt,
+    );
+    return { ok: true };
+  }
+
+  removeListing(gameId: string): { ok: true } {
+    this.sql.exec("DELETE FROM games_live WHERE game_id = ?", gameId);
+    return { ok: true };
+  }
+
+  /**
+   * Public games to join (`open`) or to watch (`active`), newest first. Rows a room stopped
+   * refreshing long ago are left out, so a room that died without saying so never lingers.
+   */
+  listListings(options: { status: "open" | "active"; limit?: number; before?: number; now: number }): GameListing[] {
+    const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 25)));
+    const before = options.before ?? Number.MAX_SAFE_INTEGER;
+    const rows =
+      options.status === "open"
+        ? this.sql.exec<LiveRow>(
+            "SELECT * FROM games_live WHERE status = 'lobby' AND open_seats > 0 AND updated_at > ? AND created_at < ? ORDER BY created_at DESC, game_id LIMIT ?",
+            options.now - LISTING_TTL_MS.lobby,
+            before,
+            limit,
+          )
+        : this.sql.exec<LiveRow>(
+            "SELECT * FROM games_live WHERE status IN ('active', 'paused') AND updated_at > ? AND created_at < ? ORDER BY created_at DESC, game_id LIMIT ?",
+            options.now - LISTING_TTL_MS.active,
+            before,
+            limit,
+          );
+    return rows.toArray().map(toListing);
   }
 
   getGame(gameId: string): GameRecord | null {

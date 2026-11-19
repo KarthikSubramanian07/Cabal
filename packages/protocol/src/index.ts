@@ -7,7 +7,11 @@
  */
 import { z } from "zod";
 
-export const PROTOCOL_VERSION = 1 as const;
+/**
+ * Bumped when a frame changes meaning. Version 2: every broadcast frame carries its own `seq` on
+ * the envelope, and `sync { since }` replays the frames after that number.
+ */
+export const PROTOCOL_VERSION = 2 as const;
 
 // ---------- primitives ----------
 
@@ -44,6 +48,14 @@ export type SeatKind = z.infer<typeof SeatKind>;
 
 export const AiBrain = z.enum(["bot", "claude"]);
 export type AiBrain = z.infer<typeof AiBrain>;
+
+/** How a draw is scored: Sum of Squares (centre counts squared) or Draw Size (equal shares). */
+export const Scoring = z.enum(["sos", "dss"]);
+export type Scoring = z.infer<typeof Scoring>;
+
+/** `public` games appear in `GET /api/games`; `unlisted` games are reachable only by their code. */
+export const Visibility = z.enum(["public", "unlisted"]);
+export type Visibility = z.infer<typeof Visibility>;
 
 /**
  * Clock presets per pacing. A game that names a pacing and no explicit seconds gets these.
@@ -89,6 +101,12 @@ const settingsShape = {
   aiFill: z.boolean(),
   /** Who plays AI seats: the built-in bot (free, instant) or Claude (opt-in, capped, falls back to the bot). */
   aiBrain: AiBrain,
+  /** How a draw is shared out. A solo is always 1 to the winner. */
+  scoring: Scoring,
+  /** Whether the game is listed while it is open or running. */
+  visibility: Visibility,
+  /** True: every draw vote is shown with its voter. False: only the tally is shown, and a voter sees their own. */
+  publicVotes: z.boolean(),
 };
 
 /** Lobby settings that define a game. Also the rating cluster key. */
@@ -109,6 +127,9 @@ export const GameSettings = z.object({
   cabals: settingsShape.cabals.default(false),
   aiFill: settingsShape.aiFill.default(true),
   aiBrain: settingsShape.aiBrain.default("bot"),
+  scoring: settingsShape.scoring.default("sos"),
+  visibility: settingsShape.visibility.default("unlisted"),
+  publicVotes: settingsShape.publicVotes.default(true),
 });
 export type GameSettings = z.infer<typeof GameSettings>;
 
@@ -140,8 +161,14 @@ export const PledgeInput = z.object({
   orders: z.array(OrderText).min(1).max(34),
   /** Sealed: recipients see only the commitment until the phase resolves. */
   sealed: z.boolean().default(false),
-  /** 16 byte hex nonce chosen by the sender (required when sealed). */
+  /** 16 byte hex nonce chosen by the sender. The server picks one when it is absent and returns it to the pledger. */
   nonce: z.string().regex(/^[0-9a-f]{32}$/).optional(),
+  /**
+   * The commitment the sender computed locally with `pledgeCommit(orders, nonce)`. When present the
+   * server refuses the pledge (`bad_pledge`) unless its own commitment is identical, so a client can
+   * prove to itself that the server sealed exactly what it was sent.
+   */
+  commitment: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 });
 export type PledgeInput = z.infer<typeof PledgeInput>;
 
@@ -159,6 +186,11 @@ export const PledgeView = z.object({
   /** Orders, visible to the audience of an open pledge, or to everyone after reveal. */
   orders: z.array(OrderText).nullable(),
   receipt: Receipt.nullable(),
+  /**
+   * The nonce that opens the commitment. The pledger sees it at once; everybody else in the
+   * audience sees it with the receipt, and can then check `pledgeOpens(commitment, orders, nonce)`.
+   */
+  nonce: z.string().nullable(),
 });
 export type PledgeView = z.infer<typeof PledgeView>;
 
@@ -175,6 +207,16 @@ export const SeatView = z.object({
   missed: z.number().int().min(0),
   /** The built-in bot is covering this civil-disorder seat until its player returns. */
   autopilot: z.boolean().optional(),
+  /** Who is playing an AI seat or covering a seat on autopilot right now; null for a seat a person plays. */
+  brain: AiBrain.nullable(),
+  /** A connection is bound to the seat. Always true for a seat played by AI. */
+  present: z.boolean(),
+  /** Orders are on file for the current phase. Never the orders themselves. */
+  submitted: z.boolean(),
+  /** The seat has something to order in the current phase. */
+  canAct: z.boolean(),
+  /** The seat of the player who created the game and may start it. */
+  host: z.boolean(),
 });
 export type SeatView = z.infer<typeof SeatView>;
 
@@ -199,9 +241,13 @@ export const OrderResultView = z.object({
 });
 export type OrderResultView = z.infer<typeof OrderResultView>;
 
+/** The phase a message was sent in, or `LOBBY` for table talk before the game starts. */
+export const PressPhase = z.union([PhaseName, z.literal("LOBBY")]);
+export type PressPhase = z.infer<typeof PressPhase>;
+
 export const PressView = z.object({
   id: z.string(),
-  phase: PhaseName,
+  phase: PressPhase,
   from: PowerName,
   to: Recipient,
   body: z.string(),
@@ -250,6 +296,12 @@ export const ClientMessage = z.discriminatedUnion("t", [
       include: z.array(PowerName).min(1).max(7).optional(),
     }),
   }),
+  /** Mark a thread read up to a message's `sentAt`. `with` is the other power, or `ALL` for the public thread. */
+  z.object({
+    t: z.literal("press.read"),
+    id: z.string().optional(),
+    p: z.object({ with: Recipient, upTo: z.number().int().min(0) }),
+  }),
   z.object({
     t: z.literal("sync"),
     id: z.string().optional(),
@@ -263,24 +315,65 @@ export type ClientMessage = z.infer<typeof ClientMessage>;
 export const GameStatus = z.enum(["lobby", "active", "paused", "finished", "abandoned"]);
 export type GameStatus = z.infer<typeof GameStatus>;
 
-/** Who has voted for a draw this phase. Votes are public and are cleared when the phase resolves. */
+/** Draw votes of the current phase. They are cleared when the phase resolves. */
 export const VotesView = z.object({
   phase: PhaseName,
-  /** Every vote cast this phase. `include` is the proposed set of sharers (non-DIAS), null for all survivors. */
+  /**
+   * The ballots the viewer may see. With `publicVotes` that is every vote cast this phase; without
+   * it, only the viewer's own. `include` is the proposed set of sharers (non-DIAS), null for all survivors.
+   */
   draw: z.array(z.object({ power: PowerName, value: z.boolean(), include: z.array(PowerName).nullable() })),
   /** The seats whose agreement a draw needs: surviving, present human players. */
   required: z.array(PowerName),
+  /** True when the game hides who voted (`publicVotes: false`). */
+  hidden: z.boolean(),
+  /** Required voters who have voted, and how many of those voted yes. Always visible. */
+  cast: z.number().int().min(0),
+  yes: z.number().int().min(0),
 });
 export type VotesView = z.infer<typeof VotesView>;
 
 export const GameResult = z.enum(["solo", "draw", "abandoned"]);
 export type GameResult = z.infer<typeof GameResult>;
 
+/** One resolved phase, as the history strip shows it: supply centres per power once it resolved. */
+export const PhaseSummary = z.object({
+  phase: PhaseName,
+  adjudicatedAt: z.number().int(),
+  centers: z.record(z.string(), z.number().int()),
+});
+export type PhaseSummary = z.infer<typeof PhaseSummary>;
+
+/** What the server made of one submitted order, in the order it was sent. */
+export const OrderVerdict = z.object({
+  /** The text as the client sent it. */
+  text: z.string(),
+  /** Canonical MILA text when the order parsed; null otherwise. */
+  order: z.string().nullable(),
+  ok: z.boolean(),
+  /** `ok`, `syntax`, `foreign_power`, `no_such_unit`, `illegal`, `superseded` or `over_allowance`. */
+  code: z.string(),
+  /** Why, in words a player can act on. Empty when `ok`. */
+  reason: z.string(),
+});
+export type OrderVerdict = z.infer<typeof OrderVerdict>;
+
+/**
+ * One server frame. `seq` is present on every broadcast frame (anything `sync` can replay) and is
+ * that frame's own number: a client keeps the highest it has applied and resumes with
+ * `sync { since }`. Replies to a single socket (`welcome`, `orders.ack`, `synced`, `error`, ...) and
+ * presence-only `seats` frames carry no `seq`.
+ */
+function frame<T extends string, P extends z.ZodType>(t: T, p: P) {
+  return z.object({ t: z.literal(t), id: z.string().optional(), seq: z.number().int().min(1).optional(), p });
+}
+
 export const ServerMessage = z.discriminatedUnion("t", [
-  z.object({
-    t: z.literal("welcome"),
-    id: z.string().optional(),
-    p: z.object({
+  frame(
+    "welcome",
+    z.object({
+      /** `PROTOCOL_VERSION` of the server. */
+      protocol: z.number().int(),
       gameId: z.string(),
       settings: GameSettings,
       status: GameStatus,
@@ -288,104 +381,143 @@ export const ServerMessage = z.discriminatedUnion("t", [
       /** While paused: when the pause ends by itself, and how much of the phase clock is left. */
       pausedUntil: z.number().int().nullable().optional(),
       pausedRemainingMs: z.number().int().nullable().optional(),
+      /** The viewer's seat; null for a spectator. */
       power: PowerName.nullable(),
+      /** The seat that created the game and may start it. */
+      host: PowerName,
       phase: PhaseName,
       state: StateView,
       seats: z.array(SeatView),
       deadlineAt: z.number().int().nullable(),
+      /** The server's clock when the frame was built, so a client can correct its own for countdowns. */
+      serverTime: z.number().int(),
+      /** The number of the last broadcast frame this snapshot already contains: the `sync` cursor. */
       seq: z.number().int(),
+      /** The viewer's own orders on file for the current phase. */
       orders: z.array(OrderText),
+      /** The viewer's own sealed default orders. */
+      defaults: z.array(OrderText),
+      /** The most recent press the viewer may read, oldest first. */
       press: z.array(PressView),
-      votes: VotesView.optional(),
+      /** True when older press exists than `press` holds; page it with `GET /api/games/:id/press`. */
+      pressMore: z.boolean(),
+      /** Unread messages per thread (`ALL` or the other power), from the viewer's read markers. */
+      unread: z.record(z.string(), z.number().int()),
+      votes: VotesView,
+      /** Every resolved phase, oldest first. */
+      history: z.array(PhaseSummary),
+      finished: z
+        .object({ result: GameResult, winners: z.array(PowerName), scores: z.record(z.string(), z.number()), reason: z.string().nullable() })
+        .nullable(),
     }),
-  }),
-  z.object({
-    t: z.literal("state"),
-    p: z.object({
+  ),
+  frame(
+    "state",
+    z.object({
       phase: PhaseName,
       state: StateView,
       deadlineAt: z.number().int().nullable(),
+      serverTime: z.number().int(),
+      /** This frame's own number (the same as the envelope's `seq`). */
       seq: z.number().int(),
-      status: GameStatus.optional(),
+      status: GameStatus,
     }),
-  }),
-  z.object({
-    t: z.literal("results"),
-    p: z.object({
+  ),
+  frame(
+    "results",
+    z.object({
       phase: PhaseName,
       results: z.array(OrderResultView),
       dislodged: z.array(z.object({ unit: z.string(), attacker_from: z.string(), retreat_options: z.array(z.string()) })),
       standoffs: z.array(z.string()),
       civil_disorder: z.array(z.string()),
+      /** Supply centres per power once the phase resolved (the entry appended to `welcome.history`). */
+      summary: PhaseSummary,
+      /** This frame's own number (the same as the envelope's `seq`). */
       seq: z.number().int(),
     }),
-  }),
-  z.object({
-    t: z.literal("orders.ack"),
-    id: z.string().optional(),
-    p: z.object({
+  ),
+  frame(
+    "orders.ack",
+    z.object({
       phase: PhaseName,
+      /** The orders now on file, in canonical text. */
       accepted: z.array(OrderText),
       rejected: z.array(z.object({ text: z.string(), reason: z.string() })),
+      /** One verdict per order sent, in the order sent. */
+      verdicts: z.array(OrderVerdict),
     }),
-  }),
-  z.object({ t: z.literal("press"), id: z.string().optional(), p: PressView }),
-  z.object({
-    t: z.literal("pledge.receipt"),
-    p: z.object({ pledgeId: z.string(), receipt: Receipt, revealed: z.array(OrderText).nullable() }),
-  }),
-  z.object({ t: z.literal("seats"), p: z.object({ seats: z.array(SeatView) }) }),
-  z.object({
-    t: z.literal("deadline"),
-    p: z.object({
+  ),
+  /**
+   * The sealed default orders now on file. They are checked for syntax and ownership only: the
+   * board they will be used on is not known yet.
+   */
+  frame(
+    "orders.default.ack",
+    z.object({ accepted: z.array(OrderText), rejected: z.array(z.object({ text: z.string(), reason: z.string() })) }),
+  ),
+  frame("press", PressView),
+  /** The viewer's unread counts after a `press.read`. Sent to every socket of the seat. */
+  frame("press.unread", z.object({ unread: z.record(z.string(), z.number().int()) })),
+  frame(
+    "pledge.receipt",
+    z.object({
+      pledgeId: z.string(),
+      receipt: Receipt,
+      revealed: z.array(OrderText).nullable(),
+      /** Opens the commitment: `pledgeOpens(commitment, revealed, nonce)`. */
+      nonce: z.string(),
+    }),
+  ),
+  frame("seats", z.object({ seats: z.array(SeatView) })),
+  frame(
+    "deadline",
+    z.object({
       phase: PhaseName,
       deadlineAt: z.number().int().nullable(),
+      serverTime: z.number().int(),
       /** True when this deadline is the one-off grace period. */
       grace: z.boolean().optional(),
     }),
-  }),
-  z.object({
-    t: z.literal("extend.ack"),
-    id: z.string().optional(),
-    p: z.object({ phase: PhaseName, requests: z.number().int().min(1), extended: z.boolean() }),
-  }),
+  ),
+  frame("extend.ack", z.object({ phase: PhaseName, requests: z.number().int().min(1), extended: z.boolean() })),
   /** Sent to everyone on each extension request, so a second seat can see one is pending. */
-  z.object({
-    t: z.literal("extend"),
-    p: z.object({
+  frame(
+    "extend",
+    z.object({
       phase: PhaseName,
       requestedBy: z.array(PowerName),
       needed: z.number().int().min(1),
       granted: z.boolean(),
       deadlineAt: z.number().int().nullable(),
     }),
-  }),
-  z.object({ t: z.literal("votes"), p: VotesView }),
-  z.object({
-    t: z.literal("finished"),
-    p: z.object({
+  ),
+  frame("votes", VotesView),
+  frame(
+    "finished",
+    z.object({
       result: GameResult,
       winners: z.array(PowerName),
       scores: z.record(z.string(), z.number()),
       reason: z.string().nullable().optional(),
     }),
-  }),
-  z.object({
-    t: z.literal("status"),
-    p: z.object({
+  ),
+  frame(
+    "status",
+    z.object({
       status: GameStatus,
       reason: z.string().nullable(),
       /** While paused: when the pause ends by itself. */
       until: z.number().int().nullable().optional(),
     }),
-  }),
-  /** Ends the reply to a `sync`: the cursor to send next, and whether another page is waiting. */
-  z.object({
-    t: z.literal("synced"),
-    id: z.string().optional(),
-    p: z.object({ seq: z.number().int().min(0), more: z.boolean() }),
-  }),
-  z.object({ t: z.literal("error"), id: z.string().optional(), p: z.object({ code: z.string(), message: z.string() }) }),
+  ),
+  /**
+   * Ends the reply to a `sync`: the cursor to send next, and whether another page is waiting.
+   * `gap` is true when frames after `since` are no longer stored; the client then asks for a fresh
+   * `welcome` (send `hello` again) instead of trusting the replay.
+   */
+  frame("synced", z.object({ seq: z.number().int().min(0), more: z.boolean(), gap: z.boolean() })),
+  frame("error", z.object({ code: z.string(), message: z.string() })),
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;
 
@@ -419,6 +551,109 @@ export type SubstituteInviteRequest = z.infer<typeof SubstituteInviteRequest>;
 
 export const SubstituteInviteResponse = z.object({ gameId: z.string(), power: PowerName, invite: z.string() });
 export type SubstituteInviteResponse = z.infer<typeof SubstituteInviteResponse>;
+
+/** `GET /api/games/:id`: what anybody may know about a game. */
+export const GameSummary = z.object({
+  id: z.string(),
+  settings: GameSettings,
+  status: GameStatus,
+  phase: PhaseName,
+  host: PowerName,
+  deadlineAt: z.number().int().nullable(),
+  serverTime: z.number().int(),
+  createdAt: z.number().int(),
+  seats: z.array(SeatView),
+  finished: z
+    .object({ result: GameResult, winners: z.array(PowerName), scores: z.record(z.string(), z.number()), reason: z.string().nullable() })
+    .nullable(),
+  pauseReason: z.string().nullable(),
+  pausedUntil: z.number().int().nullable(),
+  pausedRemainingMs: z.number().int().nullable(),
+  history: z.array(PhaseSummary),
+  /** Who plays the AI seats and what it has cost so far. */
+  ai: z.object({
+    brain: AiBrain,
+    model: z.string().nullable(),
+    claudeTurns: z.number(),
+    claudeCalls: z.number(),
+    spentUsd: z.number(),
+    capUsd: z.number(),
+    tokens: z.object({ inputTokens: z.number(), outputTokens: z.number(), cacheReadTokens: z.number(), cacheWriteTokens: z.number() }),
+    stopped: z.string().nullable(),
+  }),
+});
+export type GameSummary = z.infer<typeof GameSummary>;
+
+/** One open or running public game, as `GET /api/games?status=open|active` lists it. */
+export const GameListing = z.object({
+  gameId: z.string(),
+  status: z.enum(["lobby", "active", "paused"]),
+  settings: GameSettings,
+  cluster: z.string(),
+  hostName: z.string().nullable(),
+  /** Seats a person holds, and seats still unclaimed. */
+  humans: z.number().int().min(0),
+  openSeats: z.number().int().min(0),
+  phase: PhaseName,
+  deadlineAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type GameListing = z.infer<typeof GameListing>;
+
+export const LedgerTotals = z.record(z.string(), z.object({ kept: z.number().int(), broken: z.number().int(), void: z.number().int() }));
+export type LedgerTotals = z.infer<typeof LedgerTotals>;
+
+/** One resolved pledge with everything needed to check it: `pledgeOpens(commitment, orders, nonce)`. */
+export const LedgerEntry = z.object({
+  id: z.string(),
+  pledger: PowerName,
+  audience: Recipient,
+  phase: PhaseName,
+  sealed: z.boolean(),
+  commitment: z.string(),
+  nonce: z.string(),
+  orders: z.array(OrderText),
+  receipt: Receipt,
+});
+export type LedgerEntry = z.infer<typeof LedgerEntry>;
+
+/**
+ * `GET /api/games/:id/ledger`. `ledger` counts every resolved pledge. `entries` lists the ones the
+ * caller may read: pledges made to `ALL`, with a seat token also the private ones that seat made or
+ * received, and every pledge once the game is over.
+ */
+export const LedgerResponse = z.object({ gameId: z.string(), ledger: LedgerTotals, entries: z.array(LedgerEntry) });
+export type LedgerResponse = z.infer<typeof LedgerResponse>;
+
+/** `GET /api/games/:id/press`: one page of press, oldest first, and whether older messages remain. */
+export const PressPage = z.object({ gameId: z.string(), press: z.array(PressView), more: z.boolean() });
+export type PressPage = z.infer<typeof PressPage>;
+
+/**
+ * `GET /api/games/:id/replay` is a MILA saved game with one extra key, `cabal`, that MILA tools
+ * ignore: the resolved pledges the caller may read (same rule as the ledger) and the phase summaries.
+ */
+export const ReplayExtension = z.object({
+  protocol: z.number().int(),
+  status: GameStatus,
+  finished: GameSummary.shape.finished,
+  pledges: z.array(LedgerEntry),
+  history: z.array(PhaseSummary),
+});
+export type ReplayExtension = z.infer<typeof ReplayExtension>;
+
+export const HealthResponse = z.object({
+  ok: z.boolean(),
+  protocol: z.number().int(),
+  /** Semantic version of the Rust engine compiled into this build. */
+  engine: z.string(),
+  /** Identifies the deployed build: the `BUILD_ID` variable, else the Worker version id, else `dev`. */
+  build: z.string(),
+  registry: z.object({ reachable: z.boolean(), schema: z.number().int().nullable() }),
+  time: z.number().int(),
+});
+export type HealthResponse = z.infer<typeof HealthResponse>;
 
 /** One row of the global games index kept by the `Registry` Durable Object. */
 export const GameRecord = z.object({
@@ -469,6 +704,11 @@ export function drawSize(centers: Record<string, number>): Record<string, number
     out[power] = 1 / survivors.length;
   }
   return out;
+}
+
+/** A draw's shares under the game's scoring rule. `centers` holds only the powers that share it. */
+export function drawScores(scoring: Scoring, centers: Record<string, number>): Record<string, number> {
+  return scoring === "dss" ? drawSize(centers) : sumOfSquares(centers);
 }
 
 /** Parse and validate one client frame. Returns null for anything that does not validate. */

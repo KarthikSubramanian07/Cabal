@@ -26,21 +26,28 @@
  */
 import { DurableObject } from "cloudflare:workers";
 import {
+  type GameListing,
   type GameRecord,
   type GameResult,
   type GameSettings as Settings,
   GameSettings,
+  type GameSummary,
+  type LedgerEntry,
   type OrderResultView,
+  type OrderVerdict,
+  PROTOCOL_VERSION,
+  type PhaseSummary,
   type PledgeView,
   type PowerName,
   type PressView,
+  type ReplayExtension,
   type SeatView,
   type ServerMessage,
   type StateView,
   type VotesView,
+  drawScores,
   parseClientMessage,
   ratingCluster,
-  sumOfSquares,
 } from "@cabal/protocol";
 import { adjudicateStrict } from "./adjudicate-guard.js";
 import { DEFAULT_MODEL, MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS, MEMORY_LIMITS, type Memory, type Usage, costMicros, maxCallCostMicros } from "@cabal/agents";
@@ -70,8 +77,9 @@ import {
   pledgeReceipt,
   randomNonce,
 } from "./engine.js";
-import { REGISTRY_NAME } from "./registry.js";
+import { gameIndex } from "./game-index.js";
 import { hashToken, mintToken, parseToken, randomId } from "./tokens.js";
+import { judgeOrders } from "./validate.js";
 
 type Status = "lobby" | "active" | "paused" | "finished" | "abandoned";
 
@@ -90,6 +98,11 @@ export const LIMITS = {
   syncPage: 500,
   /** Press messages included in a welcome frame (the most recent ones). */
   welcomePress: 500,
+  /** Press messages in one page of `GET /press`: the default and the most a caller may ask for. */
+  pressPage: 100,
+  pressPageMax: 200,
+  /** Resolved phases listed in a welcome frame and a summary (the most recent ones). */
+  historyPhases: 400,
   /** Sockets that have not bound to a seat. */
   spectators: 200,
   /** Sockets one seat may hold open (several tabs and devices). */
@@ -326,7 +339,14 @@ CREATE TABLE IF NOT EXISTS phases (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   results_json TEXT NOT NULL,
-  adjudicated_at INTEGER NOT NULL
+  adjudicated_at INTEGER NOT NULL,
+  summary_json TEXT
+);
+CREATE TABLE IF NOT EXISTS press_reads (
+  power TEXT NOT NULL,
+  thread TEXT NOT NULL,
+  read_at INTEGER NOT NULL,
+  PRIMARY KEY (power, thread)
 );
 CREATE TABLE IF NOT EXISTS agent_memory (
   power TEXT PRIMARY KEY,
@@ -385,6 +405,10 @@ export class GameRoom extends DurableObject<Env> {
   private pending: { payload: string; audience: PowerName | "ALL"; only?: WebSocket }[] = [];
   /** Claude turns to put on the queue once the current change has committed. */
   private turns: AgentTurn[] = [];
+  /** The game's public listing is out of date and is refreshed once the current change has committed. */
+  private listingDirty = false;
+  /** Which seats can act, worked out once per position. */
+  private actCache: { game: Game; phase: string; by: Map<string, boolean> } | null = null;
   /** Per-socket rate limit buckets. In memory only: hibernation resets them, which is harmless. */
   private buckets = new WeakMap<WebSocket, { tokens: number; at: number }>();
 
@@ -454,6 +478,7 @@ export class GameRoom extends DurableObject<Env> {
       this.sql.exec<{ name: string }>(`SELECT name FROM pragma_table_info('${table}')`).toArray().some((c) => c.name === column);
     if (!has("orders", "source")) this.sql.exec("ALTER TABLE orders ADD COLUMN source TEXT NOT NULL DEFAULT 'human'");
     if (!has("votes", "include_json")) this.sql.exec("ALTER TABLE votes ADD COLUMN include_json TEXT");
+    if (!has("phases", "summary_json")) this.sql.exec("ALTER TABLE phases ADD COLUMN summary_json TEXT");
     // AI seats no longer hold bearer tokens: the Durable Object binding is the credential.
     this.sql.exec("DROP TABLE IF EXISTS agent_tokens");
     this.sql.exec("UPDATE seats SET token_hash = NULL WHERE kind = 'ai'");
@@ -534,6 +559,51 @@ export class GameRoom extends DurableObject<Env> {
     }
     const turns = this.turns.splice(0);
     if (turns.length > 0) this.ctx.waitUntil(this.dispatchTurns(turns));
+    if (this.listingDirty) {
+      this.listingDirty = false;
+      this.ctx.waitUntil(this.pushListing());
+    }
+  }
+
+  // ---------- the public listing (public games only) ----------
+
+  /** Note that what the index says about this game has changed. Unlisted games never leave their room. */
+  private touchListing(): void {
+    if (this.meta?.settings.visibility === "public") this.listingDirty = true;
+  }
+
+  private listing(): GameListing {
+    const meta = this.meta!;
+    const seats = this.seats();
+    return {
+      gameId: meta.id,
+      status: meta.status as GameListing["status"],
+      settings: meta.settings,
+      cluster: ratingCluster(meta.settings),
+      hostName: seats.find((s) => s.power === meta.creator)?.name ?? null,
+      humans: seats.filter((s) => s.kind === "human" || s.kind === "civil_disorder").length,
+      openSeats: seats.filter((s) => s.kind === "open").length,
+      phase: this.game!.phase(),
+      deadlineAt: meta.deadlineAt,
+      createdAt: meta.createdAt,
+      updatedAt: Date.now(),
+    };
+  }
+
+  /**
+   * Refresh or remove this game's row in the index. Best effort: the listing is a convenience, a
+   * failure is logged and the next change tries again, and the index ignores rows that go stale.
+   */
+  private async pushListing(): Promise<void> {
+    const index = gameIndex(this.env);
+    const meta = this.meta;
+    if (!index || !meta) return;
+    try {
+      if (meta.status === "lobby" || meta.status === "active" || meta.status === "paused") await index.upsertListing(this.listing());
+      else await index.removeListing(meta.id);
+    } catch (error) {
+      this.log("listing_failed", { error: String(error) }, "error");
+    }
   }
 
   override async alarm(): Promise<void> {
@@ -583,13 +653,16 @@ export class GameRoom extends DurableObject<Env> {
       }
       if (request.method === "GET" && path === "/ledger") {
         if (!this.meta) return bad("no such game", 404);
-        return json({ gameId: this.meta.id, ledger: this.ledger() });
+        const viewer = this.authorise(bearer(request));
+        return json({ gameId: this.meta.id, ledger: this.ledger(), entries: this.ledgerEntries(viewer) });
       }
       if (request.method === "GET" && path === "/replay") {
         if (!this.game || !this.meta) return bad("no such game", 404);
-        return new Response(this.game.toSaved(this.meta.id), {
-          headers: { "content-type": "application/json; charset=utf-8" },
-        });
+        return json(this.replay(this.authorise(bearer(request))));
+      }
+      if (request.method === "GET" && path === "/press") {
+        if (!this.meta) return bad("no such game", 404);
+        return this.pressHistoryPage(request);
       }
       if (path === "/ws") return this.openSocket(request);
       return bad("not found", 404);
@@ -635,7 +708,8 @@ export class GameRoom extends DurableObject<Env> {
       this.sql.exec("UPDATE seats SET kind = 'human', name = ?, token_hash = ? WHERE power = ?", body.name, hashToken(token), creator);
       this.kv.put("saved", this.game.toSaved(body.id));
     });
-    this.log("game_created", { pacing: settings.pacing, press: settings.press, aiBrain: settings.aiBrain });
+    this.touchListing();
+    this.log("game_created", { pacing: settings.pacing, press: settings.press, aiBrain: settings.aiBrain, visibility: settings.visibility });
     return json({ gameId: body.id, token, power: creator });
   }
 
@@ -661,6 +735,7 @@ export class GameRoom extends DurableObject<Env> {
         this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
         if (this.seats().every((s) => s.kind !== "open")) this.begin();
       });
+      this.touchListing();
       this.log("seat_joined", { power: chosen.power });
       return json({ gameId: meta.id, token, power: chosen.power });
     }
@@ -689,6 +764,7 @@ export class GameRoom extends DurableObject<Env> {
     });
     // The previous owner's token is dead, so their open sockets must go with it.
     this.closeSeatSockets(seat.power, 4001, "seat reassigned");
+    this.touchListing();
     this.log("seat_substituted", { power: seat.power });
     return json({ gameId: meta.id, token, power: seat.power });
   }
@@ -741,26 +817,55 @@ export class GameRoom extends DurableObject<Env> {
     const meta = this.meta!;
     meta.status = "active";
     this.broadcast({ t: "status", p: { status: "active", reason: null } }, "ALL");
+    // Table talk from the lobby stays readable, but its read markers and limits end with the lobby.
     this.startPhase();
     this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
     this.broadcastState();
     this.log("game_started", { humans: this.activeHumans().length });
   }
 
-  private summary() {
+  private summary(): GameSummary {
+    const meta = this.meta!;
     return {
-      id: this.meta?.id ?? null,
-      settings: this.meta?.settings ?? null,
-      status: this.meta?.status ?? "lobby",
-      phase: this.game?.phase() ?? null,
-      deadlineAt: this.meta?.deadlineAt ?? null,
+      id: meta.id,
+      settings: meta.settings,
+      status: meta.status,
+      phase: this.game!.phase(),
+      host: meta.creator,
+      deadlineAt: meta.deadlineAt,
+      serverTime: Date.now(),
+      createdAt: meta.createdAt,
       seats: this.seatViews(),
-      finished: this.meta?.finished ?? null,
-      pauseReason: this.meta?.pauseReason ?? null,
-      pausedUntil: this.meta?.pause?.until ?? null,
-      pausedRemainingMs: this.meta?.pause?.remainingMs ?? null,
-      ai: this.meta ? this.aiSummary() : null,
+      finished: meta.finished,
+      pauseReason: meta.pauseReason,
+      pausedUntil: meta.pause?.until ?? null,
+      pausedRemainingMs: meta.pause?.remainingMs ?? null,
+      history: this.history(),
+      ai: this.aiSummary(),
     };
+  }
+
+  /** Every resolved phase with the supply-centre count it left each power, oldest first. */
+  private history(): PhaseSummary[] {
+    const rows = this.sql
+      .exec<{ name: string; adjudicated_at: number; summary_json: string | null; results_json: string | null }>(
+        `SELECT name, adjudicated_at, summary_json, results_json FROM (
+           SELECT seq, name, adjudicated_at, summary_json, CASE WHEN summary_json IS NULL THEN results_json END AS results_json
+           FROM phases ORDER BY seq DESC LIMIT ?
+         ) ORDER BY seq`,
+        LIMITS.historyPhases,
+      )
+      .toArray();
+    return rows.map((row) => {
+      try {
+        if (row.summary_json) return JSON.parse(row.summary_json) as PhaseSummary;
+        // Phases resolved before summaries were stored: read the centres out of the full outcome.
+        const next = (JSON.parse(row.results_json ?? "{}") as { next?: { centers?: Record<string, string[]> } }).next;
+        return { phase: row.name, adjudicatedAt: row.adjudicated_at, centers: centreCounts(next?.centers ?? {}) };
+      } catch {
+        return { phase: row.name, adjudicatedAt: row.adjudicated_at, centers: centreCounts({}) };
+      }
+    });
   }
 
   /** Who is playing the AI seats and what it has cost so far. Public: there is nothing secret in a bill. */
@@ -794,6 +899,46 @@ export class GameRoom extends DurableObject<Env> {
     return ledger;
   }
 
+  /**
+   * Resolved pledges the viewer may read, oldest first, each with the nonce that opens it. Pledges
+   * made to everyone are public once resolved; a private pledge is shown to the two powers it
+   * concerns; when the game is over the whole ledger is open, so anyone can audit it.
+   */
+  private ledgerEntries(viewer: PowerName | null): LedgerEntry[] {
+    const over = this.meta!.status === "finished" || this.meta!.status === "abandoned";
+    return this.sql
+      .exec<{ id: string; pledger: string; audience: string; phase: string; sealed: number; commitment: string; nonce: string; orders_json: string; receipt: string }>(
+        "SELECT * FROM pledges WHERE receipt IS NOT NULL ORDER BY rowid",
+      )
+      .toArray()
+      .filter((row) => over || row.audience === "ALL" || (viewer !== null && (row.pledger === viewer || row.audience === viewer)))
+      .map((row) => ({
+        id: row.id,
+        pledger: row.pledger as PowerName,
+        audience: row.audience as PowerName | "ALL",
+        phase: row.phase,
+        sealed: row.sealed === 1,
+        commitment: row.commitment,
+        nonce: row.nonce,
+        orders: this.parseOrderList(row.orders_json),
+        receipt: row.receipt as LedgerEntry["receipt"],
+      }));
+  }
+
+  /** The MILA saved game, plus a `cabal` key MILA tools ignore: pledges, receipts and phase summaries. */
+  private replay(viewer: PowerName | null): Record<string, unknown> {
+    const meta = this.meta!;
+    const saved = JSON.parse(this.game!.toSaved(meta.id)) as Record<string, unknown>;
+    saved.cabal = {
+      protocol: PROTOCOL_VERSION,
+      status: meta.status,
+      finished: meta.finished,
+      pledges: this.ledgerEntries(viewer),
+      history: this.history(),
+    } satisfies ReplayExtension;
+    return saved;
+  }
+
   // ---------- seats and auth ----------
 
   private seats(): SeatRow[] {
@@ -819,16 +964,63 @@ export class GameRoom extends DurableObject<Env> {
     return this.seats().filter((s) => s.kind === "human" && s.eliminated === 0);
   }
 
-  private seatViews(): SeatView[] {
-    return this.seats().map((s) => ({
-      power: s.power,
-      kind: s.kind,
-      name: s.name,
-      ready: s.ready === 1,
-      eliminated: s.eliminated === 1,
-      missed: s.missed,
-      autopilot: this.autopilot(s),
-    }));
+  /** True when the seat has something to order in the current position. Cached per position. */
+  private actable(power: PowerName): boolean {
+    const game = this.game!;
+    const phase = game.phase();
+    if (this.actCache?.game !== game || this.actCache.phase !== phase) this.actCache = { game, phase, by: new Map() };
+    let can = this.actCache.by.get(power);
+    if (can === undefined) {
+      try {
+        can = canAct(game, power);
+      } catch {
+        can = false;
+      }
+      this.actCache.by.set(power, can);
+    }
+    return can;
+  }
+
+  /**
+   * What everybody may know about each seat: who holds it, who is playing it, whether they are
+   * connected and whether their orders are in. Never the orders themselves.
+   * @param gone a socket that is closing and must not count as presence.
+   */
+  private seatViews(gone?: WebSocket): SeatView[] {
+    const meta = this.meta;
+    const running = !!meta && !!this.game && (meta.status === "active" || meta.status === "paused");
+    const submitted = new Set(
+      running ? this.sql.exec<{ power: string }>("SELECT power FROM orders WHERE phase = ?", this.game!.phase()).toArray().map((r) => r.power) : [],
+    );
+    const present = new Set<string>();
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws === gone || ws.readyState !== WebSocket.OPEN) continue;
+      const power = (ws.deserializeAttachment() as Attachment | null)?.power;
+      if (power) present.add(power);
+    }
+    const aiBrain = meta ? this.aiSummary().brain : "bot";
+    return this.seats().map((s) => {
+      const autopilot = this.autopilot(s);
+      return {
+        power: s.power,
+        kind: s.kind,
+        name: s.name,
+        ready: s.ready === 1,
+        eliminated: s.eliminated === 1,
+        missed: s.missed,
+        autopilot,
+        brain: s.kind === "ai" ? aiBrain : autopilot ? "bot" : null,
+        present: s.kind === "ai" || present.has(s.power),
+        submitted: submitted.has(s.power),
+        canAct: running && s.eliminated === 0 && s.kind !== "open" && this.actable(s.power),
+        host: s.power === meta?.creator,
+      };
+    });
+  }
+
+  /** Tell the table who is connected. Presence is not part of the game, so it is not stored for `sync`. */
+  private announcePresence(gone?: WebSocket): void {
+    this.pending.push({ payload: JSON.stringify({ t: "seats", p: { seats: this.seatViews(gone) } } satisfies ServerMessage), audience: "ALL" });
   }
 
   private authorise(token: string): PowerName | null {
@@ -890,9 +1082,11 @@ export class GameRoom extends DurableObject<Env> {
       ws.close(4429, "too many sockets");
       return;
     }
+    const arrived = this.socketsOf(power).length === 0;
     ws.serializeAttachment({ power } satisfies Attachment);
     this.presenceChanged();
     this.send(ws, { t: "welcome", id, p: this.welcome(power) });
+    if (arrived) this.announcePresence();
   }
 
   private welcome(power: PowerName | null): Extract<ServerMessage, { t: "welcome" }>["p"] {
@@ -900,7 +1094,9 @@ export class GameRoom extends DurableObject<Env> {
     const game = this.game!;
     const phase = game.phase();
     const orders = power ? (this.storedOrders(phase, power)?.orders ?? []) : [];
+    const press = this.pressPage(power, { limit: LIMITS.welcomePress });
     return {
+      protocol: PROTOCOL_VERSION,
       gameId: meta.id,
       settings: meta.settings,
       status: meta.status,
@@ -908,14 +1104,21 @@ export class GameRoom extends DurableObject<Env> {
       pausedUntil: meta.pause?.until ?? null,
       pausedRemainingMs: meta.pause?.remainingMs ?? null,
       power,
+      host: meta.creator,
       phase,
       state: game.state() as StateView,
       seats: this.seatViews(),
       deadlineAt: meta.deadlineAt,
+      serverTime: Date.now(),
       seq: this.lastSeq(),
       orders,
-      press: this.pressFor(power),
-      votes: this.votesView(),
+      defaults: power ? this.defaultOrders(power) : [],
+      press: press.press,
+      pressMore: press.more,
+      unread: power ? this.unread(power) : {},
+      votes: this.votesView(power),
+      history: this.history(),
+      finished: meta.finished,
     };
   }
 
@@ -966,16 +1169,16 @@ export class GameRoom extends DurableObject<Env> {
       if (!this.allow(ws, LIMITS.syncCost - 1)) {
         return this.send(ws, { t: "error", id, p: { code: "rate_limited", message: "slow down" } });
       }
-      const events = this.eventsSince(msg.p.since, power);
-      for (const ev of events) ws.send(ev.payload_json);
-      const seq = events.at(-1)?.seq ?? msg.p.since;
-      return this.send(ws, { t: "synced", id, p: { seq, more: events.length === LIMITS.syncPage } });
+      return this.sync(ws, id, msg.p.since, power);
     }
     // Everything below changes the game, and only a seat may do that.
     if (!power) return this.send(ws, { t: "error", id, p: { code: "spectator", message: "spectators cannot act" } });
+    // Reading is not playing: a thread can be marked read whatever the game is doing.
+    if (msg.t === "press.read") return this.markRead(power, msg.p.with, msg.p.upTo);
     const status = this.meta.status;
     // A returning player may hand in orders while a live game is paused: that is what un-pauses it.
-    const allowed = status === "active" || (status === "paused" && msg.t === "orders.set");
+    // Before the game starts the seated players may talk at the table, and nothing else.
+    const allowed = status === "active" || (status === "paused" && msg.t === "orders.set") || (status === "lobby" && msg.t === "press.send");
     if (!allowed) {
       return this.send(ws, { t: "error", id, p: { code: "not_active", message: "the game is not active" } });
     }
@@ -1000,7 +1203,7 @@ export class GameRoom extends DurableObject<Env> {
           }
         }
         // The await above may have let the phase move on: every check below reads fresh state.
-        if (this.meta.status !== "active") {
+        if (this.meta.status !== "active" && this.meta.status !== "lobby") {
           return this.send(ws, { t: "error", id, p: { code: "not_active", message: "the game is not active" } });
         }
         const error = this.press(power, msg.p.to, msg.p.body, msg.p.pledge, { ws, id });
@@ -1030,7 +1233,10 @@ export class GameRoom extends DurableObject<Env> {
     if (!this.meta) return;
     // A spectator leaving is never an event in the game.
     const { power } = (ws.deserializeAttachment() as Attachment | null) ?? { power: null };
-    if (power) this.presenceChanged(ws);
+    if (power) {
+      this.presenceChanged(ws);
+      if (this.socketsOf(power, ws).length === 0) this.announcePresence(ws);
+    }
     this.settle();
   }
 
@@ -1056,8 +1262,9 @@ export class GameRoom extends DurableObject<Env> {
         meta.status = "paused";
         meta.pauseReason = "humans_absent";
         meta.deadlineAt = null;
+        this.touchListing();
         this.broadcast({ t: "status", p: { status: "paused", reason: "humans_absent", until: meta.pause.until } }, "ALL");
-        this.broadcast({ t: "deadline", p: { phase: this.game!.phase(), deadlineAt: null } }, "ALL");
+        this.broadcast({ t: "deadline", p: { serverTime: Date.now(), phase: this.game!.phase(), deadlineAt: null } }, "ALL");
       });
       this.log("game_paused", { remainingMs: meta.pause?.remainingMs, until: meta.pause?.until });
     } else if (meta.status === "paused" && present) {
@@ -1076,8 +1283,9 @@ export class GameRoom extends DurableObject<Env> {
     meta.pause = null;
     meta.status = "active";
     meta.pauseReason = null;
+    this.touchListing();
     this.broadcast({ t: "status", p: { status: "active", reason: null } }, "ALL");
-    this.broadcast({ t: "deadline", p: { phase: this.game!.phase(), deadlineAt: meta.deadlineAt } }, "ALL");
+    this.broadcast({ t: "deadline", p: { serverTime: Date.now(), phase: this.game!.phase(), deadlineAt: meta.deadlineAt } }, "ALL");
     this.log("game_resumed", { why, deadlineAt: meta.deadlineAt });
   }
 
@@ -1094,19 +1302,39 @@ export class GameRoom extends DurableObject<Env> {
   /**
    * Record a frame for `sync` and queue it for delivery. Delivery happens in `settle`, after the
    * change that produced the frame has committed, so a rolled back change is never announced.
+   *
+   * Every broadcast frame gets the next number in the room's sequence, and carries it as `seq` on
+   * its envelope: a client that remembers the highest `seq` it has applied can ask for exactly the
+   * frames after it. A frame that also reports its own number inside its payload is passed as a
+   * function of that number.
    */
-  private broadcast(message: ServerMessage, audience: PowerName | "ALL"): void {
-    const payload = JSON.stringify(message);
-    this.sql.exec("INSERT INTO events (audience, payload_json) VALUES (?, ?)", audience, payload);
-    this.pending.push({ payload, audience });
+  private broadcast(message: ServerMessage | ((seq: number) => ServerMessage), audience: PowerName | "ALL"): number {
+    const seq = this.lastSeq() + 1;
+    const payload = JSON.stringify(typeof message === "function" ? message(seq) : message);
+    this.sql.exec("INSERT INTO events (seq, audience, payload_json) VALUES (?, ?, ?)", seq, audience, payload);
+    this.pending.push({ payload: withSeq(payload, seq), audience });
+    return seq;
   }
 
+  /** The number of the last broadcast frame; 0 before the first. Numbers only ever grow. */
   private lastSeq(): number {
     return this.sql.exec<{ n: number | null }>("SELECT MAX(seq) AS n FROM events").one().n ?? 0;
   }
 
-  private eventsSince(since: number, power: PowerName | null): { seq: number; payload_json: string }[] {
-    return this.sql
+  /**
+   * Answer a `sync`: replay one page of the stored frames after `since` that this viewer may see,
+   * each with its `seq`, then `synced` with the cursor for the next request.
+   *
+   * `gap` tells a client its cursor is no use: the frames after it have been pruned, or the cursor
+   * is ahead of the room. Such a client asks for a fresh `welcome` instead.
+   */
+  private sync(ws: WebSocket, id: string | undefined, since: number, power: PowerName | null): void {
+    const last = this.lastSeq();
+    const oldest = this.sql.exec<{ n: number | null }>("SELECT MIN(seq) AS n FROM events").one().n ?? 1;
+    if (since > last || since < oldest - 1) {
+      return this.send(ws, { t: "synced", id, p: { seq: last, more: false, gap: true } });
+    }
+    const events = this.sql
       .exec<{ seq: number; payload_json: string }>(
         "SELECT seq, payload_json FROM events WHERE seq > ? AND (audience = 'ALL' OR audience = ?) ORDER BY seq LIMIT ?",
         since,
@@ -1114,21 +1342,50 @@ export class GameRoom extends DurableObject<Env> {
         LIMITS.syncPage,
       )
       .toArray();
+    for (const ev of events) {
+      try {
+        ws.send(withSeq(this.asSeenBy(ev.payload_json, power), ev.seq));
+      } catch {
+        return; // socket already gone
+      }
+    }
+    const more = events.length === LIMITS.syncPage;
+    // With nothing left to replay the cursor is the room's, so frames the viewer may not see are skipped too.
+    this.send(ws, { t: "synced", id, p: { seq: more ? events.at(-1)!.seq : last, more, gap: false } });
+  }
+
+  /**
+   * A stored press frame holds the pledge as a stranger sees it. On replay the viewer gets the
+   * pledge as it stands for them now: their own sealed orders, or the receipt that has since arrived.
+   */
+  private asSeenBy(payload: string, viewer: PowerName | null): string {
+    if (!payload.startsWith('{"t":"press"') || payload.includes('"pledge":null')) return payload;
+    try {
+      const message = JSON.parse(payload) as Extract<ServerMessage, { t: "press" }>;
+      if (!message.p.pledge) return payload;
+      message.p.pledge = this.pledgeView(message.p.pledge.id, viewer);
+      return JSON.stringify(message);
+    } catch {
+      return payload;
+    }
   }
 
   private broadcastState(): void {
     if (!this.game || !this.meta) return;
+    const game = this.game;
+    const meta = this.meta;
     this.broadcast(
-      {
+      (seq) => ({
         t: "state",
         p: {
-          phase: this.game.phase(),
-          state: this.game.state() as StateView,
-          deadlineAt: this.meta.deadlineAt,
-          seq: this.lastSeq(),
-          status: this.meta.status,
+          phase: game.phase(),
+          state: game.state() as StateView,
+          deadlineAt: meta.deadlineAt,
+          serverTime: Date.now(),
+          seq,
+          status: meta.status,
         },
-      },
+      }),
       "ALL",
     );
   }
@@ -1174,45 +1431,45 @@ export class GameRoom extends DurableObject<Env> {
     );
   }
 
-  /** Replace a seat's orders for the current phase. Returns what was accepted, or an error. */
+  /**
+   * Replace a seat's orders for the current phase. Every order is judged against the board, so
+   * what is put on file is what the engine will adjudicate and the verdicts say why anything was
+   * refused. Returns the verdicts, or an error when the seat or the phase is wrong.
+   */
   private setOrders(
     power: PowerName,
     phase: string,
     orders: string[],
     source: "human" | "claude",
-  ): { accepted: string[]; rejected: { text: string; reason: string }[] } | { code: string; message: string } {
+  ): { accepted: string[]; rejected: { text: string; reason: string }[]; verdicts: OrderVerdict[] } | { code: string; message: string } {
     const game = this.game!;
     const seat = this.seat(power);
     if (!seat || seat.eliminated === 1) return { code: "seat_inactive", message: "this seat cannot submit orders" };
     if (phase !== game.phase()) return { code: "stale_phase", message: `current phase is ${game.phase()}` };
-    const accepted: string[] = [];
-    const rejected: { text: string; reason: string }[] = [];
     const kind = this.phaseKind();
-    for (const text of orders) {
-      try {
-        accepted.push(this.canonicalOwnOrder(text, kind, power));
-      } catch (e) {
-        rejected.push({ text, reason: e instanceof Error ? e.message : String(e) });
-      }
-    }
+    const { accepted, verdicts } = judgeOrders(game, power, kind, orders, (text) => this.canonicalOwnOrder(text, kind, power));
+    const rejected = verdicts.filter((v) => !v.ok).map((v) => ({ text: v.text, reason: v.reason }));
     // A Claude turn with nothing usable leaves the bot's orders standing.
-    if (source === "claude" && accepted.length === 0) return { accepted, rejected };
+    if (source === "claude" && accepted.length === 0) return { accepted, rejected, verdicts };
     let returned = false;
     this.atomic(() => {
+      const first = this.storedOrders(phase, power) === undefined;
       this.writeOrders(phase, power, accepted, source);
       // The player is back: orders are what takes a seat out of civil disorder.
       if (source === "human" && seat.kind === "civil_disorder" && accepted.length > 0) {
         this.sql.exec("UPDATE seats SET kind = 'human', missed = 0, ready = 0 WHERE power = ?", power);
         this.sql.exec("DELETE FROM substitute_invites WHERE power = ?", power);
-        this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
         returned = true;
       }
+      // The table sees that orders are in (never what they are) the first time a seat files any.
+      if (returned || first) this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
     });
     if (returned) {
       this.log("seat_recovered", { power });
+      this.touchListing();
       this.presenceChanged();
     }
-    return { accepted, rejected };
+    return { accepted, rejected, verdicts };
   }
 
   /** Standing movement orders used when a power submits nothing. They are canonicalised under the
@@ -1232,6 +1489,7 @@ export class GameRoom extends DurableObject<Env> {
       power,
       JSON.stringify(accepted),
     );
+    this.send(ws, { t: "orders.default.ack", id, p: { accepted, rejected } });
     if (rejected.length > 0) {
       const detail = rejected.map((r) => `${r.text}: ${r.reason}`).join("; ");
       this.send(ws, { t: "error", id, p: { code: "bad_order", message: `default orders rejected: ${detail}` } });
@@ -1310,7 +1568,7 @@ export class GameRoom extends DurableObject<Env> {
       if (extended) {
         this.sql.exec("INSERT INTO phase_extensions (phase, used) VALUES (?, 1) ON CONFLICT(phase) DO UPDATE SET used = 1", phase);
         meta.deadlineAt = Math.max(Date.now(), meta.deadlineAt ?? Date.now()) + meta.settings.extendSeconds * 1000;
-        this.broadcast({ t: "deadline", p: { phase, deadlineAt: meta.deadlineAt } }, "ALL");
+        this.broadcast({ t: "deadline", p: { serverTime: Date.now(), phase, deadlineAt: meta.deadlineAt } }, "ALL");
       }
       this.broadcast({ t: "extend", p: { phase, requestedBy, needed, granted: extended, deadlineAt: meta.deadlineAt } }, "ALL");
     });
@@ -1320,35 +1578,110 @@ export class GameRoom extends DurableObject<Env> {
 
   // ---------- press and pledges ----------
 
-  private pressFor(power: PowerName | null, phase?: string): PressView[] {
-    // The most recent messages this viewer may read, oldest first.
+  /**
+   * One page of the press a viewer may read, oldest first: public messages, and for a seat the
+   * private ones it sent or received. `before` pages backwards by `sentAt`; `thread` narrows to the
+   * public thread (`ALL`) or to the private thread with one power.
+   */
+  private pressPage(
+    power: PowerName | null,
+    options: { limit: number; phase?: string; before?: number; thread?: PowerName | "ALL" },
+  ): { press: PressView[]; more: boolean } {
+    const me = power ?? "";
+    const phase = options.phase ?? null;
+    const before = options.before ?? null;
+    const thread = options.thread ?? null;
     const rows = this.sql
       .exec<{ id: string; phase: string; sender: string; recipient: string; body: string; sent_at: number; pledge_id: string | null }>(
-        `SELECT * FROM (
-           SELECT rowid AS rid, * FROM press WHERE (recipient = 'ALL' OR sender = ? OR recipient = ?) AND (? IS NULL OR phase = ?)
-           ORDER BY sent_at DESC, rowid DESC LIMIT ?
-         ) ORDER BY sent_at, rid`,
-        power ?? "",
-        power ?? "",
-        phase ?? null,
-        phase ?? null,
-        LIMITS.welcomePress,
+        `SELECT rowid AS rid, * FROM press
+         WHERE (recipient = 'ALL' OR sender = ? OR recipient = ?)
+           AND (? IS NULL OR phase = ?)
+           AND (? IS NULL OR sent_at < ?)
+           AND (? IS NULL OR (? = 'ALL' AND recipient = 'ALL') OR (? <> 'ALL' AND recipient <> 'ALL' AND (sender = ? OR recipient = ?)))
+         ORDER BY sent_at DESC, rowid DESC LIMIT ?`,
+        me,
+        me,
+        phase,
+        phase,
+        before,
+        before,
+        thread,
+        thread,
+        thread,
+        thread,
+        thread,
+        options.limit + 1,
       )
       .toArray();
-    return rows.map((r) => ({
-      id: r.id,
-      phase: r.phase,
-      from: r.sender as PowerName,
-      to: r.recipient as PowerName | "ALL",
-      body: r.body,
-      sentAt: r.sent_at,
-      pledge: r.pledge_id ? this.pledgeView(r.pledge_id, power) : null,
-    }));
+    const more = rows.length > options.limit;
+    const press = rows
+      .slice(0, options.limit)
+      .reverse()
+      .map((r) => ({
+        id: r.id,
+        phase: r.phase,
+        from: r.sender as PowerName,
+        to: r.recipient as PowerName | "ALL",
+        body: r.body,
+        sentAt: r.sent_at,
+        pledge: r.pledge_id ? this.pledgeView(r.pledge_id, power) : null,
+      }));
+    return { press, more };
+  }
+
+  private pressFor(power: PowerName | null, phase?: string): PressView[] {
+    return this.pressPage(power, { limit: LIMITS.welcomePress, ...(phase ? { phase } : {}) }).press;
+  }
+
+  /** `GET /press?before=&with=&limit=`: history beyond what a welcome carries. A seat token widens it to private threads. */
+  private pressHistoryPage(request: Request): Response {
+    const params = new URL(request.url).searchParams;
+    const viewer = this.authorise(bearer(request));
+    const thread = params.get("with");
+    if (thread !== null && thread !== "ALL" && !(POWERS as readonly string[]).includes(thread)) return bad("with must be a power or ALL");
+    if (thread !== null && thread !== "ALL" && !viewer) return bad("a private thread needs the seat token of one of its two powers", 401);
+    const before = Number(params.get("before") ?? "");
+    const limit = Number(params.get("limit") ?? LIMITS.pressPage);
+    const page = this.pressPage(viewer, {
+      limit: Number.isFinite(limit) ? Math.max(1, Math.min(LIMITS.pressPageMax, Math.floor(limit))) : LIMITS.pressPage,
+      ...(Number.isFinite(before) && before > 0 ? { before } : {}),
+      ...(thread !== null ? { thread: thread as PowerName | "ALL" } : {}),
+    });
+    return json({ gameId: this.meta!.id, ...page });
+  }
+
+  /** Unread messages per thread for a seat: everything others sent it after the thread's read marker. */
+  private unread(power: PowerName): Record<string, number> {
+    const rows = this.sql
+      .exec<{ thread: string; n: number }>(
+        `SELECT t.thread AS thread, COUNT(*) AS n FROM (
+           SELECT CASE WHEN recipient = 'ALL' THEN 'ALL' ELSE sender END AS thread, sent_at FROM press
+           WHERE sender <> ? AND (recipient = 'ALL' OR recipient = ?)
+         ) t LEFT JOIN press_reads r ON r.power = ? AND r.thread = t.thread
+         WHERE t.sent_at > COALESCE(r.read_at, 0) GROUP BY t.thread`,
+        power,
+        power,
+        power,
+      )
+      .toArray();
+    return Object.fromEntries(rows.map((r) => [r.thread, r.n]));
+  }
+
+  /** Move a thread's read marker forward (never back) and tell every socket of the seat the new counts. */
+  private markRead(power: PowerName, thread: PowerName | "ALL", upTo: number): void {
+    this.sql.exec(
+      "INSERT INTO press_reads (power, thread, read_at) VALUES (?, ?, ?) ON CONFLICT(power, thread) DO UPDATE SET read_at = MAX(read_at, excluded.read_at)",
+      power,
+      thread,
+      Math.min(upTo, Date.now() + 60_000),
+    );
+    // Not stored for `sync`: read markers are the viewer's own state and a welcome carries them.
+    this.pending.push({ payload: JSON.stringify({ t: "press.unread", p: { unread: this.unread(power) } } satisfies ServerMessage), audience: power });
   }
 
   private pledgeView(id: string, viewer: PowerName | null): PledgeView | null {
     const row = this.sql
-      .exec<{ id: string; pledger: string; audience: string; phase: string; sealed: number; commitment: string; orders_json: string; receipt: string | null }>(
+      .exec<{ id: string; pledger: string; audience: string; phase: string; sealed: number; commitment: string; nonce: string; orders_json: string; receipt: string | null }>(
         "SELECT * FROM pledges WHERE id = ?",
         id,
       )
@@ -1364,6 +1697,8 @@ export class GameRoom extends DurableObject<Env> {
       commitment: row.commitment,
       orders: revealed ? (JSON.parse(row.orders_json) as string[]) : null,
       receipt: (row.receipt as PledgeView["receipt"]) ?? null,
+      // The nonce opens the commitment, so it is the pledger's secret until the receipt is issued.
+      nonce: row.receipt !== null || viewer === row.pledger ? row.nonce : null,
     };
   }
 
@@ -1403,17 +1738,24 @@ export class GameRoom extends DurableObject<Env> {
     from: PowerName,
     to: PowerName | "ALL",
     body: string,
-    pledge: { orders: string[]; sealed: boolean; nonce?: string | undefined } | undefined,
+    pledge: { orders: string[]; sealed: boolean; nonce?: string | undefined; commitment?: string | undefined } | undefined,
     origin?: { ws: WebSocket; id: string | undefined },
   ): { code: string; message: string } | null {
     const settings = this.meta!.settings;
     const kind = this.phaseKind();
-    if (settings.rulebookPress && kind !== "M") {
-      return { code: "press_closed", message: "rulebook press: no press during retreat and adjustment phases" };
+    // Before the game starts there is one thread, the table, whatever press the game itself allows.
+    const lobby = this.meta!.status === "lobby";
+    if (lobby) {
+      if (to !== "ALL") return { code: "lobby_public_only", message: "before the game starts, press goes to the whole table" };
+      if (pledge) return { code: "bad_pledge", message: "there are no orders to pledge before the game starts" };
+    } else {
+      if (settings.rulebookPress && kind !== "M") {
+        return { code: "press_closed", message: "rulebook press: no press during retreat and adjustment phases" };
+      }
+      if (settings.press === "gunboat") return { code: "no_press", message: "gunboat: no press" };
+      if (settings.press === "public" && to !== "ALL") return { code: "public_only", message: "public press only" };
     }
-    if (settings.press === "gunboat") return { code: "no_press", message: "gunboat: no press" };
-    if (settings.press === "public" && to !== "ALL") return { code: "public_only", message: "public press only" };
-    const phase = this.game!.phase();
+    const phase = lobby ? "LOBBY" : this.game!.phase();
     const sent = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM press WHERE sender = ? AND phase = ?", from, phase).one().n;
     if (sent >= LIMITS.pressPerPhase) {
       return { code: "press_limit", message: `at most ${LIMITS.pressPerPhase} messages per phase` };
@@ -1427,6 +1769,7 @@ export class GameRoom extends DurableObject<Env> {
       }
     }
     let canonical: string[] | null = null;
+    let seal: { nonce: string; commitment: string } | null = null;
     if (pledge) {
       try {
         canonical = pledge.orders.map((o) => this.canonicalOwnOrder(o, kind, from));
@@ -1440,11 +1783,16 @@ export class GameRoom extends DurableObject<Env> {
       if (stranger !== undefined) {
         return { code: "bad_pledge", message: `${stranger} is not an order one of your units can be given this phase` };
       }
+      const nonce = pledge.nonce ?? randomNonce();
+      seal = { nonce, commitment: pledgeCommit(canonical, nonce) };
+      // A client that sealed the pledge itself must get back exactly the seal it made.
+      if (pledge.commitment !== undefined && pledge.commitment !== seal.commitment) {
+        return { code: "bad_pledge", message: "the commitment does not match these orders and nonce; commit to the canonical order text" };
+      }
     }
     this.atomic(() => {
       let pledgeId: string | null = null;
-      if (pledge && canonical) {
-        const nonce = pledge.nonce ?? randomNonce();
+      if (pledge && canonical && seal) {
         pledgeId = randomId(8);
         this.sql.exec(
           "INSERT INTO pledges (id, pledger, audience, phase, sealed, commitment, nonce, orders_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1453,13 +1801,15 @@ export class GameRoom extends DurableObject<Env> {
           to,
           phase,
           pledge.sealed ? 1 : 0,
-          pledgeCommit(canonical, nonce),
-          nonce,
+          seal.commitment,
+          seal.nonce,
           JSON.stringify(canonical),
         );
       }
       const pressId = randomId(8);
-      const sentAt = Date.now();
+      // Strictly increasing, so `sentAt` orders a thread and pages it without ties.
+      const latest = this.sql.exec<{ n: number | null }>("SELECT MAX(sent_at) AS n FROM press").one().n ?? 0;
+      const sentAt = Math.max(Date.now(), latest + 1);
       this.sql.exec(
         "INSERT INTO press (id, phase, sender, recipient, body, sent_at, pledge_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
         pressId,
@@ -1481,10 +1831,11 @@ export class GameRoom extends DurableObject<Env> {
       });
       if (to === "ALL") {
         // A sealed pledge reads differently for its pledger, so each socket gets its own view.
-        this.sql.exec("INSERT INTO events (audience, payload_json) VALUES ('ALL', ?)", JSON.stringify({ t: "press", p: view(null) }));
+        const seq = this.lastSeq() + 1;
+        this.sql.exec("INSERT INTO events (seq, audience, payload_json) VALUES (?, 'ALL', ?)", seq, JSON.stringify({ t: "press", p: view(null) }));
         for (const ws of this.ctx.getWebSockets()) {
           const viewer = (ws.deserializeAttachment() as Attachment | null)?.power ?? null;
-          const message: ServerMessage = { t: "press", id: ws === origin?.ws ? origin.id : undefined, p: view(viewer) };
+          const message: ServerMessage = { t: "press", id: ws === origin?.ws ? origin.id : undefined, seq, p: view(viewer) };
           this.pending.push({ payload: JSON.stringify(message), audience: "ALL", only: ws });
         }
       } else {
@@ -1502,15 +1853,37 @@ export class GameRoom extends DurableObject<Env> {
     return this.activeHumans().map((s) => s.power);
   }
 
-  private votesView(): VotesView {
-    const rows = this.sql
+  private ballots(): VotesView["draw"] {
+    return this.sql
       .exec<{ power: PowerName; value: number; include_json: string | null }>("SELECT power, value, include_json FROM votes WHERE kind = 'draw' ORDER BY power")
-      .toArray();
+      .toArray()
+      .map((r) => ({ power: r.power, value: r.value === 1, include: r.include_json ? (JSON.parse(r.include_json) as PowerName[]) : null }));
+  }
+
+  /**
+   * The draw vote as one viewer may see it. The tally is always public. Who voted is public when
+   * the game says so (`publicVotes`); otherwise a viewer sees only their own ballot.
+   */
+  private votesView(viewer: PowerName | null, ballots = this.ballots()): VotesView {
+    const required = this.requiredVoters();
+    const hidden = !this.meta!.settings.publicVotes;
+    const counted = ballots.filter((b) => required.includes(b.power));
     return {
       phase: this.game!.phase(),
-      draw: rows.map((r) => ({ power: r.power, value: r.value === 1, include: r.include_json ? (JSON.parse(r.include_json) as PowerName[]) : null })),
-      required: this.requiredVoters(),
+      draw: hidden ? ballots.filter((b) => b.power === viewer) : ballots,
+      required,
+      hidden,
+      cast: counted.length,
+      yes: counted.filter((b) => b.value).length,
     };
+  }
+
+  /** Tell the table the vote has changed. When ballots are hidden, each voter is also sent their own. */
+  private broadcastVotes(): void {
+    const ballots = this.ballots();
+    this.broadcast({ t: "votes", p: this.votesView(null, ballots) }, "ALL");
+    if (this.meta!.settings.publicVotes) return;
+    for (const ballot of ballots) this.broadcast({ t: "votes", p: this.votesView(ballot.power, ballots) }, ballot.power);
   }
 
   /**
@@ -1541,10 +1914,11 @@ export class GameRoom extends DurableObject<Env> {
         value ? 1 : 0,
         proposal ? JSON.stringify(proposal) : null,
       );
-      const votes = this.votesView();
-      this.broadcast({ t: "votes", p: votes }, "ALL");
-      if (votes.required.length === 0) return;
-      const ballots = votes.required.map((p) => votes.draw.find((v) => v.power === p));
+      this.broadcastVotes();
+      const cast = this.ballots();
+      const required = this.requiredVoters();
+      if (required.length === 0) return;
+      const ballots = required.map((p) => cast.find((v) => v.power === p));
       if (!ballots.every((b) => b?.value === true)) return;
       const proposals = new Set(ballots.map((b) => JSON.stringify(b!.include)));
       if (proposals.size !== 1) return; // everybody wants a draw, but not the same one
@@ -1704,7 +2078,8 @@ export class GameRoom extends DurableObject<Env> {
         this.dispatch(phase, asked, "order");
       }
     }
-    this.broadcast({ t: "deadline", p: { phase, deadlineAt: meta.deadlineAt } }, "ALL");
+    this.broadcast({ t: "deadline", p: { serverTime: Date.now(), phase, deadlineAt: meta.deadlineAt } }, "ALL");
+    this.touchListing();
   }
 
   /** Put Claude turns on the queue. If the queue is down the orders on file simply stand. */
@@ -1833,7 +2208,7 @@ export class GameRoom extends DurableObject<Env> {
         this.atomic(() => {
           meta.gracePhase = phase;
           meta.deadlineAt = Date.now() + meta.settings.graceSeconds * 1000;
-          this.broadcast({ t: "deadline", p: { phase, deadlineAt: meta.deadlineAt, grace: true } }, "ALL");
+          this.broadcast({ t: "deadline", p: { serverTime: Date.now(), phase, deadlineAt: meta.deadlineAt, grace: true } }, "ALL");
         });
         this.log("grace_started", { late: late.map((s) => s.power), deadlineAt: meta.deadlineAt });
         return;
@@ -1980,12 +2355,19 @@ export class GameRoom extends DurableObject<Env> {
       }
       meta.idlePhases = moved.size > 0 ? 0 : meta.idlePhases + 1;
     }
-    this.sql.exec("INSERT INTO phases (name, results_json, adjudicated_at) VALUES (?, ?, ?)", phase, JSON.stringify(outcome), Date.now());
+    const summary: PhaseSummary = { phase, adjudicatedAt: Date.now(), centers: centreCounts(outcome.next.centers) };
+    this.sql.exec(
+      "INSERT INTO phases (name, results_json, adjudicated_at, summary_json) VALUES (?, ?, ?, ?)",
+      phase,
+      JSON.stringify(outcome),
+      summary.adjudicatedAt,
+      JSON.stringify(summary),
+    );
 
     // Receipts for every pledge made in this phase.
     const pledges = this.sql
-      .exec<{ id: string; pledger: string; audience: string; orders_json: string }>(
-        "SELECT id, pledger, audience, orders_json FROM pledges WHERE phase = ? AND receipt IS NULL",
+      .exec<{ id: string; pledger: string; audience: string; orders_json: string; nonce: string }>(
+        "SELECT id, pledger, audience, orders_json, nonce FROM pledges WHERE phase = ? AND receipt IS NULL",
         phase,
       )
       .toArray();
@@ -1993,7 +2375,8 @@ export class GameRoom extends DurableObject<Env> {
       const pledged = JSON.parse(p.orders_json) as string[];
       const receipt = pledgeReceipt(pledged, heldEverything ? [] : (orders[p.pledger] ?? []));
       this.sql.exec("UPDATE pledges SET receipt = ? WHERE id = ?", receipt, p.id);
-      const frame: ServerMessage = { t: "pledge.receipt", p: { pledgeId: p.id, receipt, revealed: pledged } };
+      // The receipt reveals the nonce, so the audience can open the commitment and check it themselves.
+      const frame: ServerMessage = { t: "pledge.receipt", p: { pledgeId: p.id, receipt, revealed: pledged, nonce: p.nonce } };
       if (p.audience === "ALL") this.broadcast(frame, "ALL");
       else {
         this.broadcast(frame, p.audience as PowerName);
@@ -2014,7 +2397,7 @@ export class GameRoom extends DurableObject<Env> {
     this.sql.exec("DELETE FROM events WHERE seq <= (SELECT MAX(seq) FROM events) - ?", LIMITS.eventsKept);
 
     this.broadcast(
-      {
+      (seq) => ({
         t: "results",
         p: {
           phase,
@@ -2022,9 +2405,10 @@ export class GameRoom extends DurableObject<Env> {
           dislodged: outcome.dislodged,
           standoffs: outcome.standoffs,
           civil_disorder: outcome.civil_disorder,
-          seq: this.lastSeq(),
+          summary,
+          seq,
         },
-      },
+      }),
       "ALL",
     );
     this.log("phase_adjudicated", { adjudicated: phase, heldEverything, moved: [...moved], idlePhases: meta.idlePhases });
@@ -2044,7 +2428,7 @@ export class GameRoom extends DurableObject<Env> {
     } else {
       this.startPhase();
       this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
-      if (hadVotes) this.broadcast({ t: "votes", p: this.votesView() }, "ALL");
+      if (hadVotes) this.broadcastVotes();
       this.broadcastState();
       this.kv.put("saved", this.game!.toSaved(meta.id));
     }
@@ -2067,7 +2451,7 @@ export class GameRoom extends DurableObject<Env> {
       result === "solo"
         ? Object.fromEntries(POWERS.map((p) => [p, share.has(p) ? 1 : 0]))
         : result === "draw"
-          ? sumOfSquares(Object.fromEntries(POWERS.map((p) => [p, share.has(p) ? centers[p]! : 0])))
+          ? drawScores(meta.settings.scoring, Object.fromEntries(POWERS.map((p) => [p, share.has(p) ? centers[p]! : 0])))
           : {};
     const now = Date.now();
     meta.status = result === "abandoned" ? "abandoned" : "finished";
@@ -2104,6 +2488,7 @@ export class GameRoom extends DurableObject<Env> {
       this.kv.put("registry-outbox", { record, attempts: 0, nextAt: now } satisfies Outbox);
       this.outboxAt = now;
     }
+    this.touchListing();
     this.broadcast({ t: "status", p: { status: meta.status, reason } }, "ALL");
     this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
     this.broadcast({ t: "finished", p: { result, winners, scores, reason } }, "ALL");
@@ -2119,14 +2504,14 @@ export class GameRoom extends DurableObject<Env> {
   private async flushOutbox(): Promise<void> {
     if (this.flushingOutbox) return;
     const entry = this.kv.get<Outbox>("registry-outbox");
-    if (!entry || entry.gaveUp || !this.env.REGISTRY) {
+    const index = gameIndex(this.env);
+    if (!entry || entry.gaveUp || !index) {
       this.outboxAt = null;
       return;
     }
     this.flushingOutbox = true;
     try {
-      const registry = this.env.REGISTRY.get(this.env.REGISTRY.idFromName(REGISTRY_NAME));
-      await registry.recordGame(entry.record);
+      await index.recordGame(entry.record);
       this.kv.delete("registry-outbox");
       this.outboxAt = null;
       this.log("registry_handoff", { result: entry.record.result, attempts: entry.attempts + 1 });
@@ -2404,4 +2789,14 @@ function cleanUsage(usage: Usage): Usage {
     cacheReadTokens: n(usage.cacheReadTokens),
     cacheWriteTokens: n(usage.cacheWriteTokens),
   };
+}
+
+/** A stored frame with its sequence number on the envelope. Frames are JSON objects, so this is a splice. */
+function withSeq(payload: string, seq: number): string {
+  return `${payload.slice(0, -1)},"seq":${seq}}`;
+}
+
+/** Supply centres per power, every power present. */
+function centreCounts(centers: Record<string, string[]>): Record<string, number> {
+  return Object.fromEntries(POWERS.map((p) => [p, centers[p]?.length ?? 0]));
 }

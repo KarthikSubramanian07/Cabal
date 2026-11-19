@@ -5,6 +5,7 @@ import {
   GameSettings,
   PACING_PRESETS,
   ServerMessage,
+  drawScores,
   drawSize,
   parseClientMessage,
   ratingCluster,
@@ -23,6 +24,7 @@ describe("settings", () => {
     expect(s.whisperBudget).toBeNull();
     expect(s.rulebookPress).toBe(false);
     expect(s.aiBrain).toBe("bot");
+    expect(s).toMatchObject({ scoring: "sos", visibility: "unlisted", publicVotes: true });
     expect(ratingCluster(s)).toBe("standard:full:async");
   });
 
@@ -108,7 +110,7 @@ describe("server frames", () => {
     expect(
       ServerMessage.safeParse({
         t: "votes",
-        p: { phase: "S1901M", draw: [{ power: "FRANCE", value: true, include: null }], required: ["FRANCE", "ITALY"] },
+        p: { phase: "S1901M", draw: [{ power: "FRANCE", value: true, include: null }], required: ["FRANCE", "ITALY"], hidden: false, cast: 1, yes: 1 },
       }).success,
     ).toBe(true);
     expect(
@@ -159,5 +161,39 @@ describe("scoring", () => {
     const s = drawSize({ FRANCE: 12, GERMANY: 12, ITALY: 6, TURKEY: 0 });
     expect(s["FRANCE"]).toBeCloseTo(1 / 3);
     expect(s["TURKEY"]).toBe(0);
+  });
+});
+
+describe("scoring rule", () => {
+  it("shares a draw by the game's scoring: squares, or equal parts among the sharers", () => {
+    const centers = { FRANCE: 12, GERMANY: 6, ITALY: 0 };
+    expect(drawScores("sos", centers)).toEqual(sumOfSquares(centers));
+    expect(drawScores("dss", centers)).toEqual({ FRANCE: 0.5, GERMANY: 0.5, ITALY: 0 });
+  });
+});
+
+describe("envelope", () => {
+  it("carries an optional seq on every server frame and refuses a seq below one", () => {
+    expect(ServerMessage.safeParse({ t: "status", seq: 12, p: { status: "active", reason: null } }).success).toBe(true);
+    expect(ServerMessage.safeParse({ t: "status", p: { status: "active", reason: null } }).success).toBe(true);
+    expect(ServerMessage.safeParse({ t: "status", seq: 0, p: { status: "active", reason: null } }).success).toBe(false);
+    expect(ServerMessage.safeParse({ t: "synced", p: { seq: 0, more: false, gap: true } }).success).toBe(true);
+  });
+
+  it("validates table talk, a read marker, a verdict and a receipt that opens its seal", () => {
+    expect(
+      ServerMessage.safeParse({ t: "press", seq: 3, p: { id: "a", phase: "LOBBY", from: "FRANCE", to: "ALL", body: "hello", sentAt: 1, pledge: null } }).success,
+    ).toBe(true);
+    expect(parseClientMessage({ t: "press.read", p: { with: "ALL", upTo: 10 } })?.t).toBe("press.read");
+    expect(parseClientMessage({ t: "press.read", p: { with: "NOBODY", upTo: 10 } })).toBeNull();
+    expect(
+      ServerMessage.safeParse({
+        t: "orders.ack",
+        p: { phase: "S1901M", accepted: [], rejected: [{ text: "A PAR - MOS", reason: "no" }], verdicts: [{ text: "A PAR - MOS", order: "A PAR - MOS", ok: false, code: "illegal", reason: "no" }] },
+      }).success,
+    ).toBe(true);
+    expect(ServerMessage.safeParse({ t: "pledge.receipt", p: { pledgeId: "x", receipt: "kept", revealed: ["A PAR H"] } }).success).toBe(false);
+    expect(ServerMessage.safeParse({ t: "pledge.receipt", p: { pledgeId: "x", receipt: "kept", revealed: ["A PAR H"], nonce: "00".repeat(16) } }).success).toBe(true);
+    expect(ClientMessage.safeParse({ t: "press.send", p: { to: "ALL", body: "x", pledge: { orders: ["A PAR H"], commitment: "nope" } } }).success).toBe(false);
   });
 });

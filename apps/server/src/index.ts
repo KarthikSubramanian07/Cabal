@@ -2,23 +2,37 @@
  * cabal-server: HTTP router in front of the GameRoom Durable Objects and the Registry.
  *
  *   POST /api/games                   create a game, returns the creator's seat token
- *   GET  /api/games                   recently finished and abandoned games (from the Registry)
+ *   GET  /api/games?status=           public games: `open` lobbies, `active` games, or `finished` ones (the default)
  *   POST /api/games/:id/join          claim a lobby seat, or a vacated seat with a substitute invite
  *   POST /api/games/:id/start         creator starts early (AI fills open seats)
  *   POST /api/games/:id/substitute    a seated player opens a vacated seat to an invited substitute
  *   GET  /api/games/:id               public summary
- *   GET  /api/games/:id/replay        MILA saved game JSON
- *   GET  /api/games/:id/ledger        kept, broken and void pledges per power
+ *   GET  /api/games/:id/replay        MILA saved game JSON, plus the resolved pledges and receipts
+ *   GET  /api/games/:id/ledger        pledge totals per power and every resolved pledge the caller may read
+ *   GET  /api/games/:id/press         one page of press history (`before`, `with`, `limit`)
  *   GET  /api/games/:id/ws            WebSocket; a player then sends `hello { token }`
- *   GET  /health
+ *   GET  /health                      liveness, engine version, build id, index reachability
+ *
+ * Every response is JSON with CORS headers, including failures: an exception anywhere below is
+ * caught at the top, logged as one structured line and answered with a 500 that names a request id.
  *
  * The queue handler plays Claude turns for games that opted into them (see agent-consumer.ts).
  */
-import { CreateGameRequest, GameResult, JoinGameRequest, SubstituteInviteRequest, resolveSettings } from "@cabal/protocol";
+import {
+  CreateGameRequest,
+  GameResult,
+  type HealthResponse,
+  JoinGameRequest,
+  PROTOCOL_VERSION,
+  SubstituteInviteRequest,
+  resolveSettings,
+} from "@cabal/protocol";
 import { consumeTurns } from "./agent-consumer.js";
+import { engineReady, version as engineVersion } from "./engine.js";
 import type { AgentTurn, Env } from "./env.js";
-import { REGISTRY_NAME } from "./registry.js";
-import { gameCode } from "./tokens.js";
+import { gameIndex } from "./game-index.js";
+import { describeError, log } from "./log.js";
+import { gameCode, randomId } from "./tokens.js";
 
 export { GameRoom } from "./room.js";
 export { Registry } from "./registry.js";
@@ -43,7 +57,44 @@ function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8" } });
 }
 
-const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|substitute|replay|ledger|ws))?$/;
+const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|substitute|replay|ledger|press|ws))?$/;
+
+/** How long `/health` waits for the index before calling it unreachable. */
+const HEALTH_TIMEOUT_MS = 2000;
+
+/** The deployed build: set `BUILD_ID` at deploy time, else the Worker version id, else `dev`. */
+export function buildId(env: Env): string {
+  return env.BUILD_ID || env.CF_VERSION_METADATA?.id || "dev";
+}
+
+async function health(env: Env): Promise<HealthResponse> {
+  await engineReady();
+  const index = gameIndex(env);
+  let schema: number | null = null;
+  if (index) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      schema = await Promise.race([
+        index.schemaVersion(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("timed out")), HEALTH_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (error) {
+      log("health_index_unreachable", describeError(error), "error");
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return {
+    ok: true,
+    protocol: PROTOCOL_VERSION,
+    engine: engineVersion(),
+    build: buildId(env),
+    registry: { reachable: schema !== null, schema },
+    time: Date.now(),
+  };
+}
 
 async function readJson(request: Request): Promise<unknown> {
   const declared = Number(request.headers.get("content-length") ?? "0");
@@ -92,79 +143,112 @@ async function limited(limiter: RateLimit | undefined, request: Request, route: 
 
 const tooMany = () => withCors(json({ error: "too many requests, try again in a minute" }, 429));
 
+async function route(request: Request, env: Env): Promise<Response> {
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+  const url = new URL(request.url);
+
+  if (url.pathname === "/health") return withCors(json(await health(env)));
+
+  if (url.pathname === "/api/games" && request.method === "POST") {
+    if (await limited(env.CREATE_LIMITER, request, "create")) return tooMany();
+    const body = CreateGameRequest.safeParse(await readJson(request));
+    if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
+    // Settings are validated and resolved here, so bad input is a 400 and never reaches a room.
+    const settings = resolveSettings(body.data.settings);
+    const id = gameCode();
+    const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id));
+    const res = await stub.fetch("https://room/create", {
+      method: "POST",
+      body: JSON.stringify({ id, name: body.data.name, settings }),
+    });
+    return withCors(res);
+  }
+
+  if (url.pathname === "/api/games" && request.method === "GET") {
+    if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
+    const index = gameIndex(env);
+    if (!index) return withCors(json({ games: [] }));
+    const status = url.searchParams.get("status") ?? "finished";
+    const limit = Number(url.searchParams.get("limit") ?? "25");
+    const before = Number(url.searchParams.get("before") ?? "");
+    const page = {
+      ...(Number.isFinite(limit) ? { limit } : {}),
+      ...(Number.isFinite(before) && before > 0 ? { before } : {}),
+    };
+    if (status === "open" || status === "active") {
+      return withCors(json({ status, games: await index.listListings({ status, now: Date.now(), ...page }) }));
+    }
+    if (status !== "finished") return withCors(json({ error: "status must be open, active or finished" }, 400));
+    const result = GameResult.safeParse(url.searchParams.get("result"));
+    return withCors(json({ status, games: await index.listGames({ ...page, ...(result.success ? { result: result.data } : {}) }) }));
+  }
+
+  const m = GAME_PATH.exec(url.pathname);
+  if (m) {
+    const [, id, action] = m;
+    const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id!));
+    const authorization = { authorization: request.headers.get("authorization") ?? "" };
+    if (action === "join" && request.method === "POST") {
+      if (await limited(env.JOIN_LIMITER, request, "join")) return tooMany();
+      const body = JoinGameRequest.safeParse(await readJson(request));
+      if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
+      return withCors(await stub.fetch("https://room/join", { method: "POST", headers: authorization, body: JSON.stringify(body.data) }));
+    }
+    if (action === "substitute" && request.method === "POST") {
+      if (await limited(env.JOIN_LIMITER, request, "substitute")) return tooMany();
+      const body = SubstituteInviteRequest.safeParse(await readJson(request));
+      if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
+      return withCors(await stub.fetch("https://room/substitute", { method: "POST", headers: authorization, body: JSON.stringify(body.data) }));
+    }
+    // Everything below can wake a room and load the engine, so it shares one per-address limit.
+    if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
+    if (action === "ws") {
+      // Seat tokens never travel in a URL; a stray query string is not forwarded.
+      if (url.searchParams.has("token")) {
+        return withCors(json({ error: "send the seat token in a hello frame, not in the URL" }, 400));
+      }
+      return stub.fetch("https://room/ws", request);
+    }
+    if (action === "start" && request.method === "POST") {
+      return withCors(await stub.fetch("https://room/start", { method: "POST", headers: authorization }));
+    }
+    // Reads that depend on who is asking take the seat token as a bearer header, never in the URL.
+    if (action === "replay" && request.method === "GET") return withCors(await stub.fetch("https://room/replay", { headers: authorization }));
+    if (action === "ledger" && request.method === "GET") return withCors(await stub.fetch("https://room/ledger", { headers: authorization }));
+    if (action === "press" && request.method === "GET") {
+      if (url.searchParams.has("token")) return withCors(json({ error: "send the seat token as a bearer header, not in the URL" }, 400));
+      return withCors(await stub.fetch(`https://room/press${url.search}`, { headers: authorization }));
+    }
+    if (!action && request.method === "GET") return withCors(await stub.fetch("https://room/summary"));
+  }
+  return withCors(json({ error: "not found" }, 404));
+}
+
+/** The route as a label, never the raw path: game codes are not secret, but logs should group. */
+function routeLabel(request: Request): string {
+  const path = new URL(request.url).pathname.replace(/\/[A-Z0-9]{6}(?=\/|$)/, "/:id");
+  return `${request.method} ${path.slice(0, 64)}`;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
-    const url = new URL(request.url);
-
-    if (url.pathname === "/health") return withCors(json({ ok: true }));
-
-    if (url.pathname === "/api/games" && request.method === "POST") {
-      if (await limited(env.CREATE_LIMITER, request, "create")) return tooMany();
-      const body = CreateGameRequest.safeParse(await readJson(request));
-      if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
-      // Settings are validated and resolved here, so bad input is a 400 and never reaches a room.
-      const settings = resolveSettings(body.data.settings);
-      const id = gameCode();
-      const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id));
-      const res = await stub.fetch("https://room/create", {
-        method: "POST",
-        body: JSON.stringify({ id, name: body.data.name, settings }),
-      });
-      return withCors(res);
+    try {
+      return await route(request, env);
+    } catch (error) {
+      // The error boundary: whatever broke, the caller gets JSON with CORS and the log gets one line.
+      const requestId = request.headers.get("cf-ray") ?? randomId(8);
+      log("unhandled_error", { requestId, route: routeLabel(request), build: buildId(env), ...describeError(error) }, "error");
+      if (request.headers.get("upgrade") === "websocket") return new Response(null, { status: 500 });
+      return withCors(json({ error: "internal error", requestId }, 500));
     }
-
-    if (url.pathname === "/api/games" && request.method === "GET") {
-      if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
-      if (!env.REGISTRY) return withCors(json({ games: [] }));
-      const limit = Number(url.searchParams.get("limit") ?? "25");
-      const before = Number(url.searchParams.get("before") ?? "");
-      const result = GameResult.safeParse(url.searchParams.get("result"));
-      const registry = env.REGISTRY.get(env.REGISTRY.idFromName(REGISTRY_NAME));
-      const games = await registry.listGames({
-        ...(Number.isFinite(limit) ? { limit } : {}),
-        ...(Number.isFinite(before) && before > 0 ? { before } : {}),
-        ...(result.success ? { result: result.data } : {}),
-      });
-      return withCors(json({ games }));
-    }
-
-    const m = GAME_PATH.exec(url.pathname);
-    if (m) {
-      const [, id, action] = m;
-      const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id!));
-      const authorization = { authorization: request.headers.get("authorization") ?? "" };
-      if (action === "join" && request.method === "POST") {
-        if (await limited(env.JOIN_LIMITER, request, "join")) return tooMany();
-        const body = JoinGameRequest.safeParse(await readJson(request));
-        if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
-        return withCors(await stub.fetch("https://room/join", { method: "POST", headers: authorization, body: JSON.stringify(body.data) }));
-      }
-      if (action === "substitute" && request.method === "POST") {
-        if (await limited(env.JOIN_LIMITER, request, "substitute")) return tooMany();
-        const body = SubstituteInviteRequest.safeParse(await readJson(request));
-        if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
-        return withCors(await stub.fetch("https://room/substitute", { method: "POST", headers: authorization, body: JSON.stringify(body.data) }));
-      }
-      // Everything below can wake a room and load the engine, so it shares one per-address limit.
-      if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
-      if (action === "ws") {
-        // Seat tokens never travel in a URL; a stray query string is not forwarded.
-        if (url.searchParams.has("token")) {
-          return withCors(json({ error: "send the seat token in a hello frame, not in the URL" }, 400));
-        }
-        return stub.fetch("https://room/ws", request);
-      }
-      if (action === "start" && request.method === "POST") {
-        return withCors(await stub.fetch("https://room/start", { method: "POST", headers: authorization }));
-      }
-      if (action === "replay" && request.method === "GET") return withCors(await stub.fetch("https://room/replay"));
-      if (action === "ledger" && request.method === "GET") return withCors(await stub.fetch("https://room/ledger"));
-      if (!action && request.method === "GET") return withCors(await stub.fetch("https://room/summary"));
-    }
-    return withCors(json({ error: "not found" }, 404));
   },
   async queue(batch: MessageBatch<AgentTurn>, env: Env): Promise<void> {
-    await consumeTurns(batch, env);
+    try {
+      await consumeTurns(batch, env);
+    } catch (error) {
+      // Rethrown so the queue retries the batch; logged so the failure has a name.
+      log("queue_failed", { queue: batch.queue, messages: batch.messages.length, ...describeError(error) }, "error");
+      throw error;
+    }
   },
 } satisfies ExportedHandler<Env, AgentTurn>;

@@ -22,6 +22,7 @@ import {
   sleep,
   sql,
   start,
+  stable,
   stubOf,
   summary,
   until,
@@ -305,7 +306,7 @@ describe("spectators", () => {
       spectator.send(frame);
       expect((await spectator.next("error")).p.code).toBe("spectator");
     }
-    expect(await summary(ann.gameId)).toEqual(before);
+    expect(stable(await summary(ann.gameId))).toEqual(stable(before));
     expect(await sql(ann.gameId, "SELECT * FROM orders WHERE source = 'human'")).toHaveLength(0);
     expect(await sql(ann.gameId, "SELECT * FROM votes")).toHaveLength(0);
     expect(await sql(ann.gameId, "SELECT * FROM press")).toHaveLength(0);
@@ -633,7 +634,7 @@ describe("adjudication", () => {
     const orders = await sql(ann.gameId, "SELECT phase, power, orders_json, source FROM orders ORDER BY phase, power");
     await inRoom(ann.gameId, (_room, state) => state.abort("evicted by the test")).catch(() => undefined);
     const after = await until(async () => summary(ann.gameId).catch(() => null), "the room to come back");
-    expect(after).toEqual(before);
+    expect(stable(after)).toEqual(stable(before));
     expect(await phaseCount(ann.gameId)).toBe(1);
     expect(await sql(ann.gameId, "SELECT phase, power, orders_json, source FROM orders ORDER BY phase, power")).toEqual(orders);
     expect(await inRoom(ann.gameId, (_room, state) => state.storage.getAlarm())).toBe(before.deadlineAt);

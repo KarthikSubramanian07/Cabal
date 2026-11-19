@@ -22,12 +22,12 @@ const record = (gameId: string, over: Partial<GameRecord> = {}): GameRecord => (
 
 describe("Registry", () => {
   it("brings its schema up through every in-object migration, starting from the games index", async () => {
-    expect(MIGRATIONS.map((m) => m.version)).toEqual([1, 2]);
+    expect(MIGRATIONS.map((m) => m.version)).toEqual([1, 2, 3]);
     expect(MIGRATIONS[0]!.name).toBe("games_index");
     expect(await registry().schemaVersion()).toBe(MIGRATIONS.at(-1)!.version);
     await runInDurableObject(registry(), (_instance: Registry, state) => {
       const applied = state.storage.sql.exec<{ version: number; name: string }>("SELECT version, name FROM _migrations ORDER BY version").toArray();
-      expect(applied.map((m) => m.version)).toEqual([1, 2]);
+      expect(applied.map((m) => m.version)).toEqual([1, 2, 3]);
       const columns = state.storage.sql.exec<{ name: string }>("SELECT name FROM pragma_table_info('games_index')").toArray().map((c) => c.name);
       expect(columns).toEqual(
         expect.arrayContaining(["game_id", "result", "winners_json", "scores_json", "settings_json", "phase_count", "finished_at", "ledger_json", "reason", "cluster", "created_at", "seats_json"]),

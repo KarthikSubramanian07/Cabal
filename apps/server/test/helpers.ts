@@ -23,12 +23,29 @@ export interface Summary {
   id: string;
   status: string;
   phase: string;
+  host: string;
+  serverTime: number;
+  createdAt: number;
+  history: { phase: string; adjudicatedAt: number; centers: Record<string, number> }[];
   deadlineAt: number | null;
   pauseReason: string | null;
   pausedUntil: number | null;
   pausedRemainingMs: number | null;
   settings: GameSettings;
-  seats: { power: string; kind: string; name: string | null; missed: number; ready: boolean; eliminated: boolean; autopilot: boolean }[];
+  seats: {
+    power: string;
+    kind: string;
+    name: string | null;
+    missed: number;
+    ready: boolean;
+    eliminated: boolean;
+    autopilot: boolean;
+    brain: "bot" | "claude" | null;
+    present: boolean;
+    submitted: boolean;
+    canAct: boolean;
+    host: boolean;
+  }[];
   finished: { result: string; winners: string[]; scores: Record<string, number>; reason: string | null } | null;
   ai: {
     brain: "bot" | "claude";
@@ -81,6 +98,9 @@ export const inviteSubstitute = (seat: Seat, power: string) =>
 
 export const summary = async (gameId: string) =>
   (await (await SELF.fetch(`http://cabal/api/games/${gameId}`, { headers: { "cf-connecting-ip": nextIp() } })).json()) as Summary;
+
+/** A summary without what changes by itself: the server's clock and who happens to be connected. */
+export const stable = (s: Summary) => ({ ...s, serverTime: 0, seats: s.seats.map((seat) => ({ ...seat, present: false })) });
 
 export const stubOf = (gameId: string) => serverEnv.GAME_ROOM.get(serverEnv.GAME_ROOM.idFromName(gameId));
 
@@ -176,6 +196,7 @@ export class Client {
   ws: WebSocket;
   frames: ServerMessage[] = [];
   closed: { code: number; reason: string } | null = null;
+  pongs = 0;
   private waiters: { pred: (m: ServerMessage) => boolean; resolve: (m: ServerMessage) => void }[] = [];
 
   constructor(ws: WebSocket, private seated: boolean) {
@@ -185,6 +206,8 @@ export class Client {
       this.closed = { code: ev.code, reason: ev.reason };
     });
     ws.addEventListener("message", (ev) => {
+      // The keepalive answer is the one thing on the wire that is not a JSON frame.
+      if (ev.data === "pong") return void this.pongs++;
       const m = JSON.parse(ev.data as string) as ServerMessage;
       // A player's socket is welcomed as a spectator first; its own welcome follows the hello.
       if (this.seated && m.t === "welcome" && m.p.power === null) return;

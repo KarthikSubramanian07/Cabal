@@ -26,6 +26,10 @@ export interface Env {
   CLAUDE_TURNS_PER_GAME?: string;
   /** Hard cap on what one game may spend on Claude, in US dollars; the bot plays on after it. Defaults to 5. */
   CLAUDE_USD_PER_GAME?: string;
+  /** Identifies the deployed build in `/health` and error logs. Set at deploy time; optional. */
+  BUILD_ID?: string;
+  /** Worker version metadata: the build id when `BUILD_ID` is not set. */
+  CF_VERSION_METADATA?: { id: string; tag: string; timestamp: string };
   /** Per-seat limit on press. */
   PRESS_LIMITER?: RateLimit;
   /** Per-IP limit on creating games. Optional so tests and local dev run without it. */
