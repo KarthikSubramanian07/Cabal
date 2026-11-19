@@ -37,7 +37,7 @@ Everything is declared in `wrangler.jsonc` for the owner's account. Durable Obje
 | `DB` | D1 | database `cabal`, migrations in `migrations/` |
 | `REGISTRY` | Durable Object, SQLite | migration tag `v2` |
 | `AGENT_QUEUE` | Queue producer and consumer | `cabal-agent-turns`, dead-letter queue `cabal-agent-turns-dlq` |
-| `CREATE_LIMITER`, `JOIN_LIMITER`, `READ_LIMITER`, `ACCOUNT_LIMITER` | Rate limit | per client address |
+| `CREATE_LIMITER`, `JOIN_LIMITER`, `READ_LIMITER`, `ACCOUNT_LIMITER`, `METRICS_LIMITER` | Rate limit | per client address |
 | `PROFILE_LIMITER` | Rate limit | per player |
 | `PRESS_LIMITER` | Rate limit | per game and seat |
 | `CF_VERSION_METADATA` | Worker version metadata | the build id `/health` reports when `BUILD_ID` is not set |

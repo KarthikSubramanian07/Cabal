@@ -7,6 +7,13 @@
  *   POST /api/metrics/datc   admin: the DATC totals `cabal datc` printed for a commit
  *   GET  /api/metrics        admin: every metric over a window (`days`, default 30), pass or fail
  *
+ * Beacons are anonymous, so what they can cost is bounded three ways: a beacon carries at most 10
+ * samples, one address may send `METRICS_LIMITER` beacons a minute (6), and the whole deployment
+ * accepts at most `BEACON_SAMPLES_PER_DAY` samples a day. Samples are folded into daily histograms
+ * (`metric_buckets`, one row per metric, day, continent and bin), never one row each, so storage
+ * stays bounded whatever the traffic. A beacon from a page on another origin is refused. The
+ * figures they give are self-reported by browsers, and the summary says so.
+ *
  * The admin routes need `Authorization: Bearer <ADMIN_TOKEN>` and do not exist (404) where that
  * secret is not set. Finished games are recorded by the index itself (d1-index.ts), in the same
  * batch as the game's own row, so a retried hand-off can never count a game twice.
@@ -15,7 +22,7 @@ import { DatcReport, type GameRecord, type MetricLine, MetricsBeacon, type Metri
 import type { Env } from "./env.js";
 import { json, limited, readJson, tooMany, withCors } from "./http.js";
 import { log } from "./log.js";
-import { summarise } from "./stats.js";
+import { binOf, summarise, summariseBins } from "./stats.js";
 import { hashToken, sameHash } from "./tokens.js";
 
 /** Targets, as PLAN.md states them. */
@@ -24,9 +31,14 @@ export const TARGETS = {
   landingToGameMs: 60_000,
 } as const;
 
-/** Events older than this are deleted when the summary is read. */
+/** Events and histogram days older than this are deleted when the summary is read. */
 export const RETENTION_MS = 400 * 24 * 3600_000;
 const DAY_MS = 24 * 3600_000;
+/** Browser samples the whole deployment accepts in one UTC day; the rest of the day's beacons are dropped. */
+export const BEACON_SAMPLES_PER_DAY = 20_000;
+const dayOf = (at: number) => Math.floor(at / DAY_MS) * DAY_MS;
+/** Where the browser figures come from, for whoever reads the summary. */
+const SELF_REPORTED = "self-reported by anonymous browsers; at most 10 samples a beacon, 6 beacons a minute an address, 20,000 samples a day; figures within 2.5 percent";
 /** The regions the round trip target names. */
 const TARGET_REGIONS = ["EU", "NA"];
 /** At most this many timing samples are read per metric for one summary: the most recent. */
@@ -59,6 +71,54 @@ export function fullGameEvent(db: D1Database, record: GameRecord): D1PreparedSta
     .bind(record.finishedAt, record.phaseCount, completed ? 1 : 0, JSON.stringify(detail), `full_game:${record.gameId}`);
 }
 
+/**
+ * A beacon comes from this deployment's own pages: no `Origin` (not a browser, or a same-origin
+ * request that sent none), the origin the request was made to (the web app forwards `/api` with its
+ * own URL), or a local development server. Any other page cannot make its visitors send one.
+ */
+function beaconOriginAllowed(request: Request, url: URL): boolean {
+  const origin = request.headers.get("origin");
+  if (origin === null || origin === url.origin) return true;
+  try {
+    const host = new URL(origin).hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fold one beacon into the day's histograms, all or nothing, unless the day's cap is reached.
+ * Samples that land in the same bin are one write.
+ */
+async function recordBeacon(db: D1Database, samples: readonly { metric: string; ms: number }[], region: string, now: number): Promise<void> {
+  const day = dayOf(now);
+  const counts = new Map<string, { metric: string; bin: number; n: number }>();
+  for (const s of samples) {
+    const bin = binOf(s.ms);
+    const key = `${s.metric} ${bin}`;
+    const was = counts.get(key);
+    if (was) was.n += 1;
+    else counts.set(key, { metric: s.metric, bin, n: 1 });
+  }
+  const total = samples.length;
+  const underCap = "COALESCE((SELECT samples FROM metric_beacon_days WHERE day = ?), 0) + ? <= ?";
+  await db.batch([
+    ...[...counts.values()].map((c) =>
+      db
+        .prepare(
+          `INSERT INTO metric_buckets (metric, day, region, bin, n) SELECT ?, ?, ?, ?, ? WHERE ${underCap}
+           ON CONFLICT (metric, day, region, bin) DO UPDATE SET n = n + excluded.n`,
+        )
+        .bind(c.metric, day, region, c.bin, c.n, day, total, BEACON_SAMPLES_PER_DAY),
+    ),
+    // The day's count goes last, so every statement above judged the cap on the same figure.
+    db
+      .prepare(`INSERT INTO metric_beacon_days (day, samples) SELECT ?, ? WHERE ${underCap} ON CONFLICT (day) DO UPDATE SET samples = samples + excluded.samples`)
+      .bind(day, total, day, total, BEACON_SAMPLES_PER_DAY),
+  ]);
+}
+
 /** True when the request carries this deployment's admin token. */
 async function isAdmin(request: Request, env: Env): Promise<boolean> {
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
@@ -77,16 +137,11 @@ export async function metricsRoute(request: Request, env: Env, url: URL): Promis
   const db = env.DB;
 
   if (path === "/api/metrics" && request.method === "POST") {
-    if (await limited(env.READ_LIMITER, request, "metrics")) return tooMany();
+    if (!beaconOriginAllowed(request, url)) return withCors(json({ error: "beacons come from this deployment's own pages" }, 403));
+    if (await limited(env.METRICS_LIMITER, request, "metrics")) return tooMany();
     const body = MetricsBeacon.safeParse(await readJson(request));
     if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
-    if (db) {
-      const region = continentOf(request);
-      const now = Date.now();
-      await db.batch(
-        body.data.samples.map((s) => db.prepare("INSERT INTO metric_events (metric, at, value, ok, region) VALUES (?, ?, ?, NULL, ?)").bind(s.metric, now, s.ms, region)),
-      );
-    }
+    if (db) await recordBeacon(db, body.data.samples, continentOf(request), Date.now());
     return withCors(new Response(null, { status: 204 }));
   }
 
@@ -113,7 +168,12 @@ export async function metricsRoute(request: Request, env: Env, url: URL): Promis
     const days = Number(url.searchParams.get("days") ?? "30");
     const now = Date.now();
     const from = now - Math.min(400, Math.max(1, Number.isFinite(days) ? days : 30)) * DAY_MS;
-    await db.prepare("DELETE FROM metric_events WHERE at < ?").bind(now - RETENTION_MS).run();
+    await db.batch([
+      // By metric, so the delete reads the (metric, at) index rather than the whole table.
+      db.prepare("DELETE FROM metric_events WHERE metric IN ('datc', 'full_game', 'landing_to_game', 'order_rtt') AND at < ?").bind(now - RETENTION_MS),
+      db.prepare("DELETE FROM metric_buckets WHERE metric IN ('landing_to_game', 'order_rtt') AND day < ?").bind(dayOf(now - RETENTION_MS)),
+      db.prepare("DELETE FROM metric_beacon_days WHERE day < ?").bind(dayOf(now - RETENTION_MS)),
+    ]);
     return withCors(noStore(json(await summary(db, from, now))));
   }
   return withCors(json({ error: "not found" }, 404));
@@ -126,6 +186,29 @@ interface EventRow {
   region: string | null;
   detail_json: string | null;
 }
+
+interface BucketRow {
+  region: string;
+  bin: number;
+  n: number;
+  last: number;
+}
+
+/** A browser metric's histogram over the days `[from, to]` touch, per continent and bin. */
+async function buckets(db: D1Database, metric: string, from: number, to: number): Promise<BucketRow[]> {
+  const rows = await db
+    .prepare("SELECT region, bin, SUM(n) AS n, MAX(day) AS last FROM metric_buckets WHERE metric = ? AND day >= ? AND day <= ? GROUP BY region, bin")
+    .bind(metric, dayOf(from), dayOf(to))
+    .all<BucketRow>();
+  return rows.results;
+}
+
+const histogram = (rows: readonly BucketRow[]) => {
+  const bins = new Map<number, number>();
+  for (const r of rows) bins.set(r.bin, (bins.get(r.bin) ?? 0) + r.n);
+  return summariseBins(bins);
+};
+const lastDay = (rows: readonly BucketRow[]) => (rows.length === 0 ? null : Math.max(...rows.map((r) => r.last)));
 
 async function events(db: D1Database, metric: string, from: number, to: number, limit = SAMPLE_CAP): Promise<EventRow[]> {
   const rows = await db
@@ -179,8 +262,8 @@ export async function summary(db: D1Database, from: number, to: number): Promise
     },
   });
 
-  const landing = await events(db, "landing_to_game", from, to);
-  const landingStats = summarise(landing.map((e) => e.value));
+  const landing = await buckets(db, "landing_to_game", from, to);
+  const landingStats = histogram(landing);
   metrics.push({
     id: "landing_to_game",
     title: "Landing page to a game in progress",
@@ -188,18 +271,15 @@ export async function summary(db: D1Database, from: number, to: number): Promise
     status: landingStats ? (landingStats.median < TARGETS.landingToGameMs ? "pass" : "fail") : "unmeasured",
     value: landingStats?.median ?? null,
     unit: "ms (median)",
-    samples: landing.length,
-    lastAt: landing[0]?.at ?? null,
-    detail: landingStats ? { stats: landingStats } : {},
+    samples: landingStats?.n ?? 0,
+    lastAt: lastDay(landing),
+    detail: { source: SELF_REPORTED, ...(landingStats ? { stats: landingStats } : {}) },
   });
 
-  const rtt = await events(db, "order_rtt", from, to);
-  const target = rtt.filter((e) => e.region !== null && TARGET_REGIONS.includes(e.region));
-  const rttStats = summarise(target.map((e) => e.value));
+  const rtt = await buckets(db, "order_rtt", from, to);
+  const rttStats = histogram(rtt.filter((r) => TARGET_REGIONS.includes(r.region)));
   const byRegion: Record<string, unknown> = {};
-  for (const region of [...new Set(rtt.map((e) => e.region ?? "XX"))].sort()) {
-    byRegion[region] = summarise(rtt.filter((e) => (e.region ?? "XX") === region).map((e) => e.value));
-  }
+  for (const region of [...new Set(rtt.map((r) => r.region))].sort()) byRegion[region] = histogram(rtt.filter((r) => r.region === region));
   metrics.push({
     id: "order_rtt",
     title: "Order submit round trip from a browser in Europe or North America",
@@ -207,9 +287,9 @@ export async function summary(db: D1Database, from: number, to: number): Promise
     status: rttStats ? (rttStats.p95 < TARGETS.orderRttP95Ms ? "pass" : "fail") : "unmeasured",
     value: rttStats?.p95 ?? null,
     unit: "ms (p95)",
-    samples: target.length,
-    lastAt: rtt[0]?.at ?? null,
-    detail: { regions: byRegion, ...(rttStats ? { stats: rttStats } : {}) },
+    samples: rttStats?.n ?? 0,
+    lastAt: lastDay(rtt),
+    detail: { source: SELF_REPORTED, regions: byRegion, ...(rttStats ? { stats: rttStats } : {}) },
   });
 
   return { from, to, metrics };

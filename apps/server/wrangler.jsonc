@@ -46,7 +46,9 @@
     // Creating a guest account and restoring one from a recovery code, keyed by client address.
     { "name": "ACCOUNT_LIMITER", "namespace_id": "4805", "simple": { "limit": 10, "period": 60 } },
     // Changes to an account (rename, new recovery code, sign out), keyed by player.
-    { "name": "PROFILE_LIMITER", "namespace_id": "4806", "simple": { "limit": 20, "period": 60 } }
+    { "name": "PROFILE_LIMITER", "namespace_id": "4806", "simple": { "limit": 20, "period": 60 } },
+    // Anonymous metric beacons (POST /api/metrics), keyed by client address. Each one is a D1 write.
+    { "name": "METRICS_LIMITER", "namespace_id": "4807", "simple": { "limit": 6, "period": 60 } }
   ],
   // Claude turns for games that opt into `aiBrain: "claude"`. The built-in bot never uses the queue.
   // One message is one model call: small batches, bounded concurrency (two full tables of six seats

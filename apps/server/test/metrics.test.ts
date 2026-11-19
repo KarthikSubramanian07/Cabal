@@ -3,6 +3,8 @@ import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { type GameRecord, GameSettings, MetricsSummary } from "@cabal/protocol";
 import worker from "../src/index.js";
+import { BEACON_SAMPLES_PER_DAY } from "../src/metrics.js";
+import { binOf } from "../src/stats.js";
 import { index, nextIp, serverEnv } from "./helpers.js";
 
 const ADMIN = "test-admin-token";
@@ -111,22 +113,28 @@ describe("a full game", () => {
 });
 
 describe("browser timings", () => {
-  it("take anonymous, bounded samples and keep only the continent", async () => {
+  it("take anonymous, bounded samples into a daily histogram that keeps only the continent", async () => {
     expect((await beacon({ samples: [{ metric: "order_rtt", ms: -5 }] })).status).toBe(400);
     expect((await beacon({ samples: [{ metric: "datc", ms: 5 }] })).status).toBe(400);
     expect((await beacon("not json at all")).status).toBe(400);
-    const res = await beacon({ samples: [{ metric: "landing_to_game", ms: 38_000 }] }, "EU");
+    // At most ten samples a beacon.
+    expect((await beacon({ samples: Array.from({ length: 11 }, () => ({ metric: "order_rtt", ms: 50 })) })).status).toBe(400);
+    const res = await beacon({ samples: [{ metric: "landing_to_game", ms: 38_000 }, { metric: "landing_to_game", ms: 38_100 }] }, "EU");
     expect(res.status).toBe(204);
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
-    const row = await db().prepare("SELECT * FROM metric_events WHERE metric = 'landing_to_game'").first<Record<string, unknown>>();
-    expect(row).toMatchObject({ metric: "landing_to_game", value: 38_000, region: "EU", ok: null, detail_json: null, dedupe: null });
+    // Two samples in one bin are one row.
+    const rows = (await db().prepare("SELECT * FROM metric_buckets WHERE metric = 'landing_to_game'").all<Record<string, unknown>>()).results;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ metric: "landing_to_game", region: "EU", bin: binOf(38_000), n: 2, day: Math.floor(Date.now() / 86_400_000) * 86_400_000 });
     // Nothing about who sent it.
-    expect(Object.keys(row!).sort()).toEqual(["at", "dedupe", "detail_json", "id", "metric", "ok", "region", "value"]);
+    expect(Object.keys(rows[0]!).sort()).toEqual(["bin", "day", "metric", "n", "region"]);
+    expect(await db().prepare("SELECT COUNT(*) AS n FROM metric_events WHERE metric IN ('order_rtt', 'landing_to_game')").first<{ n: number }>()).toEqual({ n: 0 });
   });
 
   it("judge the round trip on the p95 from Europe and North America, and show every region", async () => {
     const eu = Array.from({ length: 19 }, (_, i) => ({ metric: "order_rtt", ms: 60 + i }));
-    await beacon({ samples: [...eu, { metric: "order_rtt", ms: 140 }] }, "EU");
+    for (let i = 0; i < eu.length; i += 10) await beacon({ samples: eu.slice(i, i + 10) }, "EU");
+    await beacon({ samples: [{ metric: "order_rtt", ms: 140 }] }, "EU");
     await beacon({ samples: [{ metric: "order_rtt", ms: 90 }, { metric: "order_rtt", ms: 95 }] }, "NA");
     // Slow from Oceania, which the target does not cover.
     await beacon({ samples: [{ metric: "order_rtt", ms: 400 }, { metric: "order_rtt", ms: 420 }] }, "OC");
@@ -136,13 +144,62 @@ describe("browser timings", () => {
     expect(rtt.status).toBe("pass");
     expect(rtt.samples).toBe(22);
     expect(rtt.value).toBeLessThan(150);
+    expect(rtt.detail.source).toMatch(/^self-reported/);
     expect(Object.keys(rtt.detail.regions as object).sort()).toEqual(["EU", "NA", "OC"]);
     expect((rtt.detail.regions as Record<string, { n: number }>).OC!.n).toBe(2);
     const landing = line(s, "landing_to_game");
-    expect(landing).toMatchObject({ status: "pass", value: 45_000, samples: 3 });
+    expect(landing).toMatchObject({ status: "pass", samples: 4 });
+    // The median of 38,000, 38,100, 45,000 and 70,000, read from the histogram: within 2.5 percent.
+    expect(Math.abs(landing.value! - 41_550) / 41_550).toBeLessThan(0.025);
 
     // Enough slow samples from Europe and the target is missed.
-    await beacon({ samples: Array.from({ length: 10 }, () => ({ metric: "order_rtt", ms: 900 })) }, "EU");
+    for (let i = 0; i < 2; i++) await beacon({ samples: Array.from({ length: 10 }, () => ({ metric: "order_rtt", ms: 900 })) }, "EU");
     expect(line(await summary(), "order_rtt").status).toBe("fail");
+  });
+
+  it("let one address send six beacons a minute, each at most a row per bin", async () => {
+    const before = (await db().prepare("SELECT COALESCE(SUM(n), 0) AS n, COUNT(*) AS rows FROM metric_buckets").first<{ n: number; rows: number }>())!;
+    const ip = "203.0.113.77";
+    const samples = Array.from({ length: 10 }, () => ({ metric: "order_rtt", ms: 59_999 }));
+    const statuses: number[] = [];
+    // Forty beacons in a row from one address, as a script or a hostile page could send them.
+    for (let i = 0; i < 40; i++) {
+      const res = await SELF.fetch("http://cabal/api/metrics", { method: "POST", headers: { "cf-connecting-ip": ip }, body: JSON.stringify({ samples }), cf: { continent: "EU" } } as RequestInit);
+      statuses.push(res.status);
+    }
+    expect(statuses.filter((s) => s === 204)).toHaveLength(6);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(34);
+    const after = (await db().prepare("SELECT COALESCE(SUM(n), 0) AS n, COUNT(*) AS rows FROM metric_buckets").first<{ n: number; rows: number }>())!;
+    expect(after.n - before.n).toBe(60);
+    // Sixty samples in one bin stay one row.
+    expect(after.rows - before.rows).toBeLessThanOrEqual(1);
+  });
+
+  it("refuse a beacon from a page on another origin", async () => {
+    const send = (origin: string) =>
+      SELF.fetch("http://cabal/api/metrics", { method: "POST", headers: { "cf-connecting-ip": nextIp(), origin }, body: JSON.stringify({ samples: [{ metric: "order_rtt", ms: 1 }] }) });
+    expect((await send("https://evil.example")).status).toBe(403);
+    expect((await send("http://cabal")).status).toBe(204);
+    expect((await send("http://localhost:5173")).status).toBe(204);
+  });
+
+  it("stop for the day at the deployment's cap, whatever the number of addresses", async () => {
+    const day = Math.floor(Date.now() / 86_400_000) * 86_400_000;
+    const read = async () => (await db().prepare("SELECT samples FROM metric_beacon_days WHERE day = ?").bind(day).first<{ samples: number }>())?.samples ?? 0;
+    const sum = async () => (await db().prepare("SELECT COALESCE(SUM(n), 0) AS n FROM metric_buckets WHERE day = ?").bind(day).first<{ n: number }>())!.n;
+    // Bring the day's count to three short of the cap.
+    await db().prepare("UPDATE metric_beacon_days SET samples = ? WHERE day = ?").bind(BEACON_SAMPLES_PER_DAY - 3, day).run();
+    const before = await sum();
+    // Five samples would pass the cap: the whole beacon is dropped, and still answered 204.
+    expect((await beacon({ samples: Array.from({ length: 5 }, () => ({ metric: "order_rtt", ms: 70 })) }, "NA")).status).toBe(204);
+    expect(await sum()).toBe(before);
+    expect(await read()).toBe(BEACON_SAMPLES_PER_DAY - 3);
+    // Three fit exactly; then nothing more today.
+    expect((await beacon({ samples: Array.from({ length: 3 }, () => ({ metric: "order_rtt", ms: 70 })) }, "NA")).status).toBe(204);
+    expect(await sum()).toBe(before + 3);
+    expect(await read()).toBe(BEACON_SAMPLES_PER_DAY);
+    expect((await beacon({ samples: [{ metric: "order_rtt", ms: 70 }] }, "NA")).status).toBe(204);
+    expect(await sum()).toBe(before + 3);
+    await db().prepare("UPDATE metric_beacon_days SET samples = 0 WHERE day = ?").bind(day).run();
   });
 });

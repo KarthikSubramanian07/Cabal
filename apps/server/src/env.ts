@@ -58,6 +58,8 @@ export interface Env {
   CREATE_LIMITER?: RateLimit;
   /** Per-IP limit on joining games and issuing substitute invites. */
   JOIN_LIMITER?: RateLimit;
+  /** Per-IP limit on anonymous metric beacons: each one is a D1 write. */
+  METRICS_LIMITER?: RateLimit;
   /** Per-IP limit on reads, starts and socket upgrades: each one can wake a room. */
   READ_LIMITER?: RateLimit;
   /** Per-IP limit on creating guest accounts and restoring them from a recovery code. */
