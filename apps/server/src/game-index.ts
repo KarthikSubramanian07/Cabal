@@ -29,9 +29,11 @@ export interface ListLive {
 }
 
 export interface GameIndex {
-  /** Index a finished or abandoned game and drop its live listing. Idempotent. */
+  /** Index a finished or abandoned game, public or not, and drop its live listing. Idempotent. */
   recordGame(record: GameRecord): Promise<void>;
+  /** One recorded game by its code, whatever its visibility. Never exposed as a list. */
   getGame(gameId: string): Promise<GameRecord | null>;
+  /** The public list: ended games that were created as public and played at least one phase. */
   listGames(options?: ListFinished): Promise<GameRecord[]>;
   /** Insert or refresh a public game's listing. */
   upsertListing(listing: GameListing): Promise<void>;
@@ -39,6 +41,13 @@ export interface GameIndex {
   listListings(options: ListLive): Promise<GameListing[]>;
   /** Highest migration applied; also the health probe. */
   schemaVersion(): Promise<number>;
+  /**
+   * Ask for a game's place under the deployment-wide Claude budget, for the whole of its spend
+   * cap. Must be atomic: two games asking at once may not both take the last place. Idempotent.
+   */
+  admitClaudeGame(request: { gameId: string; capMicros: number; now: number }): Promise<{ admitted: boolean; reason: string | null }>;
+  /** A Claude game has ended: free its place and record what it spent. Idempotent. */
+  releaseClaudeGame(request: { gameId: string; spentMicros: number; now: number }): Promise<void>;
 }
 
 /** The index for this deployment, or null when none is bound (some tests, bare local dev). */
@@ -53,5 +62,7 @@ export function gameIndex(env: Env): GameIndex | null {
     removeListing: async (gameId) => void (await stub().removeListing(gameId)),
     listListings: async (options) => stub().listListings(options),
     schemaVersion: async () => stub().schemaVersion(),
+    admitClaudeGame: async (request) => stub().admitClaudeGame(request),
+    releaseClaudeGame: async (request) => void (await stub().releaseClaudeGame(request)),
   };
 }

@@ -26,6 +26,10 @@ export interface Env {
   CLAUDE_TURNS_PER_GAME?: string;
   /** Hard cap on what one game may spend on Claude, in US dollars; the bot plays on after it. Defaults to 5. */
   CLAUDE_USD_PER_GAME?: string;
+  /** What every game together may commit to Claude in one UTC day, in US dollars. Read by the Registry. Defaults to 20. */
+  CLAUDE_USD_PER_DAY?: string;
+  /** How many games with Claude seats may be in play at once. Read by the Registry. Defaults to 4. */
+  CLAUDE_ACTIVE_GAMES?: string;
   /** Identifies the deployed build in `/health` and error logs. Set at deploy time; optional. */
   BUILD_ID?: string;
   /** Worker version metadata: the build id when `BUILD_ID` is not set. */

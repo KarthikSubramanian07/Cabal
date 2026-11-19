@@ -13,6 +13,8 @@ import { GameListing, GameRecord } from "@cabal/protocol";
 import m0001 from "../migrations/0001_games_index.sql";
 import m0002 from "../migrations/0002_games_index_seats_and_cluster.sql";
 import m0003 from "../migrations/0003_games_live.sql";
+import m0004 from "../migrations/0004_games_index_public.sql";
+import m0005 from "../migrations/0005_claude_budget.sql";
 import type { Env } from "./env.js";
 
 /** Name of the singleton instance. */
@@ -26,7 +28,27 @@ export const MIGRATIONS: readonly { version: number; name: string; sql: string }
   { version: 1, name: "games_index", sql: m0001 },
   { version: 2, name: "games_index_seats_and_cluster", sql: m0002 },
   { version: 3, name: "games_live", sql: m0003 },
+  { version: 4, name: "games_index_public", sql: m0004 },
+  { version: 5, name: "claude_budget", sql: m0005 },
 ];
+
+/**
+ * The deployment-wide limits on Claude seats, unless `CLAUDE_USD_PER_DAY` and
+ * `CLAUDE_ACTIVE_GAMES` say otherwise: what all games together may commit in one UTC day, and how
+ * many Claude games may be in play at once. A game commits its whole per-game cap when admitted.
+ */
+export const CLAUDE_BUDGET = { usdPerDay: 20, activeGames: 4 } as const;
+
+/** A game that never reports back stops counting as in play after this long. */
+const CLAUDE_GAME_TTL_MS = 30 * 24 * 3600_000;
+
+const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+export interface ClaudeAdmission {
+  admitted: boolean;
+  /** Why not: `claude_games_full` or `claude_daily_budget`. Null when admitted. */
+  reason: string | null;
+}
 
 /** A lobby is listed for as long as a room keeps one; a running game for as long as its longest phase. */
 const LISTING_TTL_MS = { lobby: 7 * 24 * 3600_000, active: 15 * 24 * 3600_000 } as const;
@@ -132,13 +154,13 @@ export class Registry extends DurableObject<Env> {
     const record = GameRecord.parse(input);
     this.sql.exec(
       `INSERT INTO games_index
-         (game_id, result, reason, winners_json, scores_json, settings_json, cluster, phase_count, created_at, finished_at, ledger_json, seats_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (game_id, result, reason, winners_json, scores_json, settings_json, cluster, phase_count, created_at, finished_at, ledger_json, seats_json, public)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(game_id) DO UPDATE SET
          result = excluded.result, reason = excluded.reason, winners_json = excluded.winners_json,
          scores_json = excluded.scores_json, settings_json = excluded.settings_json, cluster = excluded.cluster,
          phase_count = excluded.phase_count, created_at = excluded.created_at, finished_at = excluded.finished_at,
-         ledger_json = excluded.ledger_json, seats_json = excluded.seats_json`,
+         ledger_json = excluded.ledger_json, seats_json = excluded.seats_json, public = excluded.public`,
       record.gameId,
       record.result,
       record.reason,
@@ -151,6 +173,7 @@ export class Registry extends DurableObject<Env> {
       record.finishedAt,
       JSON.stringify(record.ledger),
       JSON.stringify(record.seats),
+      record.settings.visibility === "public" ? 1 : 0,
     );
     // A game that has ended is no longer open or running.
     this.sql.exec("DELETE FROM games_live WHERE game_id = ?", record.gameId);
@@ -219,22 +242,87 @@ export class Registry extends DurableObject<Env> {
     return row ? toRecord(row) : null;
   }
 
-  /** Most recently ended games first. `before` pages by `finishedAt`. */
+  /**
+   * The public list of ended games, most recent first. `before` pages by `finishedAt`.
+   *
+   * Only games created as public are listed, and only once a phase has been played: an unlisted
+   * game is recorded like any other but its code, settings and player names are never handed to a
+   * stranger, and a game ended before its first phase is not worth a line.
+   */
   listGames(options: { limit?: number; before?: number; result?: GameRecord["result"] } = {}): GameRecord[] {
     const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 25)));
     const before = options.before ?? Number.MAX_SAFE_INTEGER;
     const rows = options.result
       ? this.sql.exec<GameRow>(
-          "SELECT * FROM games_index WHERE finished_at < ? AND result = ? ORDER BY finished_at DESC, game_id LIMIT ?",
+          "SELECT * FROM games_index WHERE public = 1 AND phase_count > 0 AND finished_at < ? AND result = ? ORDER BY finished_at DESC, game_id LIMIT ?",
           before,
           options.result,
           limit,
         )
       : this.sql.exec<GameRow>(
-          "SELECT * FROM games_index WHERE finished_at < ? ORDER BY finished_at DESC, game_id LIMIT ?",
+          "SELECT * FROM games_index WHERE public = 1 AND phase_count > 0 AND finished_at < ? ORDER BY finished_at DESC, game_id LIMIT ?",
           before,
           limit,
         );
     return rows.toArray().map(toRecord);
+  }
+
+  // ---------- the deployment-wide Claude budget ----------
+
+  private claudeLimits(): { dayMicros: number; activeGames: number } {
+    const usd = Number(this.env.CLAUDE_USD_PER_DAY);
+    const games = Number(this.env.CLAUDE_ACTIVE_GAMES);
+    return {
+      dayMicros: Math.round((this.env.CLAUDE_USD_PER_DAY !== undefined && Number.isFinite(usd) && usd >= 0 ? usd : CLAUDE_BUDGET.usdPerDay) * 1_000_000),
+      activeGames: this.env.CLAUDE_ACTIVE_GAMES !== undefined && Number.isFinite(games) && games >= 0 ? Math.floor(games) : CLAUDE_BUDGET.activeGames,
+    };
+  }
+
+  /**
+   * Admit a game that wants Claude seats, for the whole of its spend cap, or refuse it. Idempotent
+   * per game. One synchronous step in one single-threaded object, so two games asking at once can
+   * never both take the last place.
+   */
+  admitClaudeGame(input: { gameId: string; capMicros: number; now: number }): ClaudeAdmission {
+    const cap = Math.max(0, Math.ceil(Number(input.capMicros) || 0));
+    const existing = this.sql.exec<{ released_at: number | null }>("SELECT released_at FROM claude_games WHERE game_id = ?", input.gameId).toArray()[0];
+    if (existing) return existing.released_at === null ? { admitted: true, reason: null } : { admitted: false, reason: "claude_game_over" };
+    const limits = this.claudeLimits();
+    const active = this.sql
+      .exec<{ n: number }>("SELECT COUNT(*) AS n FROM claude_games WHERE released_at IS NULL AND admitted_at > ? AND admitted_at <= ?", input.now - CLAUDE_GAME_TTL_MS, input.now)
+      .one().n;
+    if (active >= limits.activeGames) return { admitted: false, reason: "claude_games_full" };
+    const day = utcDay(input.now);
+    const committed = this.sql.exec<{ n: number | null }>("SELECT SUM(COALESCE(spent_micros, cap_micros)) AS n FROM claude_games WHERE day = ?", day).one().n ?? 0;
+    if (committed + cap > limits.dayMicros) return { admitted: false, reason: "claude_daily_budget" };
+    this.sql.exec("INSERT INTO claude_games (game_id, day, cap_micros, admitted_at) VALUES (?, ?, ?, ?)", input.gameId, day, cap, input.now);
+    // Old days are of no further use to any decision.
+    this.sql.exec("DELETE FROM claude_games WHERE released_at IS NOT NULL AND admitted_at < ?", input.now - 2 * CLAUDE_GAME_TTL_MS);
+    return { admitted: true, reason: null };
+  }
+
+  /** A Claude game has ended: free its place and count what it spent (never more than its cap). Idempotent. */
+  releaseClaudeGame(input: { gameId: string; spentMicros: number; now: number }): { ok: true } {
+    const spent = Math.max(0, Math.ceil(Number(input.spentMicros) || 0));
+    this.sql.exec(
+      "UPDATE claude_games SET released_at = ?, spent_micros = MIN(cap_micros, ?) WHERE game_id = ? AND released_at IS NULL",
+      input.now,
+      spent,
+      input.gameId,
+    );
+    return { ok: true };
+  }
+
+  /** What the Claude budget stands at: for `/health` and for the owner. */
+  claudeBudget(now: number): { day: string; committedUsd: number; capUsd: number; activeGames: number; maxActiveGames: number } {
+    const limits = this.claudeLimits();
+    const day = utcDay(now);
+    return {
+      day,
+      committedUsd: (this.sql.exec<{ n: number | null }>("SELECT SUM(COALESCE(spent_micros, cap_micros)) AS n FROM claude_games WHERE day = ?", day).one().n ?? 0) / 1_000_000,
+      capUsd: limits.dayMicros / 1_000_000,
+      activeGames: this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM claude_games WHERE released_at IS NULL AND admitted_at > ? AND admitted_at <= ?", now - CLAUDE_GAME_TTL_MS, now).one().n,
+      maxActiveGames: limits.activeGames,
+    };
   }
 }
