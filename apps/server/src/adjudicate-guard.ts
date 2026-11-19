@@ -19,3 +19,15 @@ export function adjudicateStrict<I, O>(
     throw error;
   }
 }
+
+/**
+ * Puts a game back as it was from the text taken before a write that then failed.
+ *
+ * The text is the room's own record, so it is resumed, never replayed: `resume` adjudicates
+ * nothing from the past. Replaying here (`fromSaved`) would throw for any game whose history
+ * holds a ruling the engine has since corrected, inside the very catch block that is meant to
+ * recover, and leave the room holding an engine that is ahead of its storage.
+ */
+export function restoreGame<G>(engine: { resume(saved: string, rulebook?: string): G }, saved: string, rulebook: string): G {
+  return engine.resume(saved, rulebook);
+}

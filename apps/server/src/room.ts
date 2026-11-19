@@ -49,7 +49,7 @@ import {
   parseClientMessage,
   ratingCluster,
 } from "@cabal/protocol";
-import { adjudicateStrict } from "./adjudicate-guard.js";
+import { adjudicateStrict, restoreGame } from "./adjudicate-guard.js";
 import { DEFAULT_MODEL, MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS, MEMORY_LIMITS, type Memory, type Usage, costMicros, maxCallCostMicros } from "@cabal/agents";
 import { canAct } from "./bot.js";
 import { seatBrain } from "./brain.js";
@@ -2069,7 +2069,7 @@ export class GameRoom extends DurableObject<Env> {
       });
     } catch (error) {
       // Storage rolled back; the engine may already have been told the game is drawn. Put it back.
-      this.game = Game.fromSaved(snapshot, meta.settings.rulebook);
+      this.game = restoreGame(Game, snapshot, meta.settings.rulebook);
       try {
         game.free();
       } catch {
@@ -2477,7 +2477,7 @@ export class GameRoom extends DurableObject<Env> {
       });
     } catch (error) {
       // `process` may have advanced the game before the throw. Put it back exactly as it was.
-      this.game = Game.fromSaved(snapshot, meta.settings.rulebook);
+      this.game = restoreGame(Game, snapshot, meta.settings.rulebook);
       try {
         game.free();
       } catch {
