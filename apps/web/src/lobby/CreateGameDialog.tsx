@@ -108,7 +108,7 @@ export function CreateGameDialog({ open, onClose }: { open: boolean; onClose: ()
     setError(null);
     try {
       const res = await api.createGame({ settings }, me.secret);
-      keepCreatedSeat({ gameId: res.gameId, power: res.power, token: res.token, name: me.handle });
+      keepCreatedSeat({ gameId: res.gameId, power: res.power, token: res.token, name: me.handle, userId: me.id });
       onClose();
       navigate(`/g/${res.gameId}`);
     } catch (err) {

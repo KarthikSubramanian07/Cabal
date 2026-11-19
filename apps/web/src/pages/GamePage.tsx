@@ -325,7 +325,26 @@ function Live({ code }: { code: string }) {
   // Once the game has begun the table becomes the game room: the board, orders, press and seals.
   if (view.status !== "lobby") {
     // The summary has no board; the socket's welcome brings it a moment later.
-    if (!view.state) return <PageLoading />;
+    if (!view.state) {
+      if (room.crowded) {
+        return (
+          <StatusPage
+            stamp="Full"
+            eyebrow={`Table ${spacedCode(code)}`}
+            title="Your seat is open in too many places."
+            pageTitle={`Table ${spacedCode(code)}`}
+            actions={
+              <button type="button" className="btn brass" onClick={room.reconnect}>
+                Reconnect
+              </button>
+            }
+          >
+            <p>{room.notice}</p>
+          </StatusPage>
+        );
+      }
+      return <PageLoading />;
+    }
     return (
       <Suspense fallback={<PageLoading />}>
         <LiveTable room={room} view={view} />

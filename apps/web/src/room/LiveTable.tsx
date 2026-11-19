@@ -546,6 +546,15 @@ function Floor({
             </button>
           ) : null}
         </div>
+      ) : room.notice ? (
+        <div className="wire-down" role="status">
+          <p>{room.notice}</p>
+          {room.crowded ? (
+            <button type="button" className="btn small" onClick={room.reconnect}>
+              Reconnect
+            </button>
+          ) : null}
+        </div>
       ) : null}
       <main className="table live" id="main" tabIndex={-1}>
         <h1 className="sr-only">
