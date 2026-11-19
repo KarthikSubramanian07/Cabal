@@ -56,6 +56,10 @@ test.describe("notifications", () => {
       registered = { body: request.postDataJSON(), auth: request.headers()["authorization"] };
       return { status: 201, body: { devices: 1 } };
     });
+    // The server counts the device once it is registered, as the real one does.
+    server.on("GET", /^\/api\/me\/notifications$/, () => ({
+      body: { preferences: { deadline: true, phase: true, press: true, started: true, finished: true }, devices: registered ? 1 : 0, reminderMinutes: 30 },
+    }));
     await signedIn(page);
     await page.goto("/games");
     await page.locator(".player-button").click();
@@ -90,6 +94,42 @@ test.describe("notifications", () => {
     await card.getByRole("button", { name: "Turn on notifications on this device" }).click();
     await expect(card.getByRole("alert")).toHaveText("Notifications are switched off on this server.");
     expect(await page.evaluate(() => (window as unknown as { __asked: number }).__asked)).toBe(0);
+  });
+
+  test("a subscription another account left in the browser is not shown as on", async ({ page }) => {
+    // Permission granted and a subscription already in the browser, left by the account that
+    // signed out of this device before ada_l signed in.
+    await page.addInitScript(() => {
+      class FakeNotification {
+        static permission: NotificationPermission = "granted";
+        static async requestPermission() {
+          return "granted" as NotificationPermission;
+        }
+      }
+      const sub = {
+        endpoint: "https://fcm.googleapis.com/fcm/send/previous-account",
+        options: { applicationServerKey: null },
+        toJSON: () => ({ endpoint: "https://fcm.googleapis.com/fcm/send/previous-account", keys: { p256dh: "B".repeat(87), auth: "A".repeat(22) } }),
+        unsubscribe: async () => true,
+      };
+      const pushManager = { getSubscription: async () => sub, subscribe: async () => sub };
+      Object.defineProperty(window, "Notification", { value: FakeNotification, configurable: true });
+      Object.defineProperty(window, "PushManager", { value: function PushManager() {}, configurable: true });
+      Object.defineProperty(navigator, "serviceWorker", {
+        value: { ready: Promise.resolve({ pushManager }), register: () => new Promise(() => undefined), addEventListener() {}, controller: null },
+        configurable: true,
+      });
+      localStorage.setItem("cabal.push.owner", JSON.stringify({ playerId: "pl_someone_else", endpoint: "https://fcm.googleapis.com/fcm/send/previous-account" }));
+    });
+    const server = await fakeServer(page);
+    accountRoutes(server);
+    await signedIn(page);
+    await page.goto("/games");
+    await page.locator(".player-button").click();
+    await page.getByRole("button", { name: "Notifications" }).click();
+    const card = page.getByRole("dialog", { name: "Your account" });
+    await expect(card.getByText("This device is not told about your games.")).toBeVisible();
+    await expect(card.getByText("This device is told about your games while you are away from the table.")).toHaveCount(0);
   });
 
   test("nothing is offered or asked on arrival", async ({ page }) => {
