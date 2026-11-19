@@ -60,7 +60,11 @@ export function useRoom(code: string): Room {
     if (!ready) return;
     const ws = openSocket(code, token);
     socket.current = ws;
-    const offStatus = ws.on("status", (status) => setConnection(status));
+    // `status` names two things on CabalSocket: the connection's state (a string) and the
+    // server's game status frame (an object), which arrives when a game starts or pauses.
+    const offStatus = ws.on("status", (status: unknown) => {
+      if (typeof status === "string") setConnection(status as ConnectionStatus);
+    });
     const offFrame = ws.on("frame", (frame) => {
       setLoad((current) => {
         const view = applyFrame(current.kind === "ready" ? current.view : null, frame, Date.now());
