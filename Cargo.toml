@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/cabal-engine", "crates/cabal-wasm", "crates/cabal-cli"]
+members = ["crates/cabal-engine", "crates/cabal-bot", "crates/cabal-wasm", "crates/cabal-cli"]
 
 [workspace.package]
 version = "0.1.0"
