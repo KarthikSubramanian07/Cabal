@@ -8,9 +8,11 @@ import {
   type State,
   buildInfo,
   explainPreview,
+  mapInfo,
   preview,
   ready,
   validateOrders,
+  verifySaved,
   version,
 } from "./index.js";
 
@@ -43,13 +45,16 @@ describe("build identity", () => {
     expect(info.version).toBe(version());
     expect(info.commit).toMatch(/^([0-9a-f]{7,40}|unknown)$/);
     expect(info.target).toBe("wasm32-unknown-unknown");
-    expect(["release", "debug"]).toContain(info.profile);
+    // the WebAssembly build has its own profile, and says so
+    expect(info.profile).toBe("wasm-release");
     expect(info.opt_level).toMatch(/^[0-3sz]$/);
     expect(info.maps).toEqual(["standard", "duel"]);
     expect(info.rulebooks).toEqual(["2023", "1982", "1971", "dptg"]);
     expect(info.features).toEqual(
-      expect.arrayContaining(["validate", "explain", "preview", "legal_moves", "tolerant_process"]),
+      expect.arrayContaining(["validate", "explain", "preview", "legal_moves", "tolerant_process", "maps", "saved_rejections"]),
     );
+    // every advertised map really loads
+    for (const map of info.maps) expect(new Game(undefined, map).mapName()).toBe(map);
     // every advertised rulebook really loads
     for (const rulebook of info.rulebooks) expect(new Game(rulebook).rulebook()).toBe(rulebook);
   });
@@ -558,5 +563,122 @@ describe("legal moves", () => {
     expect(adjust.adjustments["RUSSIA"]?.builds).toEqual([{ province: "STP", army: true, fleets: ["STP/NC", "STP/SC"] }]);
     expect(adjust.adjustments["ENGLAND"]).toEqual({ allowance: 0, builds: [], disbands: [] });
     expect(Object.keys(Game.fromState(state).legalMoves("FRANCE").adjustments)).toEqual(["FRANCE"]);
+  });
+});
+
+describe("maps", () => {
+  it("plays, saves and restores a game on the duel map", () => {
+    expect(mapInfo().name).toBe("standard");
+    const info = mapInfo("duel");
+    expect(info.name).toBe("duel");
+    expect(info.powers).toHaveLength(2);
+    expect(() => new Game(undefined, "atlantis")).toThrow(/unknown map atlantis/);
+
+    const game = new Game(undefined, "duel");
+    expect(game.mapName()).toBe("duel");
+    const powers = info.powers.map((p) => p.name.toUpperCase()).sort();
+    expect(Object.keys(game.legalAll()).sort()).toEqual(powers);
+    // every unit takes its first legal order; the phase adjudicates
+    const orders: Record<string, string[]> = {};
+    for (const [power, legal] of Object.entries(game.legalAll())) {
+      orders[power] = Object.values(legal.by_unit).map((options) => options.find((o) => o.includes(" - ")) ?? options[0]!);
+    }
+    const outcome = game.process({ orders });
+    expect(outcome.results.length).toBeGreaterThan(0);
+    expect(outcome.rejected).toEqual([]);
+
+    const saved = game.toSaved("duel-1");
+    expect(JSON.parse(saved).map).toBe("duel");
+    for (const loaded of [Game.resume(saved), Game.fromSaved(saved), Game.fromSnapshot(game.snapshot(), saved)]) {
+      expect(loaded.mapName()).toBe("duel");
+      expect(loaded.state()).toEqual(game.state());
+    }
+    expect(verifySaved(saved).divergences).toEqual([]);
+
+    // a state taken from a duel game is read against the duel map when it is named
+    const again = Game.fromState(game.state(), undefined, "duel");
+    expect(again.mapName()).toBe("duel");
+    expect(again.legalAll()).toEqual(game.legalAll());
+    expect(preview(game.state(), { orders: {} }, undefined, "duel").phase).toBe(game.phase());
+  });
+});
+
+describe("the record of what was submitted", () => {
+  it("keeps an illegal order as it was ordered, and reads it back the same after a restore", () => {
+    const game = new Game();
+    const live = game.process({ orders: { FRANCE: ["A PAR - MOS", "A MAR - SPA", "A MAR - BUR"] } });
+    const of = (o: typeof live, unit: string) => o.results.find((r) => r.unit === unit);
+    expect(of(live, "A PAR")).toMatchObject({ ok: false, illegal: "unreachable", submitted: "A PAR - MOS" });
+    expect(of(live, "A MAR")).toMatchObject({ ok: false, illegal: "duplicate_order" });
+
+    const saved = game.toSaved("illegal-1");
+    const first = JSON.parse(saved).phases[0];
+    expect(first.orders.FRANCE).toEqual(expect.arrayContaining(["A PAR - MOS", "A MAR - SPA", "A MAR - BUR"]));
+    expect(first.orders.FRANCE).not.toContain("A PAR H");
+    expect(first.results["A PAR"]).toEqual(["void"]);
+    // the engine's own export verifies clean and replays
+    expect(verifySaved(saved).divergences).toEqual([]);
+    expect(Game.fromSaved(saved).toSaved("illegal-1")).toBe(saved);
+
+    // a Durable Object wake must not turn the illegal order into a chosen hold
+    const woken = Game.resume(saved);
+    expect(woken.outcome(0).results).toEqual(live.results);
+    expect(woken.explain(0)).toEqual(game.explain(0));
+  });
+
+  it("keeps rejected orders across a save and every way of loading it", () => {
+    const game = new Game();
+    const live = game.process({ orders: { FRANCE: ["complete garbage", "A PAR - BUR"], GERMANY: ["A PAR - PIC"] } });
+    expect(live.rejected.map((r) => [r.power, r.input, r.code])).toEqual([
+      ["FRANCE", "complete garbage", "unparseable"],
+      ["GERMANY", "A PAR - PIC", "foreign_unit"],
+    ]);
+    game.process({ orders: {} });
+    const saved = game.toSaved("rejected-1");
+    expect(JSON.parse(saved).cabal.rejected.S1901M).toHaveLength(2);
+    for (const loaded of [Game.resume(saved), Game.fromSaved(saved), Game.fromSnapshot(game.snapshot(), saved)]) {
+      expect(loaded.outcome(0).rejected).toEqual(live.rejected);
+      expect(loaded.outcome(1).rejected).toEqual([]);
+      expect(loaded.toSaved("rejected-1")).toBe(saved);
+    }
+    expect(verifySaved(saved).divergences).toEqual([]);
+    // a what-if never leaves anything on the game
+    game.preview({ orders: { FRANCE: ["more garbage"] } });
+    expect(game.toSaved("rejected-1")).toBe(saved);
+  });
+});
+
+describe("a host's cabal block", () => {
+  const entry = { id: "p1", pledger: "FRANCE", audience: "ALL", phase: "S1901M", sealed: true, commitment: "ab", nonce: "cd", orders: ["A PAR - BUR"], receipt: "kept" };
+  const blocks: [string, unknown][] = [
+    ["the server's summary", { protocol: 3, status: "active", finished: null, pledges: [entry], history: [{ phase: "S1901M" }] }],
+    ["a pledge of another shape", { protocol: 3, pledges: [{ id: "p1", by: "FRANCE", text: "I will not attack" }] }],
+    ["a receipt the engine does not know", { protocol: 3, pledges: [{ ...entry, receipt: "invalid" }] }],
+    ["a pledge without a phase", { protocol: 3, pledges: [{ ...entry, phase: undefined }] }],
+    ["a string rulebook", { protocol: 3, rulebook: "2023", status: "active" }],
+    ["a string outcome", { protocol: 3, outcome: "draw" }],
+    ["a string", "v1"],
+    ["an array", [1, 2]],
+  ];
+  it.each(blocks)("does not stop the file loading: %s", (_, cabal) => {
+    const game = new Game("1971");
+    game.process({ orders: { FRANCE: ["A PAR - BUR"] } });
+    const json = JSON.stringify({ ...JSON.parse(game.toSaved("host-1")), cabal });
+    for (const loaded of [Game.fromSaved(json), Game.resume(json)]) {
+      expect(loaded.state()).toEqual(game.state());
+      expect(loaded.rulebook()).toBe("1971");
+    }
+    expect(verifySaved(json).divergences).toEqual([]);
+  });
+
+  it("still loads the engine's own block when a newer engine wrote more into it", () => {
+    const game = new Game();
+    game.process({ orders: { FRANCE: ["A PAR - BUR"] } });
+    const own = JSON.parse(game.toSaved("future-1"));
+    const future = { ...own, cabal: { ...own.cabal, outcome: { result: "abandoned" }, rulebook: { ...own.cabal.rulebook, some_new_rule: true } } };
+    for (const loaded of [Game.fromSaved(JSON.stringify(future)), Game.resume(JSON.stringify(future))]) {
+      expect(loaded.state()).toEqual(game.state());
+      expect(loaded.status()).toBe("active");
+    }
   });
 });

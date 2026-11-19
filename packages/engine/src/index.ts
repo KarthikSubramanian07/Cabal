@@ -77,8 +77,14 @@ export function ready(source?: InitSource): Promise<void> {
 /** Engine version (semantic version of the Rust crate). */
 export const version = (): string => wasm.version();
 
-/** Static description of the standard map: powers, provinces, adjacency. */
-export const mapInfo = (): wasm.MapInfo => wasm.map_info();
+/** Name of a bundled map, for `new Game(rulebook, map)` and `mapInfo(map)`. */
+export type MapName = "standard" | "duel";
+
+/**
+ * Static description of a bundled map: powers, provinces, adjacency. The
+ * standard map unless `map` names another (`duel`).
+ */
+export const mapInfo = (map?: MapName): wasm.MapInfo => wasm.map_info(map);
 
 /**
  * What this build of the engine is: version, the commit it was built from,
@@ -100,7 +106,8 @@ export const preview = (
   state: wasm.State,
   orders: wasm.OrdersByPower,
   rulebook?: string,
-): wasm.PhaseOutcome => wasm.preview(state, orders, rulebook);
+  map?: MapName,
+): wasm.PhaseOutcome => wasm.preview(state, orders, rulebook, map);
 
 /**
  * What-if with reasons: for every unit one plain-English sentence, the units
@@ -112,7 +119,8 @@ export const explainPreview = (
   state: wasm.State,
   orders: wasm.OrdersByPower,
   rulebook?: string,
-): wasm.Explanation => wasm.explainPreview(state, orders, rulebook);
+  map?: MapName,
+): wasm.Explanation => wasm.explainPreview(state, orders, rulebook, map);
 
 /**
  * Judge orders against the board of `state`: one verdict per order, in order,
@@ -126,7 +134,9 @@ export const validateOrders = (
   power: string,
   orders: string[],
   rulebook?: string,
-): wasm.OrderVerdicts => wasm.validateOrders(state, power, orders, rulebook);
+  map?: MapName,
+): wasm.OrderVerdicts =>
+  wasm.validateOrders(state, power, orders, rulebook, map);
 
 /**
  * Canonical MILA text for an order, or throws when it does not parse. Phase kind
@@ -137,7 +147,8 @@ export const canonicalOrder = (
   text: string,
   phaseKind: "M" | "R" | "A",
   power: string,
-): string => wasm.canonicalOrder(text, phaseKind, power);
+  map?: MapName,
+): string => wasm.canonicalOrder(text, phaseKind, power, map);
 
 /** Strength of the built-in heuristic bot. */
 export type BotLevel = "easy" | "standard" | "hard";

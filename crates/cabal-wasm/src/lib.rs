@@ -45,7 +45,7 @@ pub struct EngineInfo {
     pub version: String,
     /// Short hash of the commit it was built from, or `unknown`.
     pub commit: String,
-    /// `release` or `debug`.
+    /// Cargo profile by name: `wasm-release` for the WebAssembly build.
     pub profile: String,
     /// Optimisation level it was compiled at: `0` to `3`, `s` or `z`.
     pub opt_level: String,
@@ -57,7 +57,8 @@ pub struct EngineInfo {
     pub rulebooks: Vec<String>,
     /// Capabilities of this build, so a host can ask before it calls:
     /// `validate`, `explain`, `preview`, `legal_moves`, `snapshot`,
-    /// `tolerant_process`.
+    /// `tolerant_process`, `maps` (a map can be chosen by name) and
+    /// `saved_rejections` (rejected orders are kept in the saved game).
     pub features: Vec<String>,
 }
 
@@ -79,6 +80,8 @@ pub fn build_info() -> Result<Ts<EngineInfo>, JsError> {
             "legal_moves",
             "snapshot",
             "tolerant_process",
+            "maps",
+            "saved_rejections",
         ]
         .map(String::from)
         .to_vec(),
@@ -129,10 +132,10 @@ fn terrain_name(t: Terrain) -> &'static str {
     }
 }
 
-/// Static description of the standard map.
+/// Static description of a bundled map: `standard` (the default) or `duel`.
 #[wasm_bindgen]
-pub fn map_info() -> Result<Ts<MapInfo>, JsError> {
-    let map = Map::standard();
+pub fn map_info(map: Option<String>) -> Result<Ts<MapInfo>, JsError> {
+    let map = map_of(map)?;
     let powers = map
         .power_ids()
         .map(|p| PowerInfo {
@@ -780,6 +783,14 @@ fn status_text(map: &Map, s: Status) -> String {
         Status::Active => "active".into(),
         Status::Solo { winner } => format!("solo:{}", map.power(winner).name.to_ascii_uppercase()),
         Status::Draw => "draw".into(),
+    }
+}
+
+/// A bundled map by name; the standard map when none is named.
+fn map_of(name: Option<String>) -> Result<&'static Map, JsError> {
+    match name {
+        None => Ok(Map::standard()),
+        Some(n) => Map::by_name(&n).ok_or_else(|| JsError::new(&format!("unknown map {n}"))),
     }
 }
 
@@ -1454,7 +1465,7 @@ mod wasm_tests {
 
     #[wasm_bindgen_test]
     fn map_info_exposes_the_standard_map() {
-        let info = map_info().expect("standard map info");
+        let info = map_info(None).expect("standard map info");
         let info: MapInfo = serde_wasm_bindgen::from_value(info.js_value()).unwrap();
 
         assert_eq!(info.name, "standard");
@@ -1463,8 +1474,28 @@ mod wasm_tests {
     }
 
     #[wasm_bindgen_test]
+    fn a_game_can_be_played_on_the_duel_map() {
+        let info = map_info(Some("duel".to_string())).unwrap();
+        let info: MapInfo = serde_wasm_bindgen::from_value(info.js_value()).unwrap();
+        assert_eq!(info.name, "duel");
+        assert_eq!(info.powers.len(), 2);
+
+        let mut game = Game::new(None, Some("duel".to_string())).unwrap();
+        assert_eq!(game.map_name(), "duel");
+        let orders =
+            Ts::new_unchecked(serde_wasm_bindgen::to_value(&OrdersByPower::default()).unwrap());
+        game.process(orders).unwrap();
+        // the save names its map, so every loader finds it again
+        let saved = game.to_saved("duel").unwrap();
+        assert_eq!(Game::resume(&saved, None).unwrap().map_name(), "duel");
+        assert_eq!(Game::from_saved(&saved, None).unwrap().map_name(), "duel");
+
+        assert!(Game::new(None, Some("atlantis".to_string())).is_err());
+    }
+
+    #[wasm_bindgen_test]
     fn process_adjudicates_one_opening_phase() {
-        let mut game = Game::new(None).unwrap();
+        let mut game = Game::new(None, None).unwrap();
         let orders = OrdersByPower::default();
         let orders = Ts::new_unchecked(serde_wasm_bindgen::to_value(&orders).unwrap());
 
@@ -1483,7 +1514,7 @@ mod wasm_tests {
         let read = |outcome: Ts<PhaseOutcome>| -> PhaseOutcome {
             serde_wasm_bindgen::from_value(outcome.js_value()).unwrap()
         };
-        let mut game = Game::new(None).unwrap();
+        let mut game = Game::new(None, None).unwrap();
         game.process(no_orders()).unwrap();
         game.process(no_orders()).unwrap();
         game.declare_draw(None).unwrap();
@@ -1503,7 +1534,7 @@ mod wasm_tests {
     fn a_resumed_game_keeps_its_history_without_replaying_it() {
         let no_orders =
             || Ts::new_unchecked(serde_wasm_bindgen::to_value(&OrdersByPower::default()).unwrap());
-        let mut game = Game::new(Some("1971".to_string())).unwrap();
+        let mut game = Game::new(Some("1971".to_string()), None).unwrap();
         game.process(no_orders()).unwrap();
         let saved = game.to_saved("g").unwrap();
 
@@ -1521,7 +1552,7 @@ mod wasm_tests {
 
     #[wasm_bindgen_test]
     fn one_unreadable_order_does_not_reject_the_phase() {
-        let mut game = Game::new(None).unwrap();
+        let mut game = Game::new(None, None).unwrap();
         let mut orders = OrdersByPower::default();
         orders.orders.insert(
             "FRANCE".into(),
@@ -1545,7 +1576,7 @@ mod wasm_tests {
 
     #[wasm_bindgen_test]
     fn verdicts_and_structured_moves_cross_the_boundary() {
-        let game = Game::new(None).unwrap();
+        let game = Game::new(None, None).unwrap();
         let verdicts = game
             .validate_orders("FRANCE", vec!["A PAR - MOS".into(), "a par - bur".into()])
             .unwrap();
@@ -1570,7 +1601,7 @@ mod wasm_tests {
 
     #[wasm_bindgen_test]
     fn bot_orders_cross_the_boundary_and_adjudicate_cleanly() {
-        let mut game = Game::new(None).unwrap();
+        let mut game = Game::new(None, None).unwrap();
         let mut orders = OrdersByPower::default();
         for power in [
             "AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY",
@@ -1590,7 +1621,7 @@ mod wasm_tests {
 
     #[wasm_bindgen_test]
     fn explain_traces_past_movement_phases_only() {
-        let mut game = Game::new(None).unwrap();
+        let mut game = Game::new(None, None).unwrap();
         let mut orders = OrdersByPower::default();
         orders.orders.insert(
             "FRANCE".into(),
@@ -1676,21 +1707,34 @@ impl Game {
 
 #[wasm_bindgen]
 impl Game {
-    /// Start a new game on the standard map. `rulebook` is `2023` (default), `1982`, `1971` or `dptg`.
+    /// Start a new game. `rulebook` is `2023` (default), `1982`, `1971` or
+    /// `dptg`; `map` is `standard` (default) or `duel`. A map may set rules of
+    /// its own (the duel map is won at five centres) on top of the rulebook.
     #[wasm_bindgen(constructor)]
-    pub fn new(rulebook: Option<String>) -> Result<Game, JsError> {
+    pub fn new(rulebook: Option<String>, map: Option<String>) -> Result<Game, JsError> {
         Ok(Game::wrap(EngineGame::new(
-            Map::standard(),
+            map_of(map)?,
             rulebook_of(rulebook)?,
         )))
     }
 
+    /// Name of the map the game is played on (`standard`, `duel`).
+    #[wasm_bindgen(js_name = mapName)]
+    pub fn map_name(&self) -> String {
+        self.inner.map().name.clone()
+    }
+
     /// Resume from a state in MILA layout (no history). A state from
     /// `Game.state()` comes back exactly; one that lost its `cabal` extras on the
-    /// way keeps the retreat options it records.
+    /// way keeps the retreat options it records. `map` names the map the state
+    /// belongs to (`standard` when omitted).
     #[wasm_bindgen(js_name = fromState)]
-    pub fn from_state(state: Ts<State>, rulebook: Option<String>) -> Result<Game, JsError> {
-        let map = Map::standard();
+    pub fn from_state(
+        state: Ts<State>,
+        rulebook: Option<String>,
+        map: Option<String>,
+    ) -> Result<Game, JsError> {
+        let map = map_of(map)?;
         let s: State = state.to_rust()?;
         let gs =
             state_from_mila(map, &MilaState::from(s)).map_err(|e| JsError::new(&e.to_string()))?;
@@ -2305,8 +2349,13 @@ impl Game {
 /// Parse an order and return its canonical text, or throw. The unit kind must be given
 /// in the text (`A PAR - BUR`), since no board is consulted.
 #[wasm_bindgen(js_name = canonicalOrder)]
-pub fn canonical_order(text: &str, phase_kind: &str, power: &str) -> Result<String, JsError> {
-    let map = Map::standard();
+pub fn canonical_order(
+    text: &str,
+    phase_kind: &str,
+    power: &str,
+    map: Option<String>,
+) -> Result<String, JsError> {
+    let map = map_of(map)?;
     let p = map
         .find_power(power)
         .ok_or_else(|| JsError::new(&format!("unknown power {power}")))?;
@@ -2365,8 +2414,9 @@ pub fn preview(
     state: Ts<State>,
     orders: Ts<OrdersByPower>,
     rulebook: Option<String>,
+    map: Option<String>,
 ) -> Result<Ts<PhaseOutcome>, JsError> {
-    let mut game = Game::from_state(state, rulebook)?;
+    let mut game = Game::from_state(state, rulebook, map)?;
     game.process(orders)
 }
 
@@ -2377,8 +2427,9 @@ pub fn explain_preview(
     state: Ts<State>,
     orders: Ts<OrdersByPower>,
     rulebook: Option<String>,
+    map: Option<String>,
 ) -> Result<Ts<Explanation>, JsError> {
-    Ok(Game::from_state(state, rulebook)?
+    Ok(Game::from_state(state, rulebook, map)?
         .explain_orders(orders)?
         .into_ts()?)
 }
@@ -2391,8 +2442,9 @@ pub fn validate_orders_in(
     power: &str,
     orders: Vec<String>,
     rulebook: Option<String>,
+    map: Option<String>,
 ) -> Result<Ts<OrderVerdicts>, JsError> {
-    Game::from_state(state, rulebook)?.validate_orders(power, orders)
+    Game::from_state(state, rulebook, map)?.validate_orders(power, orders)
 }
 
 /// BLAKE3 commitment over canonical orders and a hex nonce (a *seal*).
