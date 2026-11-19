@@ -33,6 +33,18 @@ export async function liveTable(request: APIRequestContext): Promise<{ host: Sea
   return { host, guest };
 }
 
+/** Handles are unique on the server, which keeps them between runs: each test makes its own. */
+export const uniqueHandle = (stem: string) => `${stem}_${Date.now().toString(36).slice(-5)}${Math.floor(Math.random() * 36).toString(36)}`;
+
+/** The handle dialog that the first sit-down opens: write one in and take it. */
+export async function chooseHandle(page: Page, handle: string) {
+  const dialog = page.getByRole("dialog", { name: "Choose your handle" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Handle").fill(handle);
+  await dialog.getByRole("button", { name: "Take this handle" }).click();
+  await expect(dialog).toBeHidden();
+}
+
 /** A person on their own device (this project's kind of device), holding `seat` or watching without one. */
 export async function sitDown(browser: Browser, info: TestInfo, seat: Seat | null, gameId: string): Promise<Page> {
   const use = info.project.use;
