@@ -11,6 +11,7 @@
 //! - [`game`]: phase progression, supply centre bookkeeping, victory.
 //! - [`json`]: MILA / Cicero compatible saved game format.
 //! - [`snapshot`]: lossless restore without adjudicating the past.
+//! - [`verify`]: replay a recorded game and report every divergence.
 //! - [`pledge`]: seals (commitments) and receipts.
 //!
 //! No I/O, no randomness, no host dependencies: the same crate runs natively
@@ -29,6 +30,7 @@ pub mod rulebook;
 pub mod snapshot;
 pub mod state;
 pub mod text;
+pub mod verify;
 
 pub use adjudicate::{
     adjustment::{AdjustmentResult, resolve_adjustment},
