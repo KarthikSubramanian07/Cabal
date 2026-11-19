@@ -484,6 +484,26 @@ mod wasm_tests {
     }
 
     #[wasm_bindgen_test]
+    fn bot_orders_cross_the_boundary_and_adjudicate_cleanly() {
+        let mut game = Game::new(None).unwrap();
+        let mut orders = OrdersByPower::default();
+        for power in [
+            "AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY",
+        ] {
+            let d = game.bot_orders(power, "wasm-test", None).unwrap();
+            let d: BotDecision = serde_wasm_bindgen::from_value(d.js_value()).unwrap();
+            assert_eq!(d.level, "standard");
+            assert!(!d.orders.is_empty());
+            orders.orders.insert(power.into(), d.orders);
+        }
+        let orders = Ts::new_unchecked(serde_wasm_bindgen::to_value(&orders).unwrap());
+        let outcome = game.process(orders).unwrap();
+        let outcome: PhaseOutcome = serde_wasm_bindgen::from_value(outcome.js_value()).unwrap();
+        assert_eq!(outcome.results.len(), 22);
+        assert!(outcome.results.iter().all(|r| r.code != "illegal"));
+    }
+
+    #[wasm_bindgen_test]
     fn explain_traces_past_movement_phases_only() {
         let mut game = Game::new(None).unwrap();
         let mut orders = OrdersByPower::default();
@@ -743,6 +763,180 @@ impl Game {
     }
 }
 
+// ---------- bot ----------
+
+/// One support the bot ordered.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+#[tsify(missing_as_null)]
+pub struct BotSupport {
+    /// The supporting unit (`A BUR`).
+    pub unit: String,
+    /// The supported unit (`A PAR`).
+    pub supports: String,
+    /// Where the supported unit is going (`MUN`), `null` for support to hold.
+    pub into: Option<String>,
+    /// Who owns the supported unit (`FRANCE`).
+    pub power: String,
+}
+
+/// A rival the bot is worried about.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct BotFear {
+    pub power: String,
+    /// Units of that power in reach of the bot's centres (counted twice) and units.
+    pub threat: u32,
+}
+
+/// Why the bot ordered what it ordered, for press and for the UI.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct BotIntent {
+    /// Provinces it is trying to take, best first (`["BEL", "MUN"]`).
+    pub targets: Vec<String>,
+    /// Powers those provinces or the units on them belong to.
+    pub against: Vec<String>,
+    /// Its own threatened centres it is holding or supporting.
+    pub defends: Vec<String>,
+    pub supports: Vec<BotSupport>,
+    /// Rivals in reach of its centres and units, most dangerous first.
+    pub fears: Vec<BotFear>,
+    /// Candidate order sets compared (movement phases).
+    pub candidates: u32,
+    /// Adjudications spent searching (movement phases).
+    pub adjudications: u32,
+}
+
+/// A complete order set for one power, chosen by the built-in heuristic bot.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct BotDecision {
+    pub power: String,
+    pub phase: String,
+    /// `easy`, `standard` or `hard`.
+    pub level: String,
+    /// Canonical order text, ready for `process` (`["A PAR - BUR", ...]`).
+    pub orders: Vec<String>,
+    pub intent: BotIntent,
+}
+
+fn bot_decision(
+    game: &EngineGame,
+    power: &str,
+    seed: &str,
+    level: Option<String>,
+) -> Result<BotDecision, String> {
+    let map = game.map();
+    let p = map
+        .find_power(power)
+        .ok_or_else(|| format!("unknown power {power}"))?;
+    let level = match level.as_deref() {
+        None => cabal_bot::Level::default(),
+        Some(name) => {
+            cabal_bot::Level::parse(name).ok_or_else(|| format!("unknown bot level {name}"))?
+        }
+    };
+    let state = &game.state;
+    let pos = &state.position;
+    let decision = cabal_bot::decide(
+        map,
+        game.rulebook,
+        state,
+        p,
+        cabal_bot::seed_from_str(seed),
+        level,
+    );
+    let power_name = |q: Power| map.power(q).name.to_ascii_uppercase();
+    let unit_at = |x: cabal_engine::ProvinceId| {
+        pos.unit_at(x)
+            .map(|u| unit_text(map, u))
+            .unwrap_or_else(|| province_code(map, x))
+    };
+    let orders = decision
+        .orders
+        .iter()
+        .map(|o| match o {
+            AnyOrder::Movement(o) => order_text(map, pos, o),
+            AnyOrder::Retreat(o) => {
+                // a dislodged unit is off the board, so name it from the retreat list
+                let unit = state
+                    .dislodged
+                    .iter()
+                    .find(|d| d.unit.province() == o.unit)
+                    .map(|d| unit_text(map, &d.unit))
+                    .unwrap_or_else(|| province_code(map, o.unit));
+                match o.command {
+                    cabal_engine::RetreatCommand::Retreat { dest, coast } => format!(
+                        "{unit} R {}",
+                        map.region_name(cabal_engine::Region::new(dest, coast))
+                    ),
+                    cabal_engine::RetreatCommand::Disband => format!("{unit} D"),
+                }
+            }
+            AnyOrder::Adjustment(o) => adjust_text(map, pos, o),
+        })
+        .collect();
+    let intent = decision.intent;
+    Ok(BotDecision {
+        power: power_name(p),
+        phase: state.phase.to_string(),
+        level: level.name().to_string(),
+        orders,
+        intent: BotIntent {
+            targets: intent
+                .targets
+                .iter()
+                .map(|&x| province_code(map, x))
+                .collect(),
+            against: intent.against.iter().map(|&q| power_name(q)).collect(),
+            defends: intent
+                .defends
+                .iter()
+                .map(|&x| province_code(map, x))
+                .collect(),
+            supports: intent
+                .supports
+                .iter()
+                .map(|s| BotSupport {
+                    unit: unit_at(s.unit),
+                    supports: unit_at(s.target),
+                    into: s.dest.map(|x| province_code(map, x)),
+                    power: power_name(s.power),
+                })
+                .collect(),
+            fears: intent
+                .fears
+                .iter()
+                .map(|f| BotFear {
+                    power: power_name(f.power),
+                    threat: f.threat,
+                })
+                .collect(),
+            candidates: intent.candidates,
+            adjudications: intent.adjudications,
+        },
+    })
+}
+
+#[wasm_bindgen]
+impl Game {
+    /// Orders for `power` in the current phase from the built-in heuristic bot
+    /// (`cabal-bot`): legal, complete, and a pure function of the game state,
+    /// `seed` and `level` (`easy`, `standard` by default, `hard`). Use one seed
+    /// per game, the game id for instance; it is mixed with the phase and power.
+    #[wasm_bindgen(js_name = botOrders)]
+    pub fn bot_orders(
+        &self,
+        power: &str,
+        seed: &str,
+        level: Option<String>,
+    ) -> Result<Ts<BotDecision>, JsError> {
+        if self.inner.is_finished() {
+            return Err(JsError::new("the game is finished"));
+        }
+        let decision =
+            bot_decision(&self.inner, power, seed, level).map_err(|e| JsError::new(&e))?;
+        Ok(decision.into_ts()?)
+    }
+}
+
 // ---------- stateless helpers ----------
 
 /// Parse an order and return its canonical text, or throw. The unit kind must be given
@@ -837,4 +1031,87 @@ pub fn pledge_receipt(pledged: Vec<String>, submitted: Vec<String>) -> String {
         cabal_engine::pledge::Receipt::Void => "void",
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod bot_tests {
+    use super::*;
+
+    fn play(seed: &str, level: &str, until: u16) -> (EngineGame, Vec<BotDecision>) {
+        let map = Map::standard();
+        let mut game = EngineGame::new(map, Rulebook::default());
+        let mut log = Vec::new();
+        while !game.is_finished() && game.phase().year < until {
+            let mut by_power = OrdersByPower::default();
+            for p in map.power_ids() {
+                let name = map.power(p).name.to_ascii_uppercase();
+                let d = bot_decision(&game, &name, seed, Some(level.to_string())).unwrap();
+                by_power.orders.insert(name, d.orders.clone());
+                log.push(d);
+            }
+            // the text the bot emits must survive the same parser `process` uses
+            let typed = typed_orders_checked(&game, &by_power);
+            game.process(&typed).unwrap();
+            let record = game.history.last().unwrap();
+            let outcome = outcome_of(&game, record);
+            for r in &outcome.results {
+                assert_ne!(
+                    r.code, "illegal",
+                    "{}: {} ({})",
+                    outcome.phase, r.order, r.reason
+                );
+            }
+        }
+        (game, log)
+    }
+
+    fn typed_orders_checked(game: &EngineGame, orders: &OrdersByPower) -> Vec<AnyOrder> {
+        let map = game.map();
+        let mut out = Vec::new();
+        for (power, list) in &orders.orders {
+            let p = map.find_power(power).unwrap();
+            for text in list {
+                let parsed = parse_for(map, text, p).unwrap();
+                out.push(match game.phase().kind {
+                    PhaseKind::Movement => AnyOrder::Movement(parsed.to_movement(Some(p)).unwrap()),
+                    PhaseKind::Retreat => AnyOrder::Retreat(parsed.to_retreat(Some(p)).unwrap()),
+                    PhaseKind::Adjustment => {
+                        AnyOrder::Adjustment(parsed.to_adjustment(Some(p)).unwrap())
+                    }
+                });
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn bot_order_text_round_trips_through_the_parser_for_whole_games() {
+        for (seed, level) in [("alpha", "easy"), ("beta", "standard"), ("gamma", "easy")] {
+            let (game, log) = play(seed, level, 1906);
+            assert!(game.history.len() >= 10);
+            assert!(
+                log.iter()
+                    .any(|d| d.phase.ends_with('R') && !d.orders.is_empty())
+            );
+            assert!(
+                log.iter()
+                    .any(|d| d.phase.ends_with('A') && !d.orders.is_empty())
+            );
+        }
+    }
+
+    #[test]
+    fn bot_decisions_are_deterministic_and_seeded() {
+        let game = EngineGame::new(Map::standard(), Rulebook::default());
+        let a = bot_decision(&game, "FRANCE", "game-1", None).unwrap();
+        let b = bot_decision(&game, "FRANCE", "game-1", Some("standard".into())).unwrap();
+        assert_eq!(a.orders, b.orders);
+        assert_eq!(a.level, "standard");
+        assert_eq!(a.power, "FRANCE");
+        assert_eq!(a.phase, "S1901M");
+        assert_eq!(a.orders.len(), 3);
+        assert!(a.intent.adjudications > 0);
+        assert!(bot_decision(&game, "ATLANTIS", "s", None).is_err());
+        assert!(bot_decision(&game, "FRANCE", "s", Some("godlike".into())).is_err());
+    }
 }

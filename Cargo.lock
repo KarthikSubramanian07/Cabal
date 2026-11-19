@@ -131,6 +131,7 @@ dependencies = [
 name = "cabal-wasm"
 version = "0.1.0"
 dependencies = [
+ "cabal-bot",
  "cabal-engine",
  "hex",
  "serde",
