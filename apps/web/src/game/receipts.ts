@@ -132,7 +132,9 @@ export function receiptFor(result: OrderResult, phase: string, names?: Names): R
     return {
       tone: "fail",
       verdict: "Bounced",
-      detail: who ? `Bounced with the unit from ${who}. Nobody moved.` : "Bounced. Nobody moved.",
+      detail: who
+        ? `Bounced with the ${who.includes(" and ") || who.includes(",") ? "units" : "unit"} from ${who}, which had at least as much strength.`
+        : "Bounced: it did not have the strength to get in.",
     };
   }
   if ((m = /^repelled by (\w+)/.exec(reason))) {

@@ -100,3 +100,45 @@ table.keys td {
 table.keys tr + tr {
   border-top: 1px solid var(--bone-2);
 }
+
+dialog.confirm {
+  width: min(440px, calc(100vw - 32px));
+  padding: 22px 22px 18px;
+  border: 1px solid var(--ink);
+  border-top: 4px solid var(--brass);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+dialog.confirm::backdrop {
+  background: rgba(18, 17, 16, 0.45);
+}
+
+dialog.confirm h2 {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 400;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.confirm-body p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-lg);
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.confirm-actions .btn {
+  min-height: var(--hit);
+  padding: 0 16px;
+}

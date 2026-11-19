@@ -55,7 +55,7 @@ describe("receiptFor", () => {
 
   it("uses place names when it has them and codes when it does not", () => {
     expect(receiptFor(result("bounced with MUN", "bounce"), "S1901M", names).detail).toBe(
-      "Bounced with the unit from Munich. Nobody moved.",
+      "Bounced with the unit from Munich, which had at least as much strength.",
     );
     expect(receiptFor(result("bounced with MUN, TYR", "bounce"), "S1901M", names).detail).toContain("Munich and Tyrolia");
     expect(receiptFor(result("bounced with MUN", "bounce"), "S1901M").detail).toContain("MUN");

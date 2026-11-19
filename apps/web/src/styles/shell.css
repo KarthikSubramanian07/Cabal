@@ -70,12 +70,6 @@
   align-items: start;
 }
 
-@media (max-width: 1000px) {
-  .table {
-    grid-template-columns: 1fr;
-  }
-}
-
 .loading-body {
   display: grid;
   place-items: center;

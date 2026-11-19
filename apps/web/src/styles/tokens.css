@@ -87,6 +87,10 @@
   --ease-in-out: cubic-bezier(0.6, 0, 0.3, 1);
   --ease-thud: cubic-bezier(0.3, 1.4, 0.5, 1);
 
+  /* ---- phone layout: the fixed bars the board is fitted between */
+  --topbar-h: 56px;
+  --sheet-h: 116px;
+
   /* ---- stacking, lowest first */
   --z-board-controls: 2;
   --z-popover: 5;

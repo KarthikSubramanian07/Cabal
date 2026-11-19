@@ -5,13 +5,20 @@
   padding: 14px 14px 10px;
 }
 
+/* The map and its order tools. A plain wrapper on wide screens; the first screen on a phone. */
+.stage {
+  display: contents;
+}
+
 .board-frame {
   position: relative;
   width: min(100%, calc((100vh - 150px) * var(--board-aspect, 1)));
   min-width: min(100%, 560px);
+  aspect-ratio: var(--board-aspect, 1);
   margin: 0 auto;
   border: 1px solid var(--ink);
-  background: var(--sea);
+  /* Shows only where the frame is not the board's shape: the desk under the map sheet. */
+  background: var(--bone-3);
   box-shadow: 0 1px 0 var(--paper), 0 12px 30px -18px rgba(18, 17, 16, 0.35);
   overflow: hidden;
 }
@@ -19,7 +26,7 @@
 svg.board {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
@@ -104,17 +111,29 @@ svg.board {
   pointer-events: none;
 }
 
+/* Brass is the brand's colour for what is active and selectable: the chosen unit's province
+   in solid brass, the provinces it may act on in a lighter, dashed brass. */
 .target {
-  fill: rgba(200, 162, 74, 0.2);
+  fill: color-mix(in srgb, var(--brass) 26%, transparent);
   stroke: var(--brass-deep);
   stroke-width: 1.6;
+  stroke-dasharray: 5 3;
   pointer-events: none;
 }
 
 .selected {
-  fill: rgba(217, 79, 48, 0.1);
-  stroke: var(--vermilion);
-  stroke-width: 2.2;
+  fill: color-mix(in srgb, var(--brass) 38%, transparent);
+  stroke: var(--brass-deep);
+  stroke-width: 2.6;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* The edge of the map sheet, visible when the frame shows the desk around it. */
+.sheet-edge {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.2;
   pointer-events: none;
 }
 
@@ -145,11 +164,12 @@ svg.board {
   r: 2.6;
 }
 
+/* Province codes. Board.tsx sets --label-size for the zoom, so they stay readable. */
 .label {
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: var(--label-size, 8.5px);
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
   text-anchor: middle;
   dominant-baseline: middle;
   pointer-events: none;
@@ -158,20 +178,21 @@ svg.board {
 .label.land {
   fill: var(--ink-2);
   paint-order: stroke;
-  stroke: rgba(251, 249, 244, 0.7);
-  stroke-width: 2.4px;
+  stroke: rgba(251, 249, 244, 0.78);
+  stroke-width: calc(var(--label-size, 8.5px) * 0.3);
+  stroke-linejoin: round;
 }
 
 .label.sea {
   fill: var(--sea-ink);
   font-style: italic;
-  font-size: 9px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
 }
 
 .coast-label {
   font-family: var(--font-mono);
-  font-size: 6px;
+  font-size: calc(var(--label-size, 8.5px) * 0.68);
+  dominant-baseline: middle;
   fill: var(--sea-ink);
   text-anchor: middle;
   pointer-events: none;
@@ -241,6 +262,11 @@ svg.board {
 
 .order.retreat .stroke {
   stroke-dasharray: 4 3;
+}
+
+/* A move by convoy reads as a move, with the convoy's dotted rhythm. */
+.order.via .stroke {
+  stroke-dasharray: 9 3 1.5 3;
 }
 
 .order.hold circle {

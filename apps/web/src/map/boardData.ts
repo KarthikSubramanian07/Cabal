@@ -33,7 +33,14 @@ export interface Board {
 let loading: Promise<Board> | undefined;
 
 export function loadBoard(): Promise<Board> {
-  loading ??= import("./board.json").then((m) => m.default as unknown as Board);
+  loading ??= import("./board.json").then(
+    (m) => m.default as unknown as Board,
+    (err: unknown) => {
+      // Forget a failed fetch so a retry asks the network again.
+      loading = undefined;
+      throw err;
+    },
+  );
   return loading;
 }
 

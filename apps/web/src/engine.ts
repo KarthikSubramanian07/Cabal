@@ -4,8 +4,12 @@ import { ready } from "@cabal/engine";
 
 let loading: Promise<void> | undefined;
 
+/** Resolves once the engine can be called. A failed load is forgotten so a retry fetches again. */
 export function engineReady(): Promise<void> {
-  loading ??= ready(new URL(wasmUrl, window.location.href));
+  loading ??= ready(new URL(wasmUrl, window.location.href)).catch((err: unknown) => {
+    loading = undefined;
+    throw err;
+  });
   return loading;
 }
 

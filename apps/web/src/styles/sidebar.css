@@ -6,11 +6,9 @@
   min-height: 100%;
 }
 
-@media (max-width: 1000px) {
-  .sidebar {
-    border-left: 0;
-    border-top: 1px solid var(--rule);
-  }
+/* The sheet handle is for phones (responsive.css); on a desktop the sidebar is always open. */
+.sheet-bar {
+  display: none;
 }
 
 .sidebar section,
@@ -221,7 +219,24 @@ table.powers td.done {
   padding-right: 6px;
 }
 
-.orders .row button {
+.orders .row .via {
+  padding: 2px 7px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.orders .row .via[aria-pressed="true"] {
+  border-color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--brass);
+}
+
+.orders .row .remove {
   width: 24px;
   height: 24px;
   border: 0;
@@ -232,7 +247,7 @@ table.powers td.done {
   cursor: pointer;
 }
 
-.orders .row button:hover {
+.orders .row .remove:hover {
   background: var(--bone-3);
   color: var(--ink);
 }
@@ -340,6 +355,10 @@ table.powers td.done {
   color: var(--vermilion-deep);
 }
 
+.receipt.neutral .mark {
+  color: var(--ink-3);
+}
+
 .receipt code {
   font-size: 13px;
 }
@@ -353,4 +372,30 @@ table.powers td.done {
 .aftermath p {
   margin: 0 0 6px;
   color: var(--ink-2);
+}
+
+.import-error {
+  grid-column: 1 / -1;
+  padding: 8px 10px;
+  border-left: 3px solid var(--vermilion);
+  background: var(--bone-2);
+}
+
+.import-error p {
+  margin: 0 0 4px;
+  font-weight: 550;
+}
+
+.import-error summary {
+  cursor: pointer;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+.import-error code {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
 }

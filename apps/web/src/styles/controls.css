@@ -1,14 +1,26 @@
 /* Controls around the board: zoom, coast picker, order tools, choices and the text alternative. */
 
-.zoom {
+.zoom,
+.pan {
   position: absolute;
-  top: 10px;
+  z-index: var(--z-board-controls);
   right: 10px;
   display: grid;
   gap: 4px;
 }
 
-.zoom button {
+.zoom {
+  top: 10px;
+}
+
+/* The drag alternative (WCAG 2.5.7): shown whenever there is map out of view. */
+.pan {
+  bottom: 10px;
+  grid-auto-flow: column;
+}
+
+.zoom button,
+.pan button {
   width: 30px;
   height: 30px;
   border: 1px solid var(--ink);
@@ -17,6 +29,11 @@
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
+}
+
+.zoom button:hover:not(:disabled),
+.pan button:hover {
+  background: var(--bone-2);
 }
 
 .zoom button:disabled {
@@ -48,6 +65,7 @@
 
 .picker button {
   text-align: left;
+  min-height: 34px;
   padding: 7px 8px;
   border: 0;
   background: none;
@@ -165,4 +183,34 @@
   height: 18px;
   margin: 2px 0 0;
   flex: none;
+}
+
+/* The note that a saved game was picked up, laid over the top of the map. */
+.resume {
+  position: absolute;
+  z-index: var(--z-board-controls);
+  top: 24px;
+  left: 24px;
+  right: 60px;
+  width: fit-content;
+  max-width: calc(100% - 84px);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 8px 10px 8px 12px;
+  border: 1px solid var(--ink);
+  border-left: 4px solid var(--brass);
+  background: var(--paper);
+}
+
+.resume p {
+  margin: 0 6px 0 0;
+}
+
+/* Words that only make sense with a keyboard are dropped on touch screens. */
+@media (pointer: coarse) {
+  .keys-only {
+    display: none;
+  }
 }

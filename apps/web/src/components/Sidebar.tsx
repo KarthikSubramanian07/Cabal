@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import type { PhaseRecord, PowerSummary } from "../game/useSandbox.js";
 import { type PhaseKind, describePhase, parseOrder, titleCase } from "../game/notation.js";
+import { receiptFor } from "../game/receipts.js";
 import { POWER_COLOR } from "../map/Board.jsx";
 
 export function PhaseHeader({ phase, status, viewing }: { phase: string; status: string; viewing: boolean }) {
@@ -94,6 +95,8 @@ export function OrderList({
   orders,
   allowance,
   onRemove,
+  alternative,
+  onReplace,
 }: {
   power: string;
   kind: PhaseKind;
@@ -102,6 +105,9 @@ export function OrderList({
   orders: Record<string, string>;
   allowance: number;
   onRemove: (key: string) => void;
+  /** The same move by the other route (`... VIA`), when the unit could walk or be convoyed. */
+  alternative?: (text: string) => string | null;
+  onReplace?: (key: string, text: string) => void;
 }) {
   if (kind === "A") {
     const entries = Object.entries(orders);
@@ -111,7 +117,7 @@ export function OrderList({
         {allowance > 0 ? (
           <p className="hint">
             {titleCase(power)} may build {allowance} {allowance === 1 ? "unit" : "units"}. Click an empty home supply
-            centre.
+            centre, or waive.
           </p>
         ) : null}
         {allowance < 0 ? (
@@ -122,7 +128,7 @@ export function OrderList({
         {entries.map(([key, text]) => (
           <div className="row given" key={key}>
             <code>{text}</code>
-            <button type="button" aria-label={`Remove ${text}`} onClick={() => onRemove(key)}>
+            <button type="button" className="remove" aria-label={`Remove ${text}`} onClick={() => onRemove(key)}>
               ×
             </button>
           </div>
@@ -144,8 +150,19 @@ export function OrderList({
         return (
           <div className={`row ${text ? "given" : "missing"}`} key={unit}>
             <code>{text ?? unit}</code>
+            {text && alternative?.(text) ? (
+              <button
+                type="button"
+                className="via"
+                aria-pressed={text.endsWith(" VIA")}
+                aria-label={`${text}: go by convoy`}
+                onClick={() => onReplace?.(unit, alternative(text)!)}
+              >
+                By convoy
+              </button>
+            ) : null}
             {text ? (
-              <button type="button" aria-label={`Remove ${text}`} onClick={() => onRemove(unit)}>
+              <button type="button" className="remove" aria-label={`Remove ${text}`} onClick={() => onRemove(unit)}>
                 ×
               </button>
             ) : (
@@ -158,7 +175,10 @@ export function OrderList({
   );
 }
 
-export function Results({ record }: { record: PhaseRecord }) {
+type Names = Record<string, { name: string } | undefined>;
+
+export function Results({ record, names }: { record: PhaseRecord; names?: Names }) {
+  const place = (code: string) => names?.[code]?.name ?? code;
   const given = new Set(Object.values(record.orders).flatMap((o) => Object.values(o)));
   const byPower = new Map<string, typeof record.outcome.results>();
   for (const r of record.outcome.results) {
@@ -178,18 +198,23 @@ export function Results({ record }: { record: PhaseRecord }) {
             <span className="swatch" aria-hidden />
             {titleCase(power)}
           </h3>
-          {list.map((r, i) => (
-            <div className={`receipt ${r.ok ? "ok" : "fail"}`} key={`${r.order}-${i}`}>
-              <span className="mark" aria-hidden="true">
-                {r.ok ? "✓" : "✕"}
-              </span>
-              <code>
-                {r.order}
-                <span className="sr-only">{r.ok ? ": succeeded" : ": failed"}</span>
-              </code>
-              {r.ok ? null : <span className="why">{r.reason}</span>}
-            </div>
-          ))}
+          {list.map((r, i) => {
+            const receipt = receiptFor(r, record.phase, names);
+            return (
+              <div className={`receipt ${receipt.tone}`} key={`${r.order}-${i}`} data-code={r.code}>
+                <span className="mark" aria-hidden="true">
+                  {receipt.tone === "ok" ? "✓" : receipt.tone === "fail" ? "✕" : "–"}
+                </span>
+                <code>
+                  {r.order}
+                  <span className="sr-only">
+                    {receipt.tone === "ok" ? ": succeeded" : receipt.tone === "fail" ? ": failed" : ": done"}
+                  </span>
+                </code>
+                {receipt.detail ? <span className="why">{receipt.detail}</span> : null}
+              </div>
+            );
+          })}
         </section>
       ))}
       {byPower.size === 0 ? <p className="hint">Every unit held.</p> : null}
@@ -197,11 +222,13 @@ export function Results({ record }: { record: PhaseRecord }) {
         <section className="aftermath">
           {dislodged.map((d) => (
             <p key={d.unit}>
-              <code>{d.unit}</code> was dislodged by the attack from {d.attacker_from}.{" "}
-              {d.retreat_options.length ? `It may retreat to ${d.retreat_options.join(", ")}.` : "It has nowhere to go."}
+              <code>{d.unit}</code> was dislodged by the attack from {place(d.attacker_from)}.{" "}
+              {d.retreat_options.length
+                ? `It may retreat to ${d.retreat_options.map((o) => place(o.slice(0, 3)) + (o.length > 3 ? ` (${o.slice(4)})` : "")).join(", ")}.`
+                : "It has nowhere to go and will be disbanded."}
             </p>
           ))}
-          {standoffs.length ? <p>Standoff in {standoffs.join(", ")}. Nobody may retreat there.</p> : null}
+          {standoffs.length ? <p>Standoff in {standoffs.map(place).join(", ")}. Nobody may retreat there.</p> : null}
           {removed.length ? <p>Removed in civil disorder: {removed.join(", ")}.</p> : null}
         </section>
       ) : null}
