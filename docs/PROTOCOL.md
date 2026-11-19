@@ -268,10 +268,18 @@ A seal protects a player from the other players, not from the server, which must
 | `GET /api/me/games` | `{ games }`: the player's games, live and ended, listed or not, as `{ gameId, power, status, joinedAt, finishedAt, result, score, centers, ratingDelta }` |
 | `GET /api/leaderboard` | `{ ladder, entries, offset, limit, next }`: established ratings, best first, each `{ rank, player, rating, rd, conservative, games, lastGameAt }`. `offset` and `limit` (up to 100) page it |
 | `GET /api/ledger` | `{ entries, offset, limit, next }`: the global trust ledger, most trusted first, each `{ rank, player, trust, games }`, for players with at least three kept or broken pledges |
+| `GET /api/push/key` | `{ publicKey }`: the VAPID public key to pass to `pushManager.subscribe` as `applicationServerKey`, null where push is off. Cacheable for five minutes |
+| `POST /api/me/push` | with a player secret: a browser's `PushSubscription.toJSON()`, `{ endpoint, expirationTime?, keys }`. `201 { devices }`. The endpoint must be a known push service over https (`bad_endpoint`), the keys a P-256 point and a 16-byte secret (`bad_keys`). A player keeps their five newest devices; signing a device out forgets its subscription |
+| `DELETE /api/me/push` | `{ endpoint }` forgets one of the player's subscriptions: 204 |
+| `GET /api/me/notifications` | `{ preferences, devices, reminderMinutes }`: one switch per kind of notice (see Notifications), how many browsers are subscribed, and how long before a deadline the reminder goes out |
+| `PATCH /api/me/notifications` | any of `{ deadline, phase, press, started, finished }`; the rest are kept. Answers like `GET` |
+| `POST /api/metrics` | `{ samples }`, up to 50 of `{ metric, ms }` with `metric` `order_rtt` (an `orders.set` to its `orders.ack`, at most 60 s) or `landing_to_game` (landing page to a first phase that accepts orders). Anonymous: nothing about the sender is kept but the continent. 204 |
+| `GET /api/metrics` | admin (`Authorization: Bearer <ADMIN_TOKEN>`; 404 where none is set): `{ from, to, metrics }` over the last `days` (default 30), each metric `{ id, title, target, status, value, unit, samples, lastAt, detail }` with `status` `pass`, `fail` or `unmeasured` |
+| `POST /api/metrics/datc` | admin: `{ passed, failed, skipped, commit, engine? }`, the DATC case totals for a commit. `201 { recorded }`, false for a report already recorded |
 
 Bearer tokens go in the `Authorization` header, never in a URL. There are two kinds: a seat token (`<gameId>.<POWER>.<secret>`) speaks for one seat, a player secret (`cps_` and 48 hex characters) for one player. `ledger`, `replay` and `press` are public; a seat token widens them to that seat's private pledges and threads. A player secret that is not valid is a 401 `signed_out` wherever it is sent, never silently anonymous play. Create, join, substitute and seat recovery are rate limited per client address, as are reads, starts and socket upgrades; making and restoring accounts per address (10 a minute); changes to an account per player (20 a minute). Profiles, the leaderboard and the trust ledger may be cached for a minute; everything under `/api/me` and every answer that carries a secret is `private, no-store`.
 
-Every answer is JSON with CORS headers. A request that fails inside the server is answered `500 { error: "internal error", requestId }`; the same `requestId` is on the structured log line.
+Every answer is JSON with CORS headers and names its request in an `x-request-id` header. A request that fails inside the server is answered `500 { error: "internal error", requestId }`; the same `requestId` is on every structured log line the request wrote, in the Worker and in the room.
 
 A listing from `GET /api/games?status=open|active` is `{ gameId, status, settings, cluster, hostName, humans, openSeats, phase, deadlineAt, createdAt, updatedAt }`. A finished game is `{ gameId, result, reason, winners, scores, settings, cluster, phaseCount, createdAt, finishedAt, ledger, seats, players?, movementPhases? }`. `players` lists every stint at every seat (who held it, from when, whether they were a substitute or left, phases due, ordered in time and ordered late, and the receipts that count towards their ledger); it is how ratings, reliability and the trust ledger are fed.
 
@@ -307,6 +315,20 @@ The leaderboard lists ratings with at least three games and a deviation of at mo
 Reliability is `(onTime + 0.5 * late + 9) / (due + 10 + 4 * walkedOut)`, so a newcomer starts at 0.9. A phase is due when the player's seat had something to order; on time when the player filed orders before the deadline, late when only in the grace period, missed otherwise. A game is walked out of when the player's seat went to a substitute or was in civil disorder at the end.
 
 The trust ledger counts the receipts of a player's pledges across games, `(kept + 5) / (kept + broken + 10)`, starting at 0.5; void receipts are shown but do not move it. Only a promise made to another person counts: to a power another signed-in player held when it was made, or to `ALL` in a game with at least two signed-in players. Pledges to AI seats, anonymous seats or oneself stay in the game's own ledger.
+
+## Notifications
+
+A signed-in player who subscribes a browser (`POST /api/me/push`) is told by Web Push when a game needs them and they are away from it, that is when no socket is open for their seat. Someone with the game open is never pushed. The five kinds, each with a switch in `PATCH /api/me/notifications`, all on until turned off:
+
+| kind | when |
+|---|---|
+| `started` | the game began; says which power the player has |
+| `phase` | a phase resolved and the player has orders to write in the next one |
+| `press` | a private message arrived for the player's power; never its text |
+| `deadline` | `reminderMinutes` before the deadline, once per phase, when the player can act and has not filed orders or readied; only in phases at least twice that long |
+| `finished` | the game ended in a solo, a draw, or was abandoned |
+
+A push message is encrypted to the browser (RFC 8291, `aes128gcm`) and decrypts to `{ kind, gameId, title, body, url, tag, sentAt }`. `url` is the game's path on the web app (`/g/K7Q2AB`), `tag` replaces an earlier notice of the same kind for the same game on the device. A push never carries orders, press text, pledges or a token. Delivery is best effort and never holds up a game; a subscription the push service reports gone is deleted.
 
 ## Client library
 

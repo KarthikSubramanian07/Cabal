@@ -18,7 +18,11 @@ import {
   LedgerEntry,
   LedgerResponse,
   MeResponse,
+  MetricLine,
+  MetricsSummary,
   MyGame,
+  NotificationPreferences,
+  NotificationsResponse,
   PlayerProfile,
   PlayerResult,
   RatingView,
@@ -27,6 +31,8 @@ import {
   TrustView,
   PROTOCOL_VERSION,
   PressPage,
+  PushPayload,
+  PushSubscriptionRequest,
   ReplayExtension,
   SeatView,
   ServerMessage,
@@ -149,6 +155,22 @@ describe("docs/PROTOCOL.md", () => {
     expect(keys(cell("trust"))).toEqual(shapeKeys(TrustView));
     expect(keys(cell("recent"))).toEqual(shapeKeys(PlayerResult));
     expect(keys(/plus `account: (\{[^}]*\})`/.exec(row("`GET /api/me`"))![1]!)).toEqual(shapeKeys(MeResponse.shape.account));
+  });
+
+  it("documents push, notification switches and the metrics routes, and the shape of each", () => {
+    const http = section("HTTP");
+    for (const route of ["`GET /api/push/key`", "`POST /api/me/push`", "`DELETE /api/me/push`", "`GET /api/me/notifications`", "`PATCH /api/me/notifications`", "`POST /api/metrics`", "`GET /api/metrics`", "`POST /api/metrics/datc`"]) {
+      expect(http, route).toContain(route);
+    }
+    const row = (path: string) => table(http).find((cells) => cells[0] === path)![1]!;
+    expect(keys(row("`POST /api/me/push`"))).toEqual(shapeKeys(PushSubscriptionRequest));
+    expect(keys(row("`GET /api/me/notifications`"))).toEqual(shapeKeys(NotificationsResponse));
+    expect(keys(row("`PATCH /api/me/notifications`"))).toEqual(shapeKeys(NotificationPreferences));
+    expect(keys(row("`GET /api/metrics`"))).toEqual(shapeKeys(MetricsSummary));
+    expect(keys(row("`GET /api/metrics`").slice(row("`GET /api/metrics`").indexOf("each metric")))).toEqual(shapeKeys(MetricLine));
+    const notifications = section("Notifications");
+    expect(table(notifications).map((cells) => code(cells[0]!)).sort()).toEqual(shapeKeys(NotificationPreferences));
+    expect(keys(/decrypts to `(\{[^}]*\})`/.exec(notifications)![1]!)).toEqual(shapeKeys(PushPayload));
   });
 
   it("lists exactly the error codes the room sends and the verdict codes the judge gives", () => {
