@@ -14,7 +14,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  WASM_SIZE_BUDGET_BYTES: 409600
+  # About 10 percent above the measured build (321,440 bytes gzip, see
+  # docs/PERFORMANCE.md). Raise it only with a number and a reason.
+  WASM_SIZE_BUDGET_BYTES: 353600
 
 jobs:
   rust:
@@ -45,13 +47,15 @@ jobs:
         run: cargo run -p cabal-cli -- replay crates/cabal-engine/tests/data/games
 
   bench:
-    name: "Bench: opening adjudication gate"
+    name: "Bench: adjudication and legal-order gates"
     runs-on: ubuntu-latest
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       CRITERION_HOME: ${{ github.workspace }}/target/criterion
-      BENCH_ARGS: --sample-size 30 --measurement-time 3 --warm-up-time 1 --noplot ^adjudicate.spring.1901
+      # Gated: opening adjudication, and legal orders on the fleet-heavy midgame
+      # board (per power and with the shared convoy search).
+      BENCH_ARGS: --sample-size 30 --measurement-time 3 --warm-up-time 1 --noplot ^(adjudicate.spring.1901|midgame/legal.orders,.all.powers)
     steps:
       - uses: actions/checkout@v7
         with:

@@ -232,18 +232,24 @@ fn bench_legal_shared(c: &mut Criterion) {
         let unit = pos.units[0].province();
         b.iter(|| black_box(legal_movement_for(map, black_box(&pos), unit)))
     });
-    group.bench_function("explain spring 1901 (22 units)", |b| {
-        let opening = Position::initial(map);
-        let o = opening_orders(map);
-        b.iter(|| explain_movement(map, black_box(&opening), Rulebook::default(), black_box(&o)))
-    });
     group.finish();
+}
+
+/// Adjudication with the full explanation: strengths, supports, cycles.
+fn bench_explain(c: &mut Criterion) {
+    let map = Map::standard();
+    let pos = Position::initial(map);
+    let o = opening_orders(map);
+    c.bench_function("explain spring 1901 (22 units)", |b| {
+        b.iter(|| explain_movement(map, black_box(&pos), Rulebook::default(), black_box(&o)))
+    });
 }
 
 criterion_group!(
     benches,
     bench_map,
     bench_legal_shared,
+    bench_explain,
     bench_opening,
     bench_paradox,
     bench_legal,
