@@ -98,6 +98,11 @@ function RecoverySection({ me, onIssued }: { me: MeResponse; onIssued: () => voi
   const box = useRef<HTMLDivElement>(null);
   const issued = me.account.recoveryIssuedAt;
 
+  // A code just made is the thing to read: move to it once it is drawn.
+  useEffect(() => {
+    if (code) box.current?.focus();
+  }, [code]);
+
   // The file link holds the code; let it go when the dialog closes.
   useEffect(() => () => void (href && URL.revokeObjectURL(href)), [href]);
 
@@ -110,7 +115,6 @@ function RecoverySection({ me, onIssued }: { me: MeResponse; onIssued: () => voi
       setCode(fresh);
       setHref(URL.createObjectURL(new Blob([recoveryFile(me.player.handle, fresh.recoveryCode, fresh.issuedAt, window.location.origin)], { type: "text/plain" })));
       onIssued();
-      window.setTimeout(() => box.current?.focus(), 0);
     } catch (err) {
       setError(accountFailure(err));
     } finally {
@@ -132,7 +136,7 @@ function RecoverySection({ me, onIssued }: { me: MeResponse; onIssued: () => voi
     <div className="account-recovery">
       {code ? (
         <>
-          <div className="recovery-slip" ref={box} tabIndex={-1} aria-label="Your recovery code">
+          <div className="recovery-slip" ref={box} tabIndex={-1} role="group" aria-label="Your recovery code">
             <span className="recovery-stamp" aria-hidden="true">
               Shown once
             </span>
@@ -250,12 +254,18 @@ export function AccountDialog({ open, section, onClose }: { open: boolean; secti
     };
   }, [open, tick, me]);
 
-  // Open at the section that was asked for.
+  // Open at the section that was asked for: once per opening. The account is read again after a
+  // rename or a new recovery code, and that must not pull focus away from what the player is doing.
+  const placed = useRef(false);
   useEffect(() => {
-    if (!open || !account) return;
+    placed.current = false;
+  }, [open, section]);
+  useEffect(() => {
+    if (!open || !account || placed.current) return;
+    placed.current = true;
     const el = ref.current?.querySelector<HTMLElement>(`#account-${section}`);
     el?.scrollIntoView({ block: "nearest" });
-    el?.querySelector<HTMLElement>("input, button, a")?.focus();
+    el?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled), a")?.focus();
   }, [open, account, section]);
 
   // Signed out (here or in another tab) while the card is open: nothing left to show.
@@ -285,7 +295,7 @@ export function AccountDialog({ open, section, onClose }: { open: boolean; secti
             <section id="account-handle" aria-labelledby="account-handle-title">
               <h3 id="account-handle-title">Name</h3>
               <RenameForm me={account} onRenamed={setAccount} />
-              <p className="fine">
+              <p className="fine account-record">
                 <Link href={`/u/${encodeURIComponent(account.player.handle)}`} onClick={onClose}>
                   See your public record
                 </Link>

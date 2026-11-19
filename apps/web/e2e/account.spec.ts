@@ -75,6 +75,38 @@ test.describe("the player's account", () => {
     expect(violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => v.id)).toEqual([]);
   });
 
+  test("focus stays on the recovery code just made, though the account is read again", async ({ page }) => {
+    const server = await fakeServer(page);
+    accountRoutes(server);
+    await signedIn(page);
+    await page.goto("/ledger");
+    await openMenu(page);
+    // Opened at the name: the section the card would otherwise pull focus back to.
+    await page.getByRole("button", { name: "Rename" }).click();
+    const card = page.getByRole("dialog", { name: "Your account" });
+    await expect(card.getByLabel("Handle")).toBeFocused();
+    await card.getByRole("button", { name: "Make a recovery code" }).click();
+    await expect(card.getByRole("group", { name: "Your recovery code" })).toBeFocused();
+    await expect.poll(() => server.calls.filter((c) => c === "GET /api/me").length).toBeGreaterThanOrEqual(2);
+    await page.waitForTimeout(500);
+    await expect(card.getByRole("group", { name: "Your recovery code" })).toBeFocused();
+  });
+
+  test("the account card meets WCAG 2.2 target size on every screen", async ({ page }) => {
+    const server = await fakeServer(page);
+    accountRoutes(server);
+    await signedIn(page);
+    await page.goto("/ledger");
+    await openMenu(page);
+    await page.getByRole("button", { name: "Rename" }).click();
+    const card = page.getByRole("dialog", { name: "Your account" });
+    await expect(card.getByRole("link", { name: "See your public record" })).toBeVisible();
+    const box = await card.getByRole("link", { name: "See your public record" }).boundingBox();
+    expect(box!.height).toBeGreaterThanOrEqual(24);
+    const { violations } = await new AxeBuilder({ page }).withTags(["wcag22aa"]).analyze();
+    expect(violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`)).toEqual([]);
+  });
+
   test("restore an account on a new device from its recovery code", async ({ page }) => {
     const server = await fakeServer(page);
     accountRoutes(server);

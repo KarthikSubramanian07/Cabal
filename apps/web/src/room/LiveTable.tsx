@@ -157,6 +157,7 @@ function Floor({
   /** This seat has readied at least once this visit: the moment notifications are worth offering. */
   const [readied, setReadied] = useState(() => readiedThisVisit.has(view.gameId));
   const boardWrap = useRef<HTMLDivElement>(null);
+  const title = useRef<HTMLHeadingElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<HTMLInputElement>(null);
   const now = useSecond(running);
@@ -165,6 +166,14 @@ function Floor({
   const announce = useCallback((text: string) => {
     setAnnouncement("");
     window.setTimeout(() => setAnnouncement(text), 50);
+  }, []);
+
+  // Arriving at the table (Play now, a link, the lobby turning into the game) leaves focus
+  // nowhere: put it on the table's heading, as the lobby does, so a keyboard or screen reader
+  // starts here.
+  useEffect(() => {
+    const at = document.activeElement;
+    if (!at || at === document.body) title.current?.focus({ preventScroll: true });
   }, []);
 
   const view$ = useCallback((index: number | null) => {
@@ -557,7 +566,7 @@ function Floor({
         </div>
       ) : null}
       <main className="table live" id="main" tabIndex={-1}>
-        <h1 className="sr-only">
+        <h1 className="sr-only" ref={title} tabIndex={-1}>
           Table {view.gameId}, {phaseLabel(view.phase)}
         </h1>
         <div className="board-wrap" ref={boardWrap}>
