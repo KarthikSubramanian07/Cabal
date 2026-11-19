@@ -4,7 +4,7 @@
  * device as it is played, and games can be exported and imported in the MILA saved
  * game format.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Game, type PhaseOutcome, type State, engineReady } from "../engine.js";
 import { type Board, loadBoard } from "../map/boardData.js";
 import { type OrderBook, eraseOrder, flatten, keepLegal, toBook, waiveBuild, writeOrder } from "./book.js";
@@ -142,25 +142,31 @@ export function useSandbox(): SandboxLoad {
     Promise.all([engineReady(), loadBoard()]).then(
       ([, b]) => {
         if (!live) return;
-        setBoard(b);
         // Pick up the game saved on this device, if there is one this build can read.
+        let loaded: Loaded | null = null;
         const save = readSave();
         if (save) {
           try {
-            const loaded = loadSaved(save.game);
-            setGame(loaded.game);
-            setHistory(loaded.history);
-            setOrders(save.orders);
-            active.current = save.active;
-            setResumedActive(save.active);
-            setResumed(loaded.game.phase());
-            return;
+            loaded = loadSaved(save.game);
           } catch {
             // A save that no longer loads is worth less than a working board.
             clearSave();
           }
         }
-        setGame(new Game());
+        const game = loaded?.game ?? new Game();
+        // Drawing the board for the first time is the heaviest render there is. As a
+        // transition React does it in slices, so the page stays responsive meanwhile.
+        startTransition(() => {
+          setBoard(b);
+          setGame(game);
+          if (loaded && save) {
+            setHistory(loaded.history);
+            setOrders(save.orders);
+            active.current = save.active;
+            setResumedActive(save.active);
+            setResumed(game.phase());
+          }
+        });
       },
       (err: unknown) => {
         if (live) setError(err instanceof Error ? err : new Error(String(err)));

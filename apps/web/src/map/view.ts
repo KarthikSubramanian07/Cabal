@@ -153,6 +153,14 @@ function boxesOverlap(a: ReturnType<typeof labelBox>, b: ReturnType<typeof label
   return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
 }
 
+/** Where a code is sampled besides its middle, as fractions of the text size. */
+const EDGES = [
+  [-0.75, 0],
+  [0.75, 0],
+  [0, -0.4],
+  [0, 0.4],
+] as const;
+
 /**
  * Place every province code for a piece radius and text size. Each code first tries the
  * side of the piece the map maker chose, then the other sides, and takes the first spot
@@ -181,20 +189,19 @@ export function layoutLabels(spots: readonly LabelSpot[], radius: number, size: 
     for (const [i, at] of candidates.entries()) {
       const box = labelBox(at, size);
       let cost = i * 0.004; // earlier candidates win ties
+      // Cheapest checks first, and stop as soon as this spot cannot beat the best so far.
+      for (const p of placed) if (boxesOverlap(box, p.box)) cost += 1;
+      if (cost >= bestCost) continue;
       for (const other of spots) {
         // Fleets are drawn a little wider than the radius.
         if (boxHitsCircle(box, other.unit, radius * 1.2 + 1)) cost += 2;
       }
-      for (const p of placed) if (boxesOverlap(box, p.box)) cost += 1;
+      if (cost >= bestCost) continue;
       if (spot.inside) {
-        // Most of all, a code belongs inside its own province: its middle, and both ends.
+        // Most of all, a code belongs inside its own province: its middle, and its edges.
         if (!spot.inside(at)) cost += 12;
-        for (const [dx, dy] of [
-          [-0.75, 0],
-          [0.75, 0],
-          [0, -0.4],
-          [0, 0.4],
-        ] as const) {
+        for (const [dx, dy] of EDGES) {
+          if (cost >= bestCost) break;
           if (!spot.inside([at[0] + dx * size, at[1] + dy * size])) cost += 0.8;
         }
       }

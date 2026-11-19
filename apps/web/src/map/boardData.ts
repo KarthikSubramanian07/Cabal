@@ -53,34 +53,64 @@ export function regionPoint(board: Board, region: string): Point {
   return province.unit;
 }
 
-/** The rings of a province outline. Paths in board.json use only `M`, relative `l` and `z`. */
-export function pathRings(d: string): Point[][] {
+/** Province outlines are thinned to this many board units before labels are placed against them. */
+export const LABEL_OUTLINE_TOLERANCE = 3;
+
+const TOKEN = /[Mlz]|-?\d*\.?\d+(?:e-?\d+)?/g;
+
+/**
+ * The rings of a province outline. Paths in board.json use only `M`, relative `l` and `z`.
+ *
+ * `tolerance` thins the outline as it is read: a vertex closer than that (in board units)
+ * to the last one kept is dropped. The coastlines carry far more detail than a hit test
+ * for a label needs, and at a tolerance of 3 a province is a few dozen points, not hundreds.
+ */
+export function pathRings(d: string, tolerance = 0): Point[][] {
   const rings: Point[][] = [];
   let ring: Point[] = [];
+  let command = "M";
+  let first = true;
   let x = 0;
   let y = 0;
-  for (const m of d.matchAll(/([Mlz])([^Mlz]*)/g)) {
-    const nums = (m[2] ?? "").trim().split(/[\s,]+/).filter(Boolean).map(Number);
-    if (m[1] === "z") {
-      if (ring.length) rings.push(ring);
-      ring = [];
+  let keptX = 0;
+  let keptY = 0;
+  let pending: number | null = null;
+  const close = () => {
+    if (ring.length > 2) rings.push(ring);
+    ring = [];
+  };
+  TOKEN.lastIndex = 0;
+  for (let m = TOKEN.exec(d); m; m = TOKEN.exec(d)) {
+    const token = m[0];
+    if (token === "M" || token === "l" || token === "z") {
+      if (token !== "l") close();
+      command = token;
+      first = token === "M";
+      pending = null;
       continue;
     }
-    for (let i = 0; i + 1 < nums.length; i += 2) {
-      if (m[1] === "M" && i === 0) {
-        if (ring.length) rings.push(ring);
-        ring = [];
-        x = nums[0]!;
-        y = nums[1]!;
-      } else {
-        // After the first pair, `M` continues as absolute line-tos; `l` pairs are relative.
-        x = m[1] === "M" ? nums[i]! : x + nums[i]!;
-        y = m[1] === "M" ? nums[i + 1]! : y + nums[i + 1]!;
-      }
-      ring.push([x, y]);
+    const value = Number(token);
+    if (pending === null) {
+      pending = value;
+      continue;
     }
+    // After its first pair, `M` goes on as absolute line-tos; `l` pairs are relative.
+    if (command === "M") {
+      x = pending;
+      y = value;
+    } else {
+      x += pending;
+      y += value;
+    }
+    pending = null;
+    if (first || ring.length === 0 || Math.abs(x - keptX) + Math.abs(y - keptY) >= tolerance) {
+      ring.push([x, y]);
+      keptX = x;
+      keptY = y;
+    }
+    first = false;
   }
-  if (ring.length) rings.push(ring);
+  close();
   return rings;
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import board from "./board.json";
-import { type Board, insideRings, pathRings } from "./boardData.js";
+import { type Board, LABEL_OUTLINE_TOLERANCE, insideRings, pathRings } from "./boardData.js";
 import { labelSize, layoutLabels, unitRadius } from "./view.js";
 
 const data = board as unknown as Board;
@@ -26,6 +26,17 @@ describe("pathRings", () => {
     expect(insideRings(rings, [104, 102])).toBe(true);
   });
 
+  it("thins an outline without losing its shape", () => {
+    const d = data.provinces["SPA"]!.d;
+    const exact = pathRings(d);
+    const rough = pathRings(d, LABEL_OUTLINE_TOLERANCE);
+    const count = (rings: [number, number][][]) => rings.reduce((n, r) => n + r.length, 0);
+    expect(count(rough)).toBeLessThan(count(exact) * 0.7);
+    expect(count(rough)).toBeGreaterThan(12);
+    expect(insideRings(rough, data.provinces["SPA"]!.unit)).toBe(true);
+    expect(insideRings(rough, data.provinces["MAO"]!.unit)).toBe(false);
+  });
+
   it("finds every province's piece position inside its own outline", () => {
     for (const [code, p] of Object.entries(data.provinces)) {
       if (p.kind === "impassable") continue;
@@ -38,8 +49,16 @@ describe("label layout on the real board", () => {
   const spots = Object.entries(data.provinces)
     .filter(([, p]) => p.kind !== "impassable")
     .map(([code, p]) => {
-      const rings = pathRings(p.d);
-      return { code, unit: p.unit, label: p.label, inside: (pt: [number, number]) => insideRings(rings, pt) };
+      // Laid out against the thinned outline, as Board.tsx does; judged against the true one.
+      const rough = pathRings(p.d, LABEL_OUTLINE_TOLERANCE);
+      const exact = pathRings(p.d);
+      return {
+        code,
+        unit: p.unit,
+        label: p.label,
+        inside: (pt: [number, number]) => insideRings(rough, pt),
+        reallyInside: (pt: [number, number]) => insideRings(exact, pt),
+      };
     });
 
   // Every zoom from a far-out overview to as close as the map goes, as Board.tsx sizes it.
@@ -52,7 +71,7 @@ describe("label layout on the real board", () => {
   for (const [r, size] of sizes.values()) {
     it(`writes every code inside the province it names (r ${r}, size ${size})`, () => {
       const at = layoutLabels(spots, r, size);
-      const outside = spots.filter((s) => !s.inside(at[s.code]!)).map((s) => s.code);
+      const outside = spots.filter((s) => !s.reallyInside(at[s.code]!)).map((s) => s.code);
       expect(outside).toEqual([]);
     });
 

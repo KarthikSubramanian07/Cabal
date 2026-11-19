@@ -12,7 +12,14 @@ import {
 } from "react";
 import { type ParsedOrder, parseOrder, parseUnit } from "../game/notation.js";
 import { type UnitIds, unitKey } from "../game/unitIds.js";
-import { type Board as BoardData, type Point, insideRings, pathRings, regionPoint } from "./boardData.js";
+import {
+  type Board as BoardData,
+  LABEL_OUTLINE_TOLERANCE,
+  type Point,
+  insideRings,
+  pathRings,
+  regionPoint,
+} from "./boardData.js";
 import {
   type Box,
   type Size,
@@ -280,7 +287,8 @@ const Labels = memo(function Labels({ board, size, r }: { board: BoardData; size
       Object.entries(board.provinces)
         .filter(([, p]) => p.kind !== "impassable")
         .map(([code, p]) => {
-          const rings = pathRings(p.d);
+          // A thinned outline is plenty for placing a label, and far cheaper to test against.
+          const rings = pathRings(p.d, LABEL_OUTLINE_TOLERANCE);
           return { code, unit: p.unit, label: p.label, inside: (point: Point) => insideRings(rings, point) };
         }),
     [board],
@@ -328,8 +336,12 @@ export function Board({
   onProvince,
 }: BoardProps) {
   const full = useMemo<Size>(() => ({ w: board.width, h: board.height }), [board]);
-  /** The frame's size in CSS pixels. Until it is measured, assume the board's own shape. */
-  const [frame, setFrame] = useState<Size>(full);
+  /**
+   * The frame's size in CSS pixels, once measured. Nothing is drawn before that: the map's
+   * sizes depend on it, and drawing twice would double the cost of the first paint.
+   */
+  const [measuredFrame, setFrame] = useState<Size | null>(null);
+  const frame = measuredFrame ?? full;
   const [view, setView] = useState<Box>(() => wholeView(full, full));
   const frameRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -354,7 +366,7 @@ export function Board({
       if (rect.width < 1 || rect.height < 1) return;
       const next = { w: rect.width, h: rect.height };
       measured.current = true;
-      setFrame((old) => (Math.abs(old.w - next.w) < 0.5 && Math.abs(old.h - next.h) < 0.5 ? old : next));
+      setFrame((old) => (old && Math.abs(old.w - next.w) < 0.5 && Math.abs(old.h - next.h) < 0.5 ? old : next));
       setView((v) => (auto.current ? homeView(full, next, focusRef.current) : clampView(full, next, v)));
     };
     apply();
@@ -466,7 +478,7 @@ export function Board({
     const listener = (e: globalThis.WheelEvent) => wheel.current(e);
     svg.addEventListener("wheel", listener, { passive: false });
     return () => svg.removeEventListener("wheel", listener);
-  }, []);
+  }, [measuredFrame !== null]);
 
   const whole = isWholeView(full, frame, view);
 
@@ -540,6 +552,10 @@ export function Board({
         : resolveTap(toBoard(e.clientX, e.clientY, view), under, candidates, Math.min(TOUCH_REACH_PX / scale, TOUCH_REACH_MAX));
     if (code) onProvince(code, { x: e.clientX, y: e.clientY });
   };
+
+  if (!measuredFrame) {
+    return <div className="board-frame" ref={frameRef} style={{ "--board-aspect": full.w / full.h } as CSSProperties} />;
+  }
 
   return (
     <div className="board-frame" ref={frameRef} style={{ "--board-aspect": full.w / full.h } as CSSProperties}>
