@@ -1,0 +1,7 @@
+/* Motion policy. Durations and easings live in tokens.css. */
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}

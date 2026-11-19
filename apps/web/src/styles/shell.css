@@ -1,0 +1,88 @@
+/* The app frame: ink top bar, page grid and footer. */
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100%;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 12px 22px 11px;
+  background: var(--ink);
+  color: var(--bone);
+  border-bottom: 3px solid var(--vermilion);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+}
+
+.topbar nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.topbar nav > * {
+  background: none;
+  border: 0;
+  color: var(--bone);
+  opacity: 0.72;
+  padding: 5px 10px;
+  border-radius: var(--radius);
+  text-decoration: none;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.topbar nav > *:hover {
+  opacity: 1;
+}
+
+.topbar nav .nav-current {
+  opacity: 1;
+  cursor: default;
+  box-shadow: inset 0 -2px 0 var(--brass);
+  border-radius: 0;
+}
+
+.topbar nav a:last-child {
+  margin-left: auto;
+}
+
+.table {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  align-items: start;
+}
+
+@media (max-width: 1000px) {
+  .table {
+    grid-template-columns: 1fr;
+  }
+}
+
+.loading-body {
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding: 12px 22px;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+.footer a {
+  margin-left: auto;
+}

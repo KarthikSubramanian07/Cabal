@@ -1,0 +1,96 @@
+/*
+ * Design tokens. The one place colours, type, spacing, motion and stacking are defined.
+ * Brand palette from the logo concepts (ink, bone, brass, vermilion) on a classic board.
+ * See docs/BRAND.md: brass is active and selectable, vermilion is failure and betrayal only.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ---- colour: ink and bone */
+  --ink: #121110;
+  --ink-2: #2b2825;
+  --ink-3: #5f5a53;
+  --ink-4: #6c6760;
+  --bone: #f4f0e6;
+  --bone-2: #ece6d8;
+  --bone-3: #e1d9c6;
+  --rule: #d3cab5;
+  --paper: #fbf9f4;
+
+  /* ---- colour: accents */
+  --brass: #c8a24a;
+  --brass-deep: #94731f;
+  --vermilion: #d94f30;
+  --vermilion-deep: #b23c20;
+  --kept: #2c7541;
+
+  /* ---- colour: the board */
+  --sea: #b9d0da;
+  --sea-deep: #a6c1cd;
+  --sea-ink: #587a8a;
+  --land: #efe6cf;
+  --border: #7a7064;
+  --coast: #2b2622;
+  --impassable: #cfc6b1;
+  --impassable-line: #b5ab94;
+
+  /* ---- colour: the seven powers */
+  --p-austria: #cf4a3e;
+  --p-england: #2f5ea8;
+  --p-france: #4ea3d0;
+  --p-germany: #5b5853;
+  --p-italy: #3f8f4b;
+  --p-russia: #8b62b1;
+  --p-turkey: #d9a82c;
+
+  /* ---- type */
+  --font-ui: "Inter Tight Variable", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-display: "Archivo Black", "Arial Black", sans-serif;
+
+  --text-2xs: 11px;
+  --text-xs: 11.5px;
+  --text-sm: 12.5px;
+  --text-md: 13.5px;
+  --text-base: 14.5px;
+  --text-lg: 16px;
+  --text-xl: 22px;
+  --text-2xl: 27px;
+  --text-3xl: 40px;
+  --leading: 1.45;
+  --tracking-caps: 0.08em;
+
+  /* ---- space: a 4px grid */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --gutter: 18px;
+
+  /* ---- shape */
+  --radius: 4px;
+  --radius-sm: 3px;
+  --hit: 44px;
+
+  /* ---- motion: physical and deliberate. Everything is switched off under reduced motion. */
+  --dur-instant: 90ms;
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-slow: 360ms;
+  --dur-march: 600ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.6, 0, 0.3, 1);
+  --ease-thud: cubic-bezier(0.3, 1.4, 0.5, 1);
+
+  /* ---- stacking, lowest first */
+  --z-board-controls: 2;
+  --z-popover: 5;
+  --z-sheet: 20;
+  --z-topbar: 30;
+  --z-skip: 50;
+}

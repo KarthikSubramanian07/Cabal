@@ -1,0 +1,102 @@
+/* Dialogs. */
+
+dialog.how {
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  border: 1px solid var(--ink);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+dialog.how::backdrop {
+  background: rgba(18, 17, 16, 0.45);
+}
+
+dialog.how header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px 12px;
+  border-bottom: 3px solid var(--vermilion);
+  background: var(--ink);
+  color: var(--bone);
+}
+
+dialog.how h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 400;
+  text-transform: uppercase;
+}
+
+dialog.how .icon {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  background: none;
+  color: var(--bone);
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.how-body {
+  padding: 6px 22px 18px;
+}
+
+.how-body section {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.how-body section:last-child {
+  border-bottom: 0;
+}
+
+.how-body h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.how-body p,
+.how-body li {
+  margin: 0 0 6px;
+}
+
+.how-body ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.how-body .fine {
+  color: var(--ink-3);
+  font-size: 13px;
+}
+
+table.keys {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 6px;
+}
+
+table.keys th {
+  width: 84px;
+  padding: 5px 10px 5px 0;
+  text-align: left;
+  vertical-align: top;
+  font-weight: 600;
+}
+
+table.keys td {
+  padding: 5px 0;
+}
+
+table.keys tr + tr {
+  border-top: 1px solid var(--bone-2);
+}

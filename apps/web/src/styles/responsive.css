@@ -1,0 +1,40 @@
+/* Narrow and touch screens. Loaded last so it can override any feature sheet. */
+
+@media (max-width: 640px) {
+  .topbar {
+    gap: 14px;
+    padding: 10px 14px 9px;
+  }
+
+  .topbar nav > * {
+    padding: 5px 6px;
+    white-space: nowrap;
+  }
+
+  /* Keep the phone chrome to Sandbox + How to play; trust links live in the footer. */
+  .topbar nav a {
+    display: none;
+  }
+
+  .board-wrap {
+    padding: 8px 8px 6px;
+  }
+
+  .phase-title {
+    font-size: 22px;
+  }
+
+  .footer a {
+    margin-left: 0;
+  }
+}
+
+@media (pointer: coarse) {
+  .tool kbd {
+    display: none;
+  }
+
+  .tool {
+    padding: 9px 12px;
+  }
+}

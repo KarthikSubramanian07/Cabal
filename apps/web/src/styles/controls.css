@@ -1,0 +1,168 @@
+/* Controls around the board: zoom, coast picker, order tools, choices and the text alternative. */
+
+.zoom {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.zoom button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--paper);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.zoom button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.picker {
+  position: absolute;
+  z-index: var(--z-popover);
+  transform: translate(-50%, 12px);
+  min-width: 190px;
+  display: grid;
+  padding: 4px;
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 28px -8px rgba(18, 17, 16, 0.35);
+}
+
+.picker-title {
+  padding: 5px 8px 3px;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.picker button {
+  text-align: left;
+  padding: 7px 8px;
+  border: 0;
+  background: none;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.picker button:hover,
+.picker button:focus-visible {
+  background: var(--bone-2);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 10px;
+}
+
+.tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.tool:hover {
+  border-color: var(--ink-4);
+}
+
+.tool[aria-pressed="true"] {
+  border-color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--brass);
+}
+
+.toolbar .hint {
+  flex: 1 1 260px;
+  margin: 0 0 0 6px;
+  color: var(--ink-3);
+}
+
+.toolbar .hint.alert {
+  color: var(--vermilion-deep);
+}
+
+/* Keyboard and text path for the map: what a click would offer, and the board as lists. */
+.choices {
+  padding-top: 10px;
+}
+
+.choices h2 {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.choice-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tool.choice {
+  font-weight: 450;
+  font-size: 13.5px;
+}
+
+.board-text {
+  margin-top: 10px;
+  color: var(--ink-2);
+}
+
+.board-text summary {
+  display: inline-block;
+  padding: 4px 0;
+  cursor: pointer;
+  font-weight: 550;
+}
+
+.board-text section {
+  padding: 6px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.board-text h3 {
+  margin: 0 0 2px;
+  font-size: 13.5px;
+}
+
+.board-text p {
+  margin: 0 0 2px;
+  font-size: 13px;
+}
+
+.setting {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.setting input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  flex: none;
+}
