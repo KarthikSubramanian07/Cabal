@@ -18,7 +18,7 @@ async function threePhases(page: Page) {
 }
 
 test.describe("replay", () => {
-  // Reduced motion and double speed keep each phase on screen for under a second.
+  // Under reduced motion each phase stays up only long enough to read.
   test.beforeEach(async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
   });
@@ -27,18 +27,21 @@ test.describe("replay", () => {
     await ready(page);
     await threePhases(page);
     await openSheet(page);
-    await page.getByRole("button", { name: "Double speed" }).click();
-    await expect(page.getByRole("button", { name: "Double speed" })).toHaveAttribute("aria-pressed", "true");
-    await page.getByRole("button", { name: "Play the game from the start" }).click();
+    const double = page.getByRole("button", { name: "2× double speed" });
+    await double.click();
+    await expect(double).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: "1× normal speed" })).toHaveAttribute("aria-pressed", "false");
+    await page.getByRole("button", { name: "1× normal speed" }).click();
+    await page.getByRole("button", { name: "Replay the game from the start" }).click();
     await expect(page.getByRole("button", { name: "Pause the replay" })).toBeVisible();
     await expect(jump(page)).toHaveValue("0");
     await expect(scrubber(page)).toHaveAttribute("aria-valuetext", "Spring 1901 movement results");
     await expect(jump(page)).toHaveValue("1");
     await expect(jump(page)).toHaveValue("2");
-    await expect(page.getByLabel("Adjudication results")).toContainText("A BUR - MUN");
+    await expect(scrubber(page)).toHaveAttribute("aria-valuetext", "Spring 1902 movement results");
     await expect(jump(page)).toHaveValue("3");
     await expect(scrubber(page)).toHaveAttribute("aria-valuetext", "Fall 1902 movement, now");
-    await expect(page.getByRole("button", { name: "Play the game from the start" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Replay the game from the start" })).toBeVisible();
     await expect(primary(page)).toHaveText("Adjudicate Fall 1902");
   });
 
@@ -46,16 +49,16 @@ test.describe("replay", () => {
     await ready(page);
     await threePhases(page);
     await openSheet(page);
-    await page.getByRole("button", { name: "Play the game from the start" }).click();
+    await page.getByRole("button", { name: "Replay the game from the start" }).click();
     await page.getByRole("button", { name: "Pause the replay" }).click();
     await expect(jump(page)).toHaveValue("0");
     await page.waitForTimeout(2000);
     await expect(jump(page)).toHaveValue("0");
 
     // Play from here, then a step by hand stops the film.
-    await page.getByRole("button", { name: "Play from here" }).click();
+    await page.getByRole("button", { name: "Replay from here" }).click();
     await page.locator(".stepper").getByRole("button", { name: "Next phase" }).click();
-    await expect(page.getByRole("button", { name: "Play from here" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Replay from here" })).toBeVisible();
     await expect(jump(page)).toHaveValue("1");
 
     await scrubber(page).fill("2");
@@ -78,5 +81,5 @@ test("space plays and pauses the history from the board", async ({ page }, info)
   await expect(jump(page)).toHaveValue("0");
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.keyboard.press(" ");
-  await expect(page.getByRole("button", { name: "Play from here" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Replay from here" })).toBeVisible();
 });

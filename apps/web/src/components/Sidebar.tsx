@@ -272,7 +272,7 @@ export function PhaseStepper({
           type="button"
           className="replay"
           onClick={playing ? onPause : onPlay}
-          aria-label={playing ? "Pause the replay" : viewing === null ? "Play the game from the start" : "Play from here"}
+          aria-label={playing ? "Pause the replay" : viewing === null ? "Replay the game from the start" : "Replay from here"}
         >
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
             {playing ? (
@@ -320,7 +320,7 @@ export function PhaseStepper({
               key={s}
               type="button"
               aria-pressed={s === speed}
-              aria-label={speedLabel(s).long}
+              aria-label={`${speedLabel(s).short} ${speedLabel(s).long.toLowerCase()}`}
               onClick={() => onSpeed(s)}
             >
               {speedLabel(s).short}
