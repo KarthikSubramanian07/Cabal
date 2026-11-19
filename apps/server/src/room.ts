@@ -78,6 +78,7 @@ import {
   engineReady,
   pledgeCommit,
   randomNonce,
+  timedFirst,
 } from "./engine.js";
 import { gameIndex } from "./game-index.js";
 import { REQUEST_ID_HEADER, log, requestIdFrom, withLogContext } from "./log.js";
@@ -525,7 +526,7 @@ export class GameRoom extends DurableObject<Env> {
       const saved = this.kv.get<string>("saved");
       // Trusted restore: the stored record is resumed, never adjudicated again, so an engine
       // upgrade that corrects a ruling cannot stop a game in flight from waking.
-      this.game = saved ? Game.resume(saved, meta.settings.rulebook) : new Game(meta.settings.rulebook);
+      this.game = timedFirst("firstGameMs", () => (saved ? Game.resume(saved, meta.settings.rulebook) : new Game(meta.settings.rulebook)));
       // Rooms written before pauses kept their clock: resume them with a full phase.
       if (meta.status === "paused" && !meta.pause) {
         meta.status = "active";
@@ -813,7 +814,7 @@ export class GameRoom extends DurableObject<Env> {
         claudeOff: null,
         claudeAdmission: null,
       };
-      this.game = new Game(settings.rulebook);
+      this.game = timedFirst("firstGameMs", () => new Game(settings.rulebook));
       for (const p of POWERS) this.sql.exec("INSERT INTO seats (power, kind) VALUES (?, 'open')", p);
       this.sql.exec("UPDATE seats SET kind = 'human', name = ?, token_hash = ?, player_id = ? WHERE power = ?", name, hashToken(token), player?.id ?? null, creator);
       this.openStint(creator, player, name, false);
@@ -2583,7 +2584,7 @@ export class GameRoom extends DurableObject<Env> {
 
   /** The one call into the engine for a phase. A seam: tests replace it to make adjudication fail. */
   private resolvePhase(game: Game, orders: Record<string, string[]>): ReturnType<Game["process"]> {
-    return adjudicateStrict(game, { orders }, (e) => this.log("adjudicate_failed", { error: String(e) }, "error"));
+    return timedFirst("firstProcessMs", () => adjudicateStrict(game, { orders }, (e) => this.log("adjudicate_failed", { error: String(e) }, "error")));
   }
 
   /**

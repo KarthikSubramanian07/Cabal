@@ -2,6 +2,7 @@
 import { SELF } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index.js";
+import { coldStart, timedFirst } from "../src/engine.js";
 import { requestIdFrom } from "../src/log.js";
 import type { AgentTurn } from "../src/env.js";
 import { Client, create, deadlineIn, nextIp, serverEnv, start, untilPhase } from "./helpers.js";
@@ -105,5 +106,26 @@ describe("request ids", () => {
     const { lines } = await capture(() => worker.queue(batch, serverEnv));
     expect(acked).toEqual(["msg-0001"]);
     expect(lines.find((l) => l.event === "agent_turn")).toMatchObject({ service: "queue", requestId: "q-msg-0001", outcome: "stale" });
+  });
+});
+
+describe("engine cold start", () => {
+  it("times instantiation, the first game and the first adjudication once per isolate", async () => {
+    const ann = await create("Ann");
+    await start(ann);
+    const client = await Client.connect(ann.gameId, ann.token);
+    await client.next("welcome");
+    client.send({ t: "ready", p: { phase: "S1901M", ready: true } });
+    await client.next("results");
+    client.close();
+    for (const part of ["instantiateMs", "firstGameMs", "firstProcessMs"] as const) {
+      expect(coldStart[part], part).not.toBeNull();
+      expect(coldStart[part]!, part).toBeGreaterThanOrEqual(0);
+    }
+    // Measured once: later work of the same kind runs untimed and leaves the numbers as they were.
+    const before = { ...coldStart };
+    expect(timedFirst("firstProcessMs", () => 42)).toBe(42);
+    expect(timedFirst("firstGameMs", () => "game")).toBe("game");
+    expect(coldStart).toEqual(before);
   });
 });
