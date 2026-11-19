@@ -231,15 +231,38 @@ export const StateView = z.object({
 });
 export type StateView = z.infer<typeof StateView>;
 
+/** What became of one order at adjudication (mirrors the engine's `OrderResult`). */
 export const OrderResultView = z.object({
   power: z.string(),
   unit: z.string(),
+  /** Canonical order as adjudicated; an illegal order appears as a hold, with `submitted` kept. */
   order: z.string(),
   ok: z.boolean(),
+  /** `ok`, `bounce`, `repelled`, `head_to_head`, `own_unit`, `no_path`, `cut`, `void`, `dislodged`, `paradox`, `illegal`, `disband`. */
+  code: z.string(),
+  /** The terse reason in the engine's log form (`bounced with MUN`). Prefer `summary`. */
+  reason: z.string(),
+  /** The same reason for people, units named in full (`bounced with A MUN`). */
+  summary: z.string().optional(),
+  /** The units behind a failure, in full (`["A MUN"]`). */
+  by: z.array(z.string()).optional(),
+  /** Illegal orders only: why, as a code (`unreachable`, `duplicate_order`, ...). */
+  illegal: z.string().nullable().optional(),
+  /** Illegal movement orders only: the order as it was submitted. */
+  submitted: z.string().nullable().optional(),
+});
+export type OrderResultView = z.infer<typeof OrderResultView>;
+
+/** An order that never reached the board at adjudication (unreadable, or for a unit the power lacks). */
+export const RejectedOrderView = z.object({
+  power: z.string(),
+  /** The text exactly as submitted. */
+  input: z.string(),
+  /** `unparseable`, `wrong_power`, `wrong_phase`, `unknown_power`, `no_unit`, `foreign_unit` or `not_dislodged`. */
   code: z.string(),
   reason: z.string(),
 });
-export type OrderResultView = z.infer<typeof OrderResultView>;
+export type RejectedOrderView = z.infer<typeof RejectedOrderView>;
 
 /** The phase a message was sent in, or `LOBBY` for table talk before the game starts. */
 export const PressPhase = z.union([PhaseName, z.literal("LOBBY")]);
@@ -355,6 +378,11 @@ export const OrderVerdict = z.object({
   code: z.string(),
   /** Why, in words a player can act on. Empty when `ok`. */
   reason: z.string(),
+  /**
+   * The engine's own reason code when it judged the order (`unreachable`, `ambiguous_coast`,
+   * `support_self`, `occupied`, `not_home_center`, ...): finer than `code`, for clients that want it.
+   */
+  detail: z.string().optional(),
 });
 export type OrderVerdict = z.infer<typeof OrderVerdict>;
 
@@ -431,6 +459,8 @@ export const ServerMessage = z.discriminatedUnion("t", [
       dislodged: z.array(z.object({ unit: z.string(), attacker_from: z.string(), retreat_options: z.array(z.string()) })),
       standoffs: z.array(z.string()),
       civil_disorder: z.array(z.string()),
+      /** Orders that could not be adjudicated at all. Usually empty: the room files only orders it accepted. */
+      rejected: z.array(RejectedOrderView).optional(),
       /** Supply centres per power once the phase resolved (the entry appended to `welcome.history`). */
       summary: PhaseSummary,
       /** This frame's own number (the same as the envelope's `seq`). */
@@ -525,8 +555,11 @@ export type ServerMessage = z.infer<typeof ServerMessage>;
 
 export const CreateGameRequest = z.object({
   settings: GameSettingsInput.default({}),
-  /** Display name of the creator. */
-  name: z.string().trim().min(1).max(32),
+  /**
+   * Display name of the creator. Required for anonymous play; a signed-in player (player secret as
+   * the bearer) always sits under their handle and may leave it out.
+   */
+  name: z.string().trim().min(1).max(32).optional(),
 });
 export type CreateGameRequest = z.infer<typeof CreateGameRequest>;
 
@@ -534,7 +567,8 @@ export const CreateGameResponse = z.object({ gameId: z.string(), token: z.string
 export type CreateGameResponse = z.infer<typeof CreateGameResponse>;
 
 export const JoinGameRequest = z.object({
-  name: z.string().trim().min(1).max(32),
+  /** Display name. Required for anonymous play; a signed-in player sits under their handle. */
+  name: z.string().trim().min(1).max(32).optional(),
   /** Preferred power; the server assigns one when absent or taken. */
   power: PowerName.optional(),
   /** Substitute invite issued by a seated player for one vacated seat of a running game. */
@@ -650,12 +684,40 @@ export const HealthResponse = z.object({
   engine: z.string(),
   /** Identifies the deployed build: the `BUILD_ID` variable, else the Worker version id, else `dev`. */
   build: z.string(),
+  /** The Registry Durable Object (the Claude budget, and the index from before D1). */
   registry: z.object({ reachable: z.boolean(), schema: z.number().int().nullable() }),
   time: z.number().int(),
 });
 export type HealthResponse = z.infer<typeof HealthResponse>;
 
-/** One row of the global games index kept by the `Registry` Durable Object. */
+/**
+ * One stint at one seat, as a finished game reports it to the index. A seat that changed hands has
+ * one stint per holder, numbered from 0. AI seats are listed with `kind: "ai"` and no player.
+ */
+export const GamePlayerRecord = z.object({
+  power: PowerName,
+  stint: z.number().int().min(0),
+  kind: z.enum(["human", "ai"]),
+  /** The signed-in player who held the seat; null for anonymous play and AI. */
+  playerId: z.string().nullable(),
+  name: z.string().nullable(),
+  joinedAt: z.number().int(),
+  /** Took the seat over from someone else while the game was running. */
+  substitute: z.boolean(),
+  /** Null when the stint lasted to the end; `replaced` when a substitute took over. */
+  leftReason: z.enum(["replaced"]).nullable(),
+  /** The seat was in civil disorder when the game ended. */
+  civilDisorder: z.boolean(),
+  /** Phases the stint had something to order; of those, ordered in time and ordered in the grace period. */
+  phasesDue: z.number().int().min(0),
+  phasesOnTime: z.number().int().min(0),
+  phasesLate: z.number().int().min(0),
+  /** Receipts of this stint's pledges that count towards the trust ledger (see docs/PROTOCOL.md). */
+  ledger: z.object({ kept: z.number().int().min(0), broken: z.number().int().min(0), void: z.number().int().min(0) }),
+});
+export type GamePlayerRecord = z.infer<typeof GamePlayerRecord>;
+
+/** One row of the global games index (D1). */
 export const GameRecord = z.object({
   gameId: z.string(),
   result: GameResult,
@@ -678,8 +740,195 @@ export const GameRecord = z.object({
       eliminated: z.boolean(),
     }),
   ),
+  /** Every stint at every seat (absent from records written before players existed). */
+  players: z.array(GamePlayerRecord).optional(),
+  /** Movement phases adjudicated: the rating rules ask for two full game years. */
+  movementPhases: z.number().int().min(0).optional(),
 });
 export type GameRecord = z.infer<typeof GameRecord>;
+
+
+// ---------- players, ratings and the trust ledger ----------
+
+/**
+ * A handle: 3 to 20 letters, digits, `_` or `-`, starting with a letter. Unique whatever its case.
+ * The server also refuses reserved and abusive names.
+ */
+export const Handle = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z][A-Za-z0-9_-]{2,19}$/, "3 to 20 letters, digits, _ or -, starting with a letter");
+export type Handle = z.infer<typeof Handle>;
+
+/** What anybody may know about a player. */
+export const PlayerSummary = z.object({ id: z.string(), handle: z.string(), createdAt: z.number().int() });
+export type PlayerSummary = z.infer<typeof PlayerSummary>;
+
+/** `POST /api/players`: make a guest account on this device. Without a handle the server picks one. */
+export const CreatePlayerRequest = z.object({ handle: Handle.optional() });
+export type CreatePlayerRequest = z.infer<typeof CreatePlayerRequest>;
+
+/**
+ * A new device session. `secret` is shown once and only its hash is kept: the client stores it and
+ * sends it as `Authorization: Bearer <secret>`. It never goes in a URL.
+ */
+export const PlayerSession = z.object({ player: PlayerSummary, secret: z.string() });
+export type PlayerSession = z.infer<typeof PlayerSession>;
+
+/** `POST /api/players/recover`: restore an account on a new device from its recovery code. */
+export const RecoverPlayerRequest = z.object({ code: z.string().trim().min(16).max(64) });
+export type RecoverPlayerRequest = z.infer<typeof RecoverPlayerRequest>;
+
+/** `POST /api/me/recovery`: a new recovery code, shown once; any older code stops working. */
+export const RecoveryCodeResponse = z.object({ recoveryCode: z.string(), issuedAt: z.number().int() });
+export type RecoveryCodeResponse = z.infer<typeof RecoveryCodeResponse>;
+
+/** `PATCH /api/me`. */
+export const UpdateMeRequest = z.object({ handle: Handle });
+export type UpdateMeRequest = z.infer<typeof UpdateMeRequest>;
+
+/** `POST /api/me/logout`: end this device's session, or every session with `everywhere`. */
+export const LogoutRequest = z.object({ everywhere: z.boolean().default(false) });
+export type LogoutRequest = z.infer<typeof LogoutRequest>;
+
+/** A player's skill rating on one ladder (weighted pairwise Glicko-2). */
+export const RatingView = z.object({
+  ladder: z.string(),
+  rating: z.number(),
+  /** Rating deviation, grown for the time since the last rated game. */
+  rd: z.number(),
+  volatility: z.number(),
+  /** `rating - 2 * rd`: what the leaderboard orders by. */
+  conservative: z.number(),
+  games: z.number().int(),
+  /** On the leaderboard: enough rated games and a deviation small enough to mean something. */
+  established: z.boolean(),
+  /** Place on the leaderboard; null until established. */
+  rank: z.number().int().nullable(),
+  lastGameAt: z.number().int(),
+});
+export type RatingView = z.infer<typeof RatingView>;
+
+/** How dependably a player turns up: phases ordered in time, missed (NMR), and games walked out of. */
+export const ReliabilityView = z.object({
+  /** 0 to 1, starting at 0.9 for a newcomer. */
+  score: z.number(),
+  phasesDue: z.number().int(),
+  phasesOnTime: z.number().int(),
+  phasesLate: z.number().int(),
+  /** No moves received: due phases with nothing ordered by the player. */
+  missed: z.number().int(),
+  gamesCompleted: z.number().int(),
+  gamesWalkedOut: z.number().int(),
+});
+export type ReliabilityView = z.infer<typeof ReliabilityView>;
+
+/** The Ledger: pledges a player kept, broke, or that came to nothing, across every game. */
+export const TrustView = z.object({
+  /** 0 to 1, starting at 0.5 for a newcomer: `(kept + 5) / (kept + broken + 10)`. */
+  score: z.number(),
+  kept: z.number().int(),
+  broken: z.number().int(),
+  void: z.number().int(),
+});
+export type TrustView = z.infer<typeof TrustView>;
+
+/** One ended game on a player's record. */
+export const PlayerResult = z.object({
+  /** Null for an unlisted game seen by anyone but the player: its code is not public. */
+  gameId: z.string().nullable(),
+  power: PowerName,
+  result: GameResult,
+  /** This player's share of the result: 1 for a solo, a draw share, 0 for a loss. */
+  score: z.number(),
+  centers: z.number().int(),
+  substitute: z.boolean(),
+  /** Left the seat before the end: replaced by a substitute, or in civil disorder at the end. */
+  walkedOut: z.boolean(),
+  /** What the game did to the player's rating; null when it was not rated. */
+  ratingDelta: z.number().nullable(),
+  finishedAt: z.number().int(),
+});
+export type PlayerResult = z.infer<typeof PlayerResult>;
+
+/** `GET /api/players/:handle`. */
+export const PlayerProfile = z.object({
+  player: PlayerSummary,
+  /** Null until the player has finished a rated game. */
+  rating: RatingView.nullable(),
+  reliability: ReliabilityView,
+  trust: TrustView,
+  games: z.object({ played: z.number().int(), solos: z.number().int(), draws: z.number().int() }),
+  /** The most recent ended public games, newest first. */
+  recent: z.array(PlayerResult),
+});
+export type PlayerProfile = z.infer<typeof PlayerProfile>;
+
+/** `GET /api/me` and `PATCH /api/me`: the profile, plus what only its owner sees. */
+export const MeResponse = PlayerProfile.extend({
+  account: z.object({
+    /** When the handle may next be changed; null when it may be changed now. */
+    renameAvailableAt: z.number().int().nullable(),
+    /** A recovery code has been issued (it is never shown again). */
+    recoveryIssuedAt: z.number().int().nullable(),
+    /** Devices signed in to this account. */
+    sessions: z.number().int(),
+  }),
+});
+export type MeResponse = z.infer<typeof MeResponse>;
+
+/** One of the player's own games, live or ended, listed or not. */
+export const MyGame = z.object({
+  gameId: z.string(),
+  power: PowerName,
+  /** `playing` while the game runs; `left` once a substitute has the seat. */
+  status: z.enum(["playing", "finished", "abandoned", "left"]),
+  joinedAt: z.number().int(),
+  finishedAt: z.number().int().nullable(),
+  result: GameResult.nullable(),
+  score: z.number().nullable(),
+  centers: z.number().int().nullable(),
+  ratingDelta: z.number().nullable(),
+});
+export type MyGame = z.infer<typeof MyGame>;
+
+/** `GET /api/me/games`: the player's games, most recently joined first. */
+export const MyGamesResponse = z.object({ games: z.array(MyGame) });
+export type MyGamesResponse = z.infer<typeof MyGamesResponse>;
+
+/** `GET /api/leaderboard`: established ratings, best first. */
+export const LeaderboardResponse = z.object({
+  ladder: z.string(),
+  entries: z.array(
+    z.object({
+      rank: z.number().int().min(1),
+      player: PlayerSummary,
+      rating: z.number(),
+      rd: z.number(),
+      conservative: z.number(),
+      games: z.number().int(),
+      lastGameAt: z.number().int(),
+    }),
+  ),
+  offset: z.number().int(),
+  limit: z.number().int(),
+  /** The `offset` of the next page; null on the last one. */
+  next: z.number().int().nullable(),
+});
+export type LeaderboardResponse = z.infer<typeof LeaderboardResponse>;
+
+/** `GET /api/ledger`: the global trust ledger, most trustworthy first. */
+export const TrustLeaderboardResponse = z.object({
+  entries: z.array(z.object({ rank: z.number().int().min(1), player: PlayerSummary, trust: TrustView, games: z.number().int() })),
+  offset: z.number().int(),
+  limit: z.number().int(),
+  next: z.number().int().nullable(),
+});
+export type TrustLeaderboardResponse = z.infer<typeof TrustLeaderboardResponse>;
+
+/** `POST /api/games/:id/seat`: a fresh seat token for the signed-in player's own seat (another device). */
+export const SeatTokenResponse = CreateGameResponse;
+export type SeatTokenResponse = z.infer<typeof SeatTokenResponse>;
 
 // ---------- scoring ----------
 
