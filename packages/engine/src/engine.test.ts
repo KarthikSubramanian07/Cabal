@@ -373,7 +373,7 @@ describe("botOrders", () => {
     // Hard spends up to fifteen times the adjudications and makes no 30 ms
     // promise; it is measured and bounded so that a seat cannot stall a phase.
     const hard = measure("hard", 2, 3000);
-    expect(hard.median).toBeLessThan(400);
+    expect(hard.median).toBeLessThan(200);
   }, 300_000);
 
   it("rejects unknown powers, unknown levels and finished games", () => {
