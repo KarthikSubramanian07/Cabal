@@ -3,12 +3,13 @@
  * point per game, the latest point labelled. Each point is a stop for the keyboard and the
  * pointer, and says what the game did. The same figures are in a table beside it.
  */
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link } from "../app/router.jsx";
 import { powerLabel } from "../lobby/terms.js";
 import { type RatingPoint, ratingTicks, signed } from "./record.js";
 
-const W = 640;
+/** Drawn at the width it is shown at, so the type stays its own size on a phone. */
+const WIDE = 640;
 const H = 220;
 const PAD = { top: 18, right: 64, bottom: 30, left: 48 };
 
@@ -23,7 +24,19 @@ function pointLabel(p: RatingPoint): string {
 
 export function RatingChart({ points }: { points: RatingPoint[] }) {
   const [hot, setHot] = useState<number | null>(null);
+  const [W, setW] = useState(WIDE);
+  const plot = useRef<HTMLDivElement>(null);
   const tableId = useId();
+  useEffect(() => {
+    const el = plot.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([entry]) => {
+      const w = Math.round(entry?.contentRect.width ?? WIDE);
+      if (w > 0) setW(Math.max(280, w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const values = points.map((p) => p.rating);
   const ticks = useMemo(() => ratingTicks(values), [values]);
   if (points.length < 2) return null;
@@ -37,7 +50,7 @@ export function RatingChart({ points }: { points: RatingPoint[] }) {
 
   return (
     <figure className="rating-chart">
-      <div className="rating-plot">
+      <div className="rating-plot" ref={plot}>
         <svg viewBox={`0 0 ${W} ${H}`} role="group" aria-label={`Rating over the last ${points.length - 1} rated games`} aria-describedby={tableId}>
           {ticks.map((t) => (
             <g key={t} className="rating-tick">
