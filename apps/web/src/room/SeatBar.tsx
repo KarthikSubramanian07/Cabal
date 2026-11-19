@@ -15,6 +15,7 @@ export function SeatBar({
   running,
   centres,
   scores,
+  place = "side",
 }: {
   seats: SeatView[];
   me: PowerName | null;
@@ -22,9 +23,11 @@ export function SeatBar({
   centres: Record<string, number>;
   /** Once the game is over: each power's share of the result. */
   scores?: Record<string, number> | undefined;
+  /** Where it sits: beside the board on a wide screen, over the map on a phone. */
+  place?: "side" | "stage";
 }) {
   return (
-    <ul className="chairs" aria-label="Seats this phase">
+    <ul className={`chairs at-${place}`} aria-label="Seats this phase">
       {seats.map((seat) => {
         const s = seatState(seat, running, scores ? (scores[seat.power] ?? 0) : undefined);
         const label = `${s.sentence} ${centres[seat.power] ?? 0} supply centres.${seat.power === me ? " Your seat." : ""}${seat.host ? " Host." : ""}`;
