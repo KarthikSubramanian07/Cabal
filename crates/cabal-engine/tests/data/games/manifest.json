@@ -196,6 +196,218 @@
         "support",
         "support_cut_or_void"
       ]
+    },
+    {
+      "file": "recorded/sandbox_italy_takes_trieste.json",
+      "tier": "recorded",
+      "source": "played by hand in the web sandbox (driven through the real page with Playwright), exported from its autosave: Italy takes Trieste with support, a retreat, builds, then a four-way bounce",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 5,
+      "covers": [
+        "bounce",
+        "build",
+        "dislodgement",
+        "retreat",
+        "split_coast",
+        "support"
+      ]
+    },
+    {
+      "file": "recorded/sandbox_convoy_and_burgundy.json",
+      "tier": "recorded",
+      "source": "played by hand in the web sandbox (driven through the real page with Playwright), exported from its autosave: a convoy to Norway, supported moves, builds, bounces over Burgundy and Sweden",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 4,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "split_coast",
+        "support"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_0.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 0 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 17,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_1.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 1 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 18,
+      "covers": [
+        "bounce",
+        "build",
+        "disband",
+        "dislodgement",
+        "draw",
+        "elimination",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_2.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 2 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 19,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_3.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 3 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 17,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_4.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 4 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 17,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_5.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 5 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 18,
+      "covers": [
+        "bounce",
+        "build",
+        "disband",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_6.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 6 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 17,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "disband",
+        "dislodged_by_convoy",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_7.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 7 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 16,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void"
+      ]
     }
   ]
 }

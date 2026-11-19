@@ -216,6 +216,25 @@ fn every_saved_game_replays_without_divergence() {
         }
     }
 
+    // games played on Cabal itself, from both places people and bots play
+    let recorded: Vec<&str> = manifest
+        .games
+        .iter()
+        .filter(|e| e.tier == "recorded")
+        .map(|e| e.file.as_str())
+        .collect();
+    assert!(
+        recorded.len() >= 10,
+        "only {} recorded games",
+        recorded.len()
+    );
+    for from in ["recorded/sandbox_", "recorded/arena_"] {
+        assert!(
+            recorded.iter().any(|f| f.starts_with(from)),
+            "no recorded game under {from}*"
+        );
+    }
+
     // the mechanics the fixture set exists to cover
     for needed in [
         "bounce",

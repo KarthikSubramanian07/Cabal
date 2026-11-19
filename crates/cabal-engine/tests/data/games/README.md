@@ -7,7 +7,7 @@ each proves something the others cannot.
 |---|---|---|
 | 1. Property | no files: `tests/roundtrip.rs` | Any game the engine can play survives export and every way of loading it (strict replay, verification, trusted resume, snapshot, a save cut to start in a retreat phase). Seeded, so a failure names its game. |
 | 2. Generated | `generated/` | Today's rulings, pinned byte for byte. Each file is written by `tests/common/golden.rs` from a script or a seed. A change to any recorded ruling fails `tests/replay.rs` with the file named. |
-| 3. Recorded and external | `recorded/`, `external/` | Agreement with adjudication that Cabal did not write. `external/` holds games published by other projects; `recorded/` is for games played on Cabal itself. |
+| 3. Recorded and external | `recorded/`, `external/` | Games nobody generated for the purpose. `external/` holds games published by other projects: agreement with adjudication that Cabal did not write. `recorded/` holds games played on Cabal itself, in the sandbox and by the bots in the arena: play as it really happens, which must keep replaying exactly as it was recorded. |
 
 `manifest.json` lists every file with its source, licence, engine version,
 phase count and the mechanics it covers. The test recomputes the phase count and
@@ -55,8 +55,25 @@ options and build allowances across 35 phases, but not result codes.
 
 ## Recorded games
 
-None yet. The one finished production game known when this set was built
-(`SFKGJ8`) was no longer retrievable from `GET /api/games/SFKGJ8/replay`. To add
-one: save the response of that endpoint (or the sandbox export) under
+Ten games played on Cabal itself, kept exactly as they were written.
+
+- `recorded/sandbox_*.json` (2): played in the web sandbox. The real page was
+  driven with Playwright, order by order with clicks, the Support and Convoy
+  tools and the build menus, and the game was taken from the sandbox's own
+  autosave, so these are what the browser build of the engine recorded for a
+  person's session: a supported attack on Trieste with a retreat and builds,
+  and a convoy to Norway with bounces over Burgundy and Sweden.
+- `recorded/arena_1901_*.json` (8): the games of
+  `cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR`, seven
+  heuristic bots at mixed levels playing to the end of 1904, about seventeen
+  phases each, with supports, convoys, dislodgements and retreats in every one.
+
+They are not rewritten when rulings change. If one starts to diverge, a ruling
+changed under a game somebody played, and that is a decision to make, not a
+file to regenerate.
+
+No production game is here yet: the one finished game known when this set was
+built (`SFKGJ8`) was no longer retrievable from `GET /api/games/SFKGJ8/replay`.
+To add one, save the response of that endpoint (or a sandbox export) under
 `recorded/`, add a manifest entry with `tier: "recorded"`, its source and
 licence, then run the update command above to fill in the computed fields.
