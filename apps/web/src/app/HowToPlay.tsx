@@ -62,7 +62,8 @@ export function HowToPlay({
               <tr>
                 <th>Convoy</th>
                 <td>
-                  Click a fleet at sea, press <kbd>C</kbd>, click the army, then where it lands.
+                  Click a fleet at sea, press <kbd>C</kbd>, click the army, then where it lands. An army that could
+                  either walk or sail gets a By convoy switch on its order.
                 </td>
               </tr>
               <tr>
@@ -85,7 +86,8 @@ export function HowToPlay({
           </table>
           <p className="fine">
             Only legal orders are offered. Units without an order hold. On a phone, use the buttons under the map
-            instead of the keys, and pinch to zoom.
+            instead of the keys, pinch to zoom and drag to move the map. Your game is saved on this device as you
+            play.
           </p>
           <p className="fine">
             Without a mouse, use the choices under the map: pick a unit, then where it goes. The same orders are
