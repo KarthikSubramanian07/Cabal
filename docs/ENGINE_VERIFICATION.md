@@ -26,6 +26,9 @@ and rule references. Original order text and unit spellings are retained; the
 runner translates only notation (`nrg` → `nwg`, `mid` → `mao`, `gol` → `lyo`, and
 unspaced move hyphens). It does not infer starting units from orders.
 
+The corpus is test-only data transcribed from godip, which is GPL-3.0. Its licence position and attribution are in
+`crates/cabal-engine/data/NOTICE.md`.
+
 Run `python3 tools/check_godip_oracle.py` with `GODIP_REF` set to independently
 check all 18 transcriptions against that checkout. This tool is read-only and
 checks starting units, dislodged units, preceding results, phase, orders, expected
