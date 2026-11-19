@@ -47,13 +47,28 @@
   }
 }
 
+/* A piece that ends the phase dislodged keeps its plain outline until it is knocked out. */
+@keyframes turn-dislodged {
+  from {
+    stroke: var(--ink);
+    stroke-width: 1.4px;
+    stroke-dasharray: none;
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
+  .board-live .unit.dislodged .body {
+    animation: turn-dislodged 1ms step-end var(--turn, 0ms) backwards;
+  }
+
   .order-marks.results .reveal {
     animation: ink-draw var(--dur-march) var(--ease-out) var(--delay, 0ms) backwards;
   }
 
   .order-marks.results .order.hold,
-  .order-marks.results .order.carrying {
+  .order-marks.results .order.carrying,
+  .order-marks.results .order .head,
+  .order-marks.results .order .knot {
     transform-box: fill-box;
     transform-origin: center;
     animation: result-arrive var(--dur-slow) var(--ease-out) var(--delay, 0ms) backwards;

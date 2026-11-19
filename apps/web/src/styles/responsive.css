@@ -450,6 +450,11 @@
     font-size: 18px;
   }
 
+  .board-tools button {
+    min-width: var(--hit);
+    height: var(--hit);
+  }
+
   /* Seven 44px buttons would cover a good part of a small map. The four arrows are for
      players who cannot drag, so they wait behind one button until they are asked for. */
   .zoom .pan-toggle {

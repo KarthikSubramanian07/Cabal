@@ -41,9 +41,10 @@ import {
 import { ImportError } from "../game/persist.js";
 import { type Suggestion, normaliseTyped, routeTyped } from "../game/typed.js";
 import { type OpenedGame, type Sandbox, powerWithOrders, useSandbox } from "../game/useSandbox.js";
-import { Board, type DrawnOrder, POWER_COLOR } from "../map/Board.jsx";
-import { resultsTiming } from "../map/motion.js";
-import { type Speed, advance, dwell, playFrom } from "../game/replay.js";
+import { Board, type DrawnOrder, POWER_COLOR, type Resolution } from "../map/Board.jsx";
+import { resolutionLength } from "../motion/choreography.js";
+import { prefersReducedMotion } from "../motion/useReducedMotion.js";
+import { type Speed, READ_MS, advance, dwell, playFrom } from "../game/replay.js";
 
 interface Picker {
   x: number;
@@ -475,21 +476,44 @@ function Table({ sb }: { sb: Sandbox }) {
         .map((r) => ({ power: r.power, text: r.order, ok: r.ok }))
     : Object.entries(sb.orders).flatMap(([power, entries]) => Object.values(entries).map((text) => ({ power, text })));
 
-  // Playback: each phase stays up while its results ink in and then long enough to read.
-  const resultsMs = record ? resultsTiming(drawn).total : 0;
+  /** The phase on show, to be played on the board: its pieces march from where they stood. */
+  const resolution = useMemo<Resolution | undefined>(
+    () =>
+      record && viewing !== null
+        ? {
+            key: `${viewing}-${record.phase}`,
+            phase: record.phase,
+            before: record.state,
+            after: record.outcome.next,
+            results: record.outcome.results,
+            beforeIds: sb.units.phases[viewing],
+            afterIds: sb.units.phases[viewing + 1] ?? sb.units.live,
+          }
+        : undefined,
+    [record, viewing, sb.units],
+  );
+  /** The phase whose choreography has finished (or was skipped). */
+  const [settled, setSettled] = useState<string | null>(null);
+
+  // Playback: each phase plays out on the board, then stays up long enough to read.
   useEffect(() => {
     if (!replaying) return;
-    if (viewing === null) {
+    if (viewing === null || !resolution) {
       setReplaying(false);
       return;
     }
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-    const timer = window.setTimeout(
-      () => setViewing(advance(viewing, sb.history.length)),
-      dwell(resultsMs, speed, reduced),
-    );
+    const next = () => setViewing(advance(viewing, sb.history.length));
+    if (settled === resolution.key) {
+      const timer = window.setTimeout(next, Math.round(READ_MS / speed));
+      return () => window.clearTimeout(timer);
+    }
+    // Should the board never report back (drawn off screen), move on after the time it would take.
+    const reduced = prefersReducedMotion();
+    const timer = window.setTimeout(next, dwell(resolutionLength(resolution, drawn, reduced), speed, reduced) + 1500);
     return () => window.clearTimeout(timer);
-  }, [replaying, viewing, speed, resultsMs, sb.history.length]);
+    // `drawn` follows `resolution`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replaying, viewing, speed, settled, resolution, sb.history.length]);
 
   const selectedProvince = draft.step === "idle" ? null : parseUnit(draft.unit)?.province ?? null;
   const activeSummary = sb.powers.find((p) => p.power === active);
@@ -625,7 +649,9 @@ function Table({ sb }: { sb: Sandbox }) {
             targets={record ? undefined : targets}
             hot={playing ? hot : undefined}
             standoffs={record?.outcome.standoffs}
-            results={record ? `${viewing}-${record.phase}` : undefined}
+            resolution={resolution}
+            rate={replaying ? speed : 1}
+            onSettled={setSettled}
             ids={record ? sb.units.phases[viewing!] : sb.units.live}
             focus={focus}
             focusKey={refocus}

@@ -7,14 +7,18 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { type ParsedOrder, parseOrder, parseUnit } from "../game/notation.js";
+import { parseUnit } from "../game/notation.js";
 import { type UnitIds, unitKey } from "../game/unitIds.js";
+import { type Choreography, type Frame, type ResolutionInput, choreograph, standAside } from "../motion/choreography.js";
+import { useReducedMotion } from "../motion/useReducedMotion.js";
+import { deck, useSound } from "../sound/deck.js";
 import { type MarkTiming, resultsTiming } from "./motion.js";
-import { carryingOrders, convoyChain, smoothPath } from "./route.js";
+import { type LaidMark, convoyRoutes, layoutMarks } from "./marks.js";
 import {
   type Board as BoardData,
   LABEL_OUTLINE_TOLERANCE,
@@ -24,6 +28,7 @@ import {
   pathRings,
   regionPoint,
 } from "./boardData.js";
+import { markSizes } from "./geometry.js";
 import {
   type Box,
   type Size,
@@ -56,8 +61,37 @@ export interface DrawnOrder {
   ok?: boolean | undefined;
 }
 
+/**
+ * A resolved phase to play on the board: the positions before and after, the results, and
+ * the unit ids for both (so each piece is walked, not swapped). `key` names the phase; the
+ * choreography plays once per change of it.
+ */
+export interface Resolution extends ResolutionInput {
+  key: string;
+}
+
+/** Units and provinces to pick out on the board, for the "why did this fail" panel. */
+export interface BoardHighlight {
+  /** The province of the order being explained: ringed in brass. */
+  focus?: string | undefined;
+  /** Provinces of units that helped it (supports that counted, its convoy): a dashed brass ring. */
+  allies?: readonly string[] | undefined;
+  /** Provinces of units that stood against it: a vermilion ring with sights. */
+  against?: readonly string[] | undefined;
+  /** Units whose orders stay inked (`A MUN`); every other order is faded back. */
+  units?: readonly string[] | undefined;
+}
+
+/** A piece drawn as a dashed outline: where a what-if would leave a unit. */
+export interface Ghost {
+  power: string;
+  kind: "A" | "F";
+  region: string;
+}
+
 export interface BoardProps {
   board: BoardData;
+  /** The position to draw. While a `resolution` plays, the position it started from. */
   state: State;
   orders: DrawnOrder[];
   /** Province of the selected unit. */
@@ -69,9 +103,28 @@ export interface BoardProps {
   standoffs?: readonly string[] | undefined;
   /**
    * Set while a phase's results are shown, to a value unique to that phase: the order marks are
-   * then inked in, in the order the adjudication tells (motion.ts), once per change of value.
+   * then inked in, in the order the adjudication tells, once per change of value. Implied by
+   * `resolution`.
    */
   results?: string | undefined;
+  /**
+   * A resolved phase to play: the pieces march, bounce, are knocked aside, retreat, disband and
+   * are built, in the four beats of motion/choreography.ts, then rest where the phase left them.
+   * Without it the pieces of `state` are drawn where they stand.
+   */
+  resolution?: Resolution | undefined;
+  /** Playback speed for the resolution (a replay's 2x). Defaults to 1. */
+  rate?: number | undefined;
+  /** Called once a resolution has finished playing, or was skipped, with its key. */
+  onSettled?: ((key: string) => void) | undefined;
+  /** Whether this board plays its sounds (when the player has sound on). Defaults to true. */
+  sound?: boolean | undefined;
+  /** Pick out the units behind one order and fade the rest. */
+  highlight?: BoardHighlight | null | undefined;
+  /** The orders are a sketch (what-if), not the game: drawn as such and stamped "What if". */
+  sketch?: boolean | undefined;
+  /** Dashed pieces where a sketch would leave units. */
+  ghosts?: readonly Ghost[] | undefined;
   /** Stable unit identities for `state`, so a piece keeps its DOM node from phase to phase. */
   ids?: UnitIds | undefined;
   /** Provinces to frame when the frame is too small for the whole board (the active power's). */
@@ -89,168 +142,103 @@ const TOUCH_REACH_PX = 26;
 /** The same reach in board units is capped, so on a far-out overview a tap cannot jump provinces away. */
 const TOUCH_REACH_MAX = 48;
 
-function toward(from: Point, to: Point, trimStart: number, trimEnd: number): [Point, Point] {
-  const dx = to[0] - from[0];
-  const dy = to[1] - from[1];
-  const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len;
-  const uy = dy / len;
-  return [
-    [from[0] + ux * trimStart, from[1] + uy * trimStart],
-    [to[0] - ux * trimEnd, to[1] - uy * trimEnd],
-  ];
-}
-
-function arrowHead(from: Point, tip: Point, size = 8): string {
-  const dx = tip[0] - from[0];
-  const dy = tip[1] - from[1];
-  const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len;
-  const uy = dy / len;
-  const bx = tip[0] - ux * size;
-  const by = tip[1] - uy * size;
-  const half = size * 0.55;
-  return `${tip[0]},${tip[1]} ${bx - uy * half},${by + ux * half} ${bx + uy * half},${by - ux * half}`;
-}
-
-function mid(a: Point, b: Point): Point {
-  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-}
-
 const OrderMark = memo(function OrderMark({
   board,
   order,
+  laid,
   r,
-  route,
-  carrying = false,
   timing,
+  lit,
 }: {
   board: BoardData;
   order: DrawnOrder;
+  laid: LaidMark;
   r: number;
-  /** A move by convoy: the regions of the fleets carrying it, in the order the army passes them. */
-  route?: readonly string[] | undefined;
-  /** A convoy whose army's track is drawn through this fleet: marked on the fleet, not with a line. */
-  carrying?: boolean;
-  /** Results being shown: when this mark is drawn and its failure stamped (see motion.ts). */
+  /** Results being shown: when this mark is drawn and its failure stamped. */
   timing?: MarkTiming | undefined;
+  /** With a highlight on: this mark is one of the orders being explained (true) or faded (false). */
+  lit?: boolean | undefined;
 }) {
   const maskId = `ink${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
-  const parsed: ParsedOrder | null = parseOrder(order.text);
-  if (!parsed || parsed.type === "waive") return null;
   const style = {
     "--power": POWER_COLOR[order.power] ?? "var(--ink)",
     ...(timing ? { "--delay": `${timing.delay}ms`, "--stamp": `${timing.stamp}ms` } : {}),
   } as CSSProperties;
+  const shape = laid.shape;
+  const cls = `order${order.ok === false ? " failed" : ""}${order.ok === true ? " ok" : ""}${
+    lit === true ? " lit" : lit === false ? " dim" : ""
+  }`;
   /**
    * Results are inked in: a solid copy of the stroke, drawn along its length, masks the real one,
    * so dashed supports and dotted convoys keep their rhythm while they draw.
    */
-  const ink = (shape: "line" | "path", geometry: { x1?: number; y1?: number; x2?: number; y2?: number; d?: string }) =>
+  const ink = (d: string) =>
     timing ? (
       <mask id={maskId} maskUnits="userSpaceOnUse" x={0} y={0} width={board.width} height={board.height}>
-        {shape === "line" ? (
-          <line className="reveal" pathLength={1} x1={geometry.x1} y1={geometry.y1} x2={geometry.x2} y2={geometry.y2} />
-        ) : (
-          <path className="reveal" pathLength={1} d={geometry.d} />
-        )}
+        <path className="reveal" pathLength={1} d={d} />
       </mask>
     ) : null;
   const masked = timing ? `url(#${maskId})` : undefined;
   const failMark = (at: Point) =>
     order.ok === false ? (
       <g className="fail-mark" transform={`translate(${at[0]} ${at[1]})`}>
-        <g className="stamp">
-          <line x1={-4} y1={-4} x2={4} y2={4} />
-          <line x1={4} y1={-4} x2={-4} y2={4} />
+        <g className="stamp" style={{ "--x": `${Math.max(3.5, r * 0.46)}px` } as CSSProperties}>
+          <line x1={-Math.max(3.5, r * 0.46)} y1={-Math.max(3.5, r * 0.46)} x2={Math.max(3.5, r * 0.46)} y2={Math.max(3.5, r * 0.46)} />
+          <line x1={Math.max(3.5, r * 0.46)} y1={-Math.max(3.5, r * 0.46)} x2={-Math.max(3.5, r * 0.46)} y2={Math.max(3.5, r * 0.46)} />
         </g>
       </g>
     ) : null;
-  const cls = `order${order.ok === false ? " failed" : ""}${order.ok === true ? " ok" : ""}`;
-  const at = regionPoint(board, parsed.unit.region);
 
-  const line = (a: Point, b: Point, kind: string, head = true) => {
-    const cross = mid(a, b);
-    return (
-      <g className={`${cls} ${kind}`} style={style}>
-        {ink("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1] })}
-        <g mask={masked}>
-          <line className="halo" x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} />
-          <line className="stroke" x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} />
-          {head ? <polygon className="head" points={arrowHead(a, b, Math.max(8, r * 0.8))} /> : null}
-        </g>
-        {failMark(cross)}
-      </g>
-    );
-  };
-
-  switch (parsed.type) {
-    case "hold":
+  switch (shape.kind) {
+    case "arrow":
       return (
-        <g className={`${cls} hold`} style={style}>
-          <circle cx={at[0]} cy={at[1]} r={r + 4.5} />
+        <g className={`${cls} ${shape.cls}`} style={style} data-order={order.text}>
+          {ink(shape.d)}
+          <g mask={masked}>
+            <path className="halo" d={shape.d} />
+            <path className="stroke" d={shape.d} />
+          </g>
+          <polygon className="head" points={shape.head} />
+          {failMark(shape.failAt)}
         </g>
       );
-    case "move":
-    case "retreat": {
-      if (parsed.type === "move" && parsed.via && route && route.length > 0) {
-        const stops = route.map((region) => regionPoint(board, region));
-        const dest = regionPoint(board, parsed.dest);
-        const [a] = toward(at, stops[0]!, r + 2, 0);
-        const [, b] = toward(stops.at(-1)!, dest, 0, 3);
-        const d = smoothPath([a, ...stops, b]);
-        const cross = mid(stops.at(-1)!, b);
-        return (
-          <g className={`${cls} move via routed`} style={style}>
-            {ink("path", { d })}
-            <g mask={masked}>
-              <path className="halo" d={d} />
-              <path className="stroke" d={d} />
-              <polygon className="head" points={arrowHead(stops.at(-1)!, b, Math.max(8, r * 0.8))} />
-            </g>
-            {failMark(cross)}
+    case "helper": {
+      const k = shape.knot;
+      return (
+        <g className={`${cls} ${shape.cls}`} style={style} data-order={order.text}>
+          {ink(shape.d)}
+          <g mask={masked}>
+            <path className="halo" d={shape.d} />
+            <path className="stroke" d={shape.d} />
           </g>
-        );
-      }
-      // A move by land, a retreat, or a move by convoy no fleet has been ordered to carry yet.
-      const [a, b] = toward(at, regionPoint(board, parsed.dest), r + 2, 3);
-      return line(a, b, parsed.type === "retreat" ? "retreat" : parsed.via ? "move via" : "move");
+          {shape.cls === "support" ? (
+            <circle className="knot" cx={k.at[0]} cy={k.at[1]} r={k.r} />
+          ) : (
+            <rect className="knot" x={k.at[0] - k.r} y={k.at[1] - k.r} width={k.r * 2} height={k.r * 2} />
+          )}
+          {failMark(shape.failAt)}
+        </g>
+      );
     }
-    case "support-hold": {
-      const [a, b] = toward(at, regionPoint(board, parsed.target.region), r + 2, r + 5);
-      return line(a, b, "support");
-    }
-    case "support-move": {
-      const target = regionPoint(board, parsed.target.region);
-      const dest = regionPoint(board, parsed.dest);
-      const [a, b] = toward(at, mid(target, dest), r + 2, 2);
-      return line(a, b, "support");
-    }
-    case "convoy": {
-      if (carrying) {
-        return (
-          <g className={`${cls} convoy carrying`} style={style}>
-            <circle className="halo" cx={at[0]} cy={at[1]} r={r + 4.5} />
-            <circle className="stroke" cx={at[0]} cy={at[1]} r={r + 4.5} />
-          </g>
-        );
-      }
-      const army = regionPoint(board, parsed.army.region);
-      const dest = regionPoint(board, parsed.dest);
-      const [a, b] = toward(at, mid(army, dest), r + 2, 2);
-      return line(a, b, "convoy");
-    }
+    case "ring":
+      return (
+        <g className={`${cls} ${shape.cls}`} style={style} data-order={order.text}>
+          <circle className="halo" cx={shape.at[0]} cy={shape.at[1]} r={shape.r} />
+          <circle className="stroke" cx={shape.at[0]} cy={shape.at[1]} r={shape.r} />
+          {failMark(shape.failAt)}
+        </g>
+      );
     case "build":
       return (
-        <g className={`${cls} build`} style={{ ...style, transform: `translate(${at[0]}px, ${at[1]}px)` }}>
-          <UnitShape kind={parsed.unit.kind} r={r} ghost />
+        <g className={`${cls} build`} style={{ ...style, transform: `translate(${shape.at[0]}px, ${shape.at[1]}px)` }} data-order={order.text}>
+          <UnitShape kind={shape.unit} r={r} ghost />
         </g>
       );
     case "disband":
       return (
-        <g className={`${cls} disband`} style={style} transform={`translate(${at[0]} ${at[1]})`}>
-          <line x1={-r} y1={-r} x2={r} y2={r} />
-          <line x1={r} y1={-r} x2={-r} y2={r} />
+        <g className={`${cls} disband`} style={style} transform={`translate(${shape.at[0]} ${shape.at[1]})`} data-order={order.text}>
+          <line x1={-shape.r} y1={-shape.r} x2={shape.r} y2={shape.r} />
+          <line x1={shape.r} y1={-shape.r} x2={-shape.r} y2={shape.r} />
         </g>
       );
   }
@@ -273,6 +261,28 @@ function UnitShape({ kind, r, ghost = false }: { kind: "A" | "F"; r: number; gho
       {ghost ? null : <polygon className="shadow" points={pts(r * 0.13, r * 0.17)} />}
       <polygon className="body" points={pts(0, 0)} />
     </g>
+  );
+}
+
+/** Web Animation keyframes for a piece's frames, as shares of the whole phase. */
+export function keyframesOf(frames: readonly Frame[], total: number): Keyframe[] {
+  const kf: Keyframe[] = frames.map((f) => ({
+    offset: Math.min(1, Math.max(0, total > 0 ? f.t / total : 1)),
+    transform: `translate(${Math.round(f.x * 10) / 10}px, ${Math.round(f.y * 10) / 10}px) scale(${f.scale ?? 1})`,
+    opacity: f.opacity ?? 1,
+  }));
+  if (kf.length === 0) return kf;
+  if ((kf[0]!.offset as number) > 0) kf.unshift({ ...kf[0]!, offset: 0 });
+  if ((kf.at(-1)!.offset as number) < 1) kf.push({ ...kf.at(-1)!, offset: 1 });
+  return kf;
+}
+
+function SoundIcon({ on }: { on: boolean }) {
+  return (
+    <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
+      <path d="M3 8h3l4-3.5v11L6 12H3z" fill="currentColor" />
+      {on ? <path d="M13 7.2a4 4 0 0 1 0 5.6M15.4 5a7 7 0 0 1 0 10" strokeLinecap="round" /> : <path d="M13.5 7.5l4 5M17.5 7.5l-4 5" strokeLinecap="round" />}
+    </svg>
   );
 }
 
@@ -405,6 +415,42 @@ const Labels = memo(function Labels({ board, size, r }: { board: BoardData; size
   );
 });
 
+/**
+ * The units behind one order, picked out: the order's own unit ringed twice in brass, its
+ * helpers in dashed brass, the units against it in vermilion with sights. Shapes, not only
+ * colours, so the picture holds without colour vision.
+ */
+function Highlight({ board, highlight, r }: { board: BoardData; highlight: BoardHighlight; r: number }) {
+  const ring = markSizes(r).ring + 3;
+  const at = (code: string): Point | null => board.provinces[code]?.unit ?? null;
+  const focus = highlight.focus ? at(highlight.focus) : null;
+  return (
+    <g className="highlight">
+      {(highlight.allies ?? []).map((code) => {
+        const p = at(code);
+        return p ? <circle key={`ally-${code}`} className="hl ally" cx={p[0]} cy={p[1]} r={ring} /> : null;
+      })}
+      {(highlight.against ?? []).map((code) => {
+        const p = at(code);
+        if (!p) return null;
+        const t = ring * 0.55;
+        return (
+          <g key={`against-${code}`} className="hl against" transform={`translate(${p[0]} ${p[1]})`}>
+            <circle r={ring} />
+            <path d={`M0 ${-ring - t}V${-ring + t}M0 ${ring - t}V${ring + t}M${-ring - t} 0H${-ring + t}M${ring - t} 0H${ring + t}`} />
+          </g>
+        );
+      })}
+      {focus ? (
+        <g className="hl focus" transform={`translate(${focus[0]} ${focus[1]})`}>
+          <circle r={ring} />
+          <circle className="outer" r={ring + Math.max(3, r * 0.4)} />
+        </g>
+      ) : null}
+    </g>
+  );
+}
+
 interface Gesture {
   pointers: Map<number, { x: number; y: number }>;
   start: { x: number; y: number; view: Box; dist: number } | null;
@@ -419,12 +465,22 @@ export function Board({
   targets,
   hot,
   standoffs,
-  results,
+  results: resultsKey,
+  resolution,
+  rate = 1,
+  onSettled,
+  sound = true,
+  highlight,
+  sketch = false,
+  ghosts,
   ids,
   focus,
   focusKey,
   onProvince,
 }: BoardProps) {
+  const results = resultsKey ?? resolution?.key;
+  const reduced = useReducedMotion();
+  const [soundOn, setSound] = useSound();
   const full = useMemo<Size>(() => ({ w: board.width, h: board.height }), [board]);
   /**
    * The frame's size in CSS pixels, once measured. Nothing is drawn before that: the map's
@@ -527,8 +583,52 @@ export function Board({
     return owner;
   }, [state]);
 
+
+  // Every order's shape, worked out from the set (a support aims at the move it backs).
+  const point = useCallback((region: string) => regionPoint(board, region), [board]);
+  const textsKey = orders.map((o) => o.text).join("\n");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const texts = useMemo(() => orders.map((o) => o.text), [textsKey]);
+  const laid = useMemo(() => layoutMarks(texts, point, r), [texts, point, r]);
+
+  /**
+   * The choreography of the phase being shown. Worked out at the piece size the phase began
+   * at, so a zoom while it plays does not start it again.
+   */
+  const rAtStart = useRef(r);
+  const plan = useMemo<Choreography | null>(() => {
+    if (!resolution) return null;
+    rAtStart.current = r;
+    return choreograph(resolution, orders, { point, r, routes: convoyRoutes(texts, point) }, { reduced });
+    // Only a new phase (or a change of motion preference) plans again, never a zoom.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolution?.key, point, reduced]);
+  const timing = useMemo(
+    () => (plan ? { marks: plan.marks, standoffs: plan.standoffs } : results ? resultsTiming(orders) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [plan, results, textsKey],
+  );
+
   const pieces = useMemo(() => {
-    const list: { power: string; kind: "A" | "F"; at: Point; dislodged: boolean; key: string; label: string }[] = [];
+    const list: { power: string; kind: "A" | "F"; at: Point; dislodged: boolean; key: string; label: string; gone?: boolean; turnsAt?: number }[] = [];
+    const name = (power: string, unit: string, dislodged: boolean) =>
+      `${power.charAt(0)}${power.slice(1).toLowerCase()}: ${unit}${dislodged ? " (dislodged)" : ""}`;
+    if (plan) {
+      // The pieces rest where the phase leaves them; their frames carry them there.
+      for (const u of plan.units) {
+        list.push({
+          power: u.power,
+          kind: u.kind,
+          at: regionPoint(board, u.region),
+          dislodged: u.dislodged,
+          key: u.id,
+          label: name(u.power, u.unit, u.dislodged),
+          gone: u.gone,
+          ...(u.turnsAt !== undefined ? { turnsAt: u.turnsAt } : {}),
+        });
+      }
+      return list.sort((a, b) => Number(a.dislodged) - Number(b.dislodged) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    }
     for (const [power, units] of Object.entries(state.units)) {
       for (const u of units) {
         const ref = parseUnit(u);
@@ -541,7 +641,7 @@ export function Board({
           dislodged,
           // The id follows the unit from phase to phase; the text key is the fallback.
           key: ids?.[unitKey(power, u)] ?? `${power}-${u}`,
-          label: `${power.charAt(0)}${power.slice(1).toLowerCase()}: ${ref.unit}${dislodged ? " (dislodged)" : ""}`,
+          label: name(power, ref.unit, dislodged),
         });
       }
     }
@@ -550,20 +650,81 @@ export function Board({
     // Dislodged pieces go last, so they are drawn over the unit that pushed them out: in a
     // retreat phase they are the pieces that matter.
     return list.sort((a, b) => Number(a.dislodged) - Number(b.dislodged) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  }, [board, state, ids]);
+  }, [board, state, ids, plan]);
 
-  // Moves by convoy are drawn through the fleets carrying them; those fleets get a ring instead of a line.
-  const texts = useMemo(() => orders.map((o) => o.text), [orders]);
-  const routes = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const text of texts) {
-      const chain = convoyChain(text, texts, (region) => regionPoint(board, region));
-      if (chain.length) map.set(text, chain);
+  // Playing the choreography: the pieces' frames become Web Animations (transform and opacity
+  // only, on a layer of their own, so nothing is laid out again while they run), the marks'
+  // CSS animations are put on the same clock, and the cues are handed to the sound deck.
+  const liveRef = useRef<SVGSVGElement>(null);
+  const [animating, setAnimating] = useState(false);
+  const playing = useRef<{ all: () => Animation[]; stop: () => void; settle: () => void } | null>(null);
+  const settled = useRef(onSettled);
+  settled.current = onSettled;
+  const rateRef = useRef(rate);
+  rateRef.current = rate;
+  const unitsDrawn = measuredFrame !== null && pass >= 3;
+  useLayoutEffect(() => {
+    const svg = liveRef.current;
+    if (!plan || !resolution || !svg || !unitsDrawn) return;
+    const key = resolution.key;
+    const total = Math.max(1, plan.total);
+    const speed = rateRef.current > 0 ? rateRef.current : 1;
+    const mine: Animation[] = [];
+    if (typeof svg.animate === "function") {
+      for (const u of plan.units) {
+        if (!u.frames.length) continue;
+        const el = svg.querySelector<SVGGElement>(`g.unit[data-unit="${CSS.escape(u.id)}"]`);
+        if (el) mine.push(el.animate(keyframesOf(u.frames, total), { duration: total, fill: "both", easing: "linear" }));
+      }
+      if (reduced) {
+        const marks = svg.querySelector(".order-marks");
+        if (marks) mine.push(marks.animate([{ opacity: 0 }, { opacity: 1 }], { duration: total * 0.6, fill: "backwards" }));
+      }
     }
-    return map;
-  }, [board, texts]);
-  const carrying = useMemo(() => carryingOrders(texts), [texts]);
-  const timing = useMemo(() => (results ? resultsTiming(orders) : null), [results, orders]);
+    const all = () => (typeof svg.getAnimations === "function" ? svg.getAnimations({ subtree: true }) : mine);
+    for (const a of all()) a.playbackRate = speed;
+    const silence = sound ? deck.schedule(plan.cues, { rate: speed }) : () => {};
+    let done = false;
+    const settle = () => {
+      if (done) return;
+      done = true;
+      setAnimating(false);
+      settled.current?.(key);
+    };
+    const timer = window.setTimeout(settle, total / speed + 30);
+    const stop = () => {
+      window.clearTimeout(timer);
+      silence();
+    };
+    playing.current = { all, stop, settle };
+    setAnimating(plan.total > 0);
+    return () => {
+      stop();
+      for (const a of mine) a.cancel();
+      playing.current = null;
+      setAnimating(false);
+    };
+    // The sound switch and the speed are read when a phase starts; the effect below follows the speed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, unitsDrawn]);
+  useEffect(() => {
+    const p = playing.current;
+    if (p && rate > 0) for (const a of p.all()) a.playbackRate = rate;
+  }, [rate]);
+  /** Jump to the end of the phase being played: every piece where it lands, every stamp down. */
+  const skip = useCallback(() => {
+    const p = playing.current;
+    if (!p) return;
+    for (const a of p.all()) {
+      try {
+        a.finish();
+      } catch {
+        // an animation with nothing left to play
+      }
+    }
+    p.stop();
+    p.settle();
+  }, []);
 
   const candidates = useMemo<TapCandidate[]>(() => {
     const codes = new Set<string>([...(targets ?? []), ...(hot ?? [])]);
@@ -680,6 +841,65 @@ export function Board({
     if (code) onProvince(code, { x: e.clientX, y: e.clientY });
   };
 
+  const unitLayer = (
+<g className="units">
+          {(pass >= 3 ? pieces : []).map((u) => {
+            const at = u.dislodged ? standAside(u.at, r) : u.at;
+            return (
+              <g
+                key={u.key}
+                className={`unit${u.dislodged ? " dislodged" : ""}${u.gone ? " gone" : ""}`}
+                data-unit={u.key}
+                style={
+                  {
+                    "--power": POWER_COLOR[u.power],
+                    // Dislodged pieces stand off to the side of the province they lost.
+                    transform: `translate(${at[0]}px, ${at[1]}px)`,
+                    ...(u.gone ? { opacity: 0 } : {}),
+                    ...(u.turnsAt !== undefined ? { "--turn": `${u.turnsAt}ms` } : {}),
+                  } as CSSProperties
+                }
+              >
+                <title>{u.label}</title>
+                <UnitShape kind={u.kind} r={r} />
+              </g>
+            );
+          })}
+          {ghosts?.map((g) => {
+            const at = regionPoint(board, g.region);
+            return (
+              <g
+                key={`ghost-${g.power}-${g.region}`}
+                className="unit ghost-unit"
+                style={{ "--power": POWER_COLOR[g.power], transform: `translate(${at[0]}px, ${at[1]}px)` } as CSSProperties}
+              >
+                <UnitShape kind={g.kind} r={r} ghost />
+              </g>
+            );
+          })}
+        </g>
+  );
+  const markLayer = (
+<g className={`order-marks${results ? " results" : ""}`} key={results ?? "orders"}>
+          {orders.map((o, i) => {
+            const mark = laid[i];
+            if (!mark) return null;
+            const lit = highlight?.units ? highlight.units.includes(mark.unit) : undefined;
+            return (
+              <OrderMark
+                key={`${o.power}-${o.text}-${i}`}
+                board={board}
+                order={o}
+                laid={mark}
+                r={r}
+                timing={timing?.marks[i]}
+                lit={lit}
+              />
+            );
+          })}
+        </g>
+  );
+
   if (!measuredFrame) {
     return <div className="board-frame" ref={frameRef} style={{ "--board-aspect": full.w / full.h } as CSSProperties} />;
   }
@@ -709,6 +929,27 @@ export function Board({
         {pass >= 3 ? <Geography board={board} layer="lines" /> : null}
         <rect className="sheet-edge" x={0} y={0} width={full.w} height={full.h} />
 
+        {targets
+          ? [...targets].map((code) => {
+              const p = board.provinces[code];
+              return p ? <path key={`t-${code}`} className="target" d={p.d} /> : null;
+            })
+          : null}
+        {selected && board.provinces[selected] ? <path className="selected" d={board.provinces[selected]!.d} /> : null}
+
+        {pass >= 3 ? <Territory board={board} control={control} centerOwner={centerOwner} layer="centres" /> : null}
+        {pass >= LAST_PASS ? <Labels board={board} size={size} r={r} /> : <g className="labels" />}
+      </svg>
+
+      {/* Pieces and order marks, on a layer of their own: what moves never repaints the map. */}
+      <svg
+        ref={liveRef}
+        className={`board-live${sketch ? " sketch" : ""}${highlight ? " highlighting" : ""}`}
+        viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
+        aria-hidden="true"
+        focusable="false"
+        style={{ "--unit-r": r } as CSSProperties}
+      >
         {standoffs?.map((code) => {
           const p = board.provinces[code];
           return p ? (
@@ -720,50 +961,37 @@ export function Board({
             />
           ) : null;
         })}
-        {targets
-          ? [...targets].map((code) => {
-              const p = board.provinces[code];
-              return p ? <path key={`t-${code}`} className="target" d={p.d} /> : null;
-            })
-          : null}
-        {selected && board.provinces[selected] ? <path className="selected" d={board.provinces[selected]!.d} /> : null}
-
-        {pass >= 3 ? <Territory board={board} control={control} centerOwner={centerOwner} layer="centres" /> : null}
-        {pass >= LAST_PASS ? <Labels board={board} size={size} r={r} /> : <g className="labels" />}
-
-        <g className="units">
-          {(pass >= 3 ? pieces : []).map((u) => (
-            <g
-              key={u.key}
-              className={`unit${u.dislodged ? " dislodged" : ""}`}
-              data-unit={u.key}
-              style={
-                {
-                  "--power": POWER_COLOR[u.power],
-                  // Dislodged pieces stand off to the side of the province they lost.
-                  transform: `translate(${u.at[0] + (u.dislodged ? r * 1.15 : 0)}px, ${u.at[1] - (u.dislodged ? r * 1.15 : 0)}px)`,
-                } as CSSProperties
-              }
-            >
-              <title>{u.label}</title>
-              <UnitShape kind={u.kind} r={r} />
-            </g>
-          ))}
-        </g>
-        <g className={`order-marks${results ? " results" : ""}`} key={results ?? "orders"}>
-          {orders.map((o, i) => (
-            <OrderMark
-              key={`${o.power}-${o.text}-${i}`}
-              board={board}
-              order={o}
-              r={r}
-              route={routes.get(o.text)}
-              carrying={carrying.has(o.text)}
-              timing={timing?.marks[i]}
-            />
-          ))}
-        </g>
+        {highlight ? <Highlight board={board} highlight={highlight} r={r} /> : null}
+        {/* Written orders are drawn over the pieces; a phase's results under them, so a piece that
+            has marched stands on the head of its own arrow. The pieces keep their place in the
+            tree either way, so each keeps its DOM node from phase to phase. */}
+        {results ? markLayer : null}
+        {unitLayer}
+        {results ? null : markLayer}
       </svg>
+      {sketch ? (
+        <div className="sketch-stamp" aria-hidden="true">
+          What if
+        </div>
+      ) : null}
+
+      <div className="board-tools" role="group" aria-label="Board">
+        <button
+          type="button"
+          className="sound-toggle"
+          aria-pressed={soundOn}
+          aria-label="Sound"
+          title={soundOn ? "Sound is on" : "Sound is off"}
+          onClick={() => setSound(!soundOn)}
+        >
+          <SoundIcon on={soundOn} />
+        </button>
+        {animating ? (
+          <button type="button" className="skip" onClick={skip}>
+            Skip<span className="sr-only"> the animation</span>
+          </button>
+        ) : null}
+      </div>
 
       <div className="zoom" role="group" aria-label="Zoom">
         <button type="button" onClick={() => zoomBy(1.5)} aria-label="Zoom in">
