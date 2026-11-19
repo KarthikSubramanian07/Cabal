@@ -65,8 +65,9 @@ Server replies to a client message with the same `id` when the message has one.
 
 1. Sender chooses orders to commit to. Open pledge: the recipient sees the orders. Sealed pledge: recipients see only `commitment = blake3(canonical(orders) || nonce)` until adjudication.
 2. The server stores the pledge with the phase it applies to.
-3. After adjudication the server compares the pledged orders to the orders actually submitted for that phase by the pledger. Every pledged order present: `kept`. Any missing: `broken`. Pledger eliminated or phase skipped: `void`.
-4. Verdicts broadcast to the pledge audience and update the trust ledger.
+3. A pledge is checked against the board when it is made: it must be a legal order for a unit the pledger commands, otherwise it is rejected with `bad_pledge`.
+4. After adjudication the server compares the pledged orders to the orders actually submitted for that phase by the pledger, both in canonical form against the board the phase started from. Every pledged order present: `kept`. Any missing: `broken`, which includes submitting nothing at all while having units to order. `void` is only for a pledge that never bound anything: the pledger had nothing to order in that phase.
+5. Verdicts broadcast to the pledge audience and update the trust ledger.
 
 Verification is deterministic and reproducible from the saved game, so anyone can audit a ledger from the replay.
 

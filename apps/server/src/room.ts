@@ -27,7 +27,6 @@ import {
   canonicalOrder,
   engineReady,
   pledgeCommit,
-  pledgeReceipt,
   randomNonce,
 } from "./engine.js";
 import { hashToken, mintToken, parseToken, randomId } from "./tokens.js";
@@ -158,7 +157,9 @@ export class GameRoom extends DurableObject<Env> {
       // Looking up a code that names no game must not write storage; create() lays the schema down.
       if (this.meta) this.sql.exec(SCHEMA);
       const saved = await ctx.storage.get<string>("saved");
-      if (saved) this.game = Game.fromSaved(saved, this.meta?.settings.rulebook);
+      // Trusted restore: the stored record is resumed, never adjudicated again, so an
+      // engine upgrade that corrects a ruling cannot stop a game in flight from waking.
+      if (saved) this.game = Game.resume(saved, this.meta?.settings.rulebook);
       else if (this.meta) this.game = new Game(this.meta.settings.rulebook);
     });
   }
@@ -582,10 +583,10 @@ export class GameRoom extends DurableObject<Env> {
     }
     let pledgeId: string | null = null;
     if (pledge) {
-      const kind = this.phaseKind();
       let canonical: string[];
       try {
-        canonical = pledge.orders.map((o) => canonicalOrder(o, kind, from));
+        // Checked against the board: a pledge must be a legal order for the pledger's own unit.
+        canonical = this.game!.pledgeCheck(from, pledge.orders);
       } catch (e) {
         return this.send(ws, { t: "error", id, p: { code: "bad_pledge", message: e instanceof Error ? e.message : String(e) } });
       }
@@ -727,7 +728,11 @@ export class GameRoom extends DurableObject<Env> {
       .toArray();
     for (const p of pledges) {
       const pledged = JSON.parse(p.orders_json) as string[];
-      const receipt = pledgeReceipt(pledged, submittedBy[p.pledger] ?? []);
+      // Judged against the board the phase started from: silence with units to order is broken.
+      const receipt = game.pledgeReceipt(game.historyLength() - 1, p.pledger, pledged, submittedBy[p.pledger] ?? []) as
+        | "kept"
+        | "broken"
+        | "void";
       this.sql.exec("UPDATE pledges SET receipt = ? WHERE id = ?", receipt, p.id);
       const frame: ServerMessage = { t: "pledge.receipt", p: { pledgeId: p.id, receipt, revealed: pledged } };
       if (p.audience === "ALL") this.broadcast(frame, "ALL");
