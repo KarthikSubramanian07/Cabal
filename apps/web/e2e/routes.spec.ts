@@ -78,15 +78,19 @@ test.describe("routes", () => {
     const written = await boxes();
     await page.unroute("**/assets/index-*.js");
 
-    // With it, held on the loading screen by a slow engine download.
+    // With it, held on the loading screen by an engine download that waits until the screen is
+    // measured (a fixed delay raced the measurement on a loaded machine).
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((done) => (release = done));
     await page.route("**/*.wasm", async (route) => {
-      await new Promise((done) => setTimeout(done, 2500));
+      await held;
       await route.continue();
     });
     await page.goto("/sandbox");
     await expect(page.locator("main.loading-body")).toBeVisible();
     await expect(page.locator(".app.prerender")).toHaveCount(0);
     expect(await boxes()).toEqual(written);
+    release();
     // And the app does take over.
     await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
   });
