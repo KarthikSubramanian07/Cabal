@@ -1,0 +1,100 @@
+/**
+ * Clock arithmetic for a GameRoom, kept pure so it can be tested without a Durable Object.
+ *
+ * A room owns exactly one alarm, but several things want waking: the phase deadline, a bounded
+ * pause, an AI turn that is taking too long, an adjudication retry, a lobby that never started and
+ * the Registry hand-off. `nextAlarmAt` folds them into the single earliest instant.
+ */
+
+/** Adjudication failures retry on this schedule and then fall back to holding every unit. */
+export const ADJUDICATION_RETRY_MS = [5_000, 15_000, 45_000] as const;
+
+/** A paused live game resumes by itself after this long, with the clock it had left. */
+export const PAUSE_LIMIT_MS = 10 * 60_000;
+
+/** A Claude seat that has not answered by then is played by the bot orders already on file. */
+export const AI_TURN_LIMIT_MS = 90_000;
+
+/**
+ * Claude seats play a movement phase in two steps: they negotiate, the table gets time to answer,
+ * and only then do they order. Each part is bounded, so the three together are too:
+ * talks close after NEGOTIATE_LIMIT_MS, listening ends LISTEN_MAX_MS after the phase opened at the
+ * latest, and orders are due AI_TURN_LIMIT_MS after that. A phase shorter than
+ * NEGOTIATE_MIN_PHASE_MS has no room for it and is played in one step.
+ */
+export const NEGOTIATE_LIMIT_MS = 60_000;
+export const LISTEN_MAX_MS = 120_000;
+export const NEGOTIATE_MIN_PHASE_MS = 240_000;
+
+/** How long Claude seats listen after a phase opens: a quarter of the phase, at most LISTEN_MAX_MS. */
+export function listenMs(phaseMs: number): number {
+  return Math.min(LISTEN_MAX_MS, Math.floor(phaseMs / 4));
+}
+
+/** A model call that has not reported its cost after this long is charged its full reservation. */
+export const AGENT_CALL_TTL_MS = 5 * 60_000;
+
+/** A lobby nobody starts is closed after a week. */
+export const LOBBY_TTL_MS = 7 * 24 * 3600_000;
+
+/** Registry hand-off: 5 s doubling to a one hour ceiling, for at most this many attempts. */
+export const OUTBOX_BASE_MS = 5_000;
+export const OUTBOX_CAP_MS = 3_600_000;
+export const OUTBOX_MAX_ATTEMPTS = 40;
+
+/** An alarm handler that throws is run again after 2 s, doubling to a one minute ceiling. */
+export const ALARM_BACKOFF_BASE_MS = 2_000;
+export const ALARM_BACKOFF_CAP_MS = 60_000;
+
+/** Delay before the alarm runs again after `failures` failures in a row (1 based). */
+export function alarmBackoff(failures: number): number {
+  return Math.min(ALARM_BACKOFF_CAP_MS, ALARM_BACKOFF_BASE_MS * 2 ** Math.min(Math.max(failures, 1) - 1, 10));
+}
+
+/** Delay before retry number `attempt` (1 based), or null once the retries are spent. */
+export function adjudicationRetryDelay(attempt: number): number | null {
+  return ADJUDICATION_RETRY_MS[attempt - 1] ?? null;
+}
+
+/** Capped exponential backoff for the Registry hand-off; null when it should stop trying. */
+export function outboxDelay(attempts: number): number | null {
+  if (attempts >= OUTBOX_MAX_ATTEMPTS) return null;
+  return Math.min(OUTBOX_CAP_MS, OUTBOX_BASE_MS * 2 ** Math.min(attempts, 20));
+}
+
+export function phaseSeconds(phase: string, durations: { movementSeconds: number; shortPhaseSeconds: number }): number {
+  return phase.endsWith("M") ? durations.movementSeconds : durations.shortPhaseSeconds;
+}
+
+export interface Clock {
+  status: "lobby" | "active" | "paused" | "finished" | "abandoned";
+  createdAt: number;
+  deadlineAt: number | null;
+  /** Set while an adjudication failure is being retried. */
+  retryAt: number | null;
+  /** Set while Claude seats are still thinking. */
+  aiDueAt: number | null;
+  /** Set while paused. */
+  pausedUntil: number | null;
+  /** Next Registry hand-off attempt, in any status. */
+  outboxAt: number | null;
+}
+
+/** The earliest instant this room needs to wake, or null when nothing is pending. */
+export function nextAlarmAt(clock: Clock): number | null {
+  const due: number[] = [];
+  if (clock.outboxAt !== null) due.push(clock.outboxAt);
+  if (clock.status === "lobby") due.push(clock.createdAt + LOBBY_TTL_MS);
+  if (clock.status === "paused" && clock.pausedUntil !== null) due.push(clock.pausedUntil);
+  if (clock.status === "active") {
+    if (clock.retryAt !== null) due.push(clock.retryAt);
+    else if (clock.deadlineAt !== null) due.push(clock.deadlineAt);
+    if (clock.aiDueAt !== null) due.push(clock.aiDueAt);
+  }
+  return due.length === 0 ? null : Math.min(...due);
+}
+
+/** Remaining phase time to bank when a game pauses. Never negative. */
+export function remainingMs(deadlineAt: number | null, now: number): number {
+  return deadlineAt === null ? 0 : Math.max(0, deadlineAt - now);
+}
