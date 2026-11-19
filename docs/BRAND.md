@@ -1,6 +1,10 @@
 # Brand
 
-<img src="brand/wordmark.svg" alt="CABAL" width="320" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/wordmark-dark.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="brand/wordmark.svg" />
+  <img src="brand/wordmark.svg" alt="CABAL" width="320" />
+</picture>
 
 The wordmark is a heavy grotesque with the second A turned over in vermilion: the member of the cabal who is not what they seem. The concept art lives in [`brand/`](brand/) and the web client renders the same shapes from traced SVG paths (`apps/web/src/Wordmark.tsx`), so it stays crisp at any size.
 
