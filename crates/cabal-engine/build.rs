@@ -1,4 +1,4 @@
-//! Build script: bake the bundled maps into the crate.
+//! Build script: bake the bundled maps and the build identity into the crate.
 //!
 //! The map documents in `data/maps/` are parsed and validated here, by the very
 //! code the engine uses at run time (`src/geo.rs` is compiled into this script),
@@ -7,7 +7,8 @@
 
 #![allow(unexpected_cfgs)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::{env, fs};
 
 #[allow(dead_code, unused_imports)]
@@ -43,4 +44,51 @@ fn main() {
     }
     fs::write(out.join("bundled_maps.rs"), source).expect("write bundled maps");
 
+    build_identity(&manifest);
+}
+
+/// Record what was built: commit, profile, optimisation level and target.
+/// `CABAL_BUILD_COMMIT` overrides the commit for builds outside a checkout.
+fn build_identity(manifest: &Path) {
+    println!("cargo:rerun-if-env-changed=CABAL_BUILD_COMMIT");
+    let git = |args: &[&str]| -> Option<String> {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(manifest)
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let commit = env::var("CABAL_BUILD_COMMIT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| git(&["rev-parse", "--short=12", "HEAD"]))
+        .unwrap_or_else(|| "unknown".to_string());
+    // rebuild when the checkout moves to another commit
+    for args in [
+        ["rev-parse", "--git-path", "HEAD"],
+        ["rev-parse", "--git-path", "packed-refs"],
+    ] {
+        if let Some(path) = git(&args) {
+            println!("cargo:rerun-if-changed={}", manifest.join(path).display());
+        }
+    }
+    if let Some(reference) = git(&["symbolic-ref", "-q", "HEAD"]) {
+        if let Some(path) = git(&["rev-parse", "--git-path", &reference]) {
+            println!("cargo:rerun-if-changed={}", manifest.join(path).display());
+        }
+    }
+    println!("cargo:rustc-env=CABAL_BUILD_COMMIT={commit}");
+    for (key, var) in [
+        ("CABAL_BUILD_PROFILE", "PROFILE"),
+        ("CABAL_BUILD_OPT_LEVEL", "OPT_LEVEL"),
+        ("CABAL_BUILD_TARGET", "TARGET"),
+    ] {
+        let value = env::var(var).unwrap_or_else(|_| "unknown".to_string());
+        println!("cargo:rustc-env={key}={value}");
+    }
 }
