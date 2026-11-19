@@ -175,6 +175,24 @@ export function HowToPlay({
             to watch the whole game play back, each phase inked in turn, at half, normal or double speed.
           </p>
         </section>
+        <section>
+          <h3>Playing at a table</h3>
+          <p>
+            In a game with other people you order only your own power. Your orders are filed with the server as you
+            write them and nobody else sees them. When you are done, press Ready: any unit you left without an order
+            holds, and the phase resolves as soon as every seat is ready or the clock runs out.
+          </p>
+          <p>
+            A Seal is a promise about your own orders, sent with a message. Sealed, the other player sees only the wax
+            until the phase resolves; then the server stamps it kept or broken and their device opens the seal itself to
+            check the orders are the ones you sealed. The server reads the orders when you send them, so a seal protects
+            you from other players, not from the server. Every seal ends up in the Ledger.
+          </p>
+          <p>
+            A draw ends the game when every player at the table votes for it in the same phase. Seats played by the bot
+            have no vote and always share the draw.
+          </p>
+        </section>
       </div>
     </dialog>
   );
