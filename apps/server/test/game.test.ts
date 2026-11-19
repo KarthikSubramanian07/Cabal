@@ -270,11 +270,15 @@ describe("GameRoom", () => {
 
     a.send({ t: "ready", p: { phase: "S1901M", ready: true } });
     b.send({ t: "ready", p: { phase: "S1901M", ready: true } });
+    const results = await a.next("results");
     const state = await a.next("state");
     expect(state.p.phase).toBe("F1901M");
     expect([...state.p.state.units[ann.power]!].sort()).toEqual(annUnits);
-    // Bob's legitimate default still stood in for his missing orders.
-    expect(state.p.state.units[bob.power]).toContain(moves[bob.power]![1]);
+    // Bob's legitimate default still stood in for his missing orders: it was the order adjudicated
+    // for his unit. Whether the move got through is the board's business (a neighbour may bounce it).
+    expect(results.p.results.filter((r) => r.power === bob.power).map((r) => r.order)).toContain(moves[bob.power]![0]);
+    // And nothing was adjudicated for Ann's units on Bob's say-so.
+    expect(results.p.results.filter((r) => r.power === ann.power).map((r) => r.order)).not.toContain(moves[ann.power]![0]);
   });
 
   it("throttles a socket that floods the room", async () => {

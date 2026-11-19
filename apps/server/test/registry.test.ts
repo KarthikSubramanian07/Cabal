@@ -22,15 +22,15 @@ const record = (gameId: string, over: Partial<GameRecord> = {}): GameRecord => (
 
 describe("Registry", () => {
   it("brings its schema up through every in-object migration, starting from the games index", async () => {
-    expect(MIGRATIONS.map((m) => m.version)).toEqual([1, 2, 3]);
+    expect(MIGRATIONS.map((m) => m.version)).toEqual([1, 2, 3, 4, 5]);
     expect(MIGRATIONS[0]!.name).toBe("games_index");
     expect(await registry().schemaVersion()).toBe(MIGRATIONS.at(-1)!.version);
     await runInDurableObject(registry(), (_instance: Registry, state) => {
       const applied = state.storage.sql.exec<{ version: number; name: string }>("SELECT version, name FROM _migrations ORDER BY version").toArray();
-      expect(applied.map((m) => m.version)).toEqual([1, 2, 3]);
+      expect(applied.map((m) => m.version)).toEqual([1, 2, 3, 4, 5]);
       const columns = state.storage.sql.exec<{ name: string }>("SELECT name FROM pragma_table_info('games_index')").toArray().map((c) => c.name);
       expect(columns).toEqual(
-        expect.arrayContaining(["game_id", "result", "winners_json", "scores_json", "settings_json", "phase_count", "finished_at", "ledger_json", "reason", "cluster", "created_at", "seats_json"]),
+        expect.arrayContaining(["game_id", "result", "winners_json", "scores_json", "settings_json", "phase_count", "finished_at", "ledger_json", "reason", "cluster", "created_at", "seats_json", "public"]),
       );
       // The table's own constraint admits abandoned games and nothing invented.
       expect(() => state.storage.sql.exec("INSERT INTO games_index (game_id, result, winners_json, scores_json, settings_json, phase_count, finished_at, ledger_json) VALUES ('BADBAD', 'cancelled', '[]', '{}', '{}', 0, 0, '{}')")).toThrow();
@@ -51,9 +51,14 @@ describe("Registry", () => {
 
   it("lists the most recently ended games first, pages by time and filters by result", async () => {
     const far = 9_000_000_000_000;
-    await registry().recordGame(record("LISTA1", { finishedAt: far + 1 }));
-    await registry().recordGame(record("LISTA2", { finishedAt: far + 2, result: "abandoned", reason: "no_orders", winners: [], scores: {} }));
-    await registry().recordGame(record("LISTA3", { finishedAt: far + 3, result: "solo", winners: ["FRANCE"] }));
+    const settings = GameSettings.parse({ visibility: "public" });
+    await registry().recordGame(record("LISTA1", { finishedAt: far + 1, settings }));
+    await registry().recordGame(record("LISTA2", { finishedAt: far + 2, result: "abandoned", reason: "no_orders", winners: [], scores: {}, settings }));
+    await registry().recordGame(record("LISTA3", { finishedAt: far + 3, result: "solo", winners: ["FRANCE"], settings }));
+    // Recorded, but never listed: an unlisted game, and a public one that ended before a phase was played.
+    await registry().recordGame(record("LISTA4", { finishedAt: far + 4 }));
+    await registry().recordGame(record("LISTA5", { finishedAt: far + 5, settings, phaseCount: 0 }));
+    expect((await registry().getGame("LISTA4"))?.gameId).toBe("LISTA4");
     expect((await registry().listGames({ limit: 3 })).map((g) => g.gameId)).toEqual(["LISTA3", "LISTA2", "LISTA1"]);
     expect((await registry().listGames({ limit: 2, before: far + 3 })).map((g) => g.gameId)).toEqual(["LISTA2", "LISTA1"]);
     expect((await registry().listGames({ limit: 5, result: "abandoned" }))[0]!.gameId).toBe("LISTA2");

@@ -157,7 +157,7 @@ describe("abuse limits", () => {
     // Multi-byte text is measured in bytes, not characters.
     const wide = await Client.connect(ann.gameId);
     await wide.next("welcome");
-    wide.ws.send(JSON.stringify({ t: "press.send", p: { to: "ALL", body: "é".repeat(2500) } }));
+    wide.ws.send(JSON.stringify({ t: "press.send", p: { to: "ALL", body: "é".repeat(9000) } }));
     expect((await wide.next("error")).p.code).toBe("too_large");
 
     // Garbage frames are rate limited like any others.

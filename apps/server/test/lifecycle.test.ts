@@ -488,28 +488,33 @@ describe("draws", () => {
 
   it("non-DIAS still needs everyone, and changes only who shares", async () => {
     const { ann, bob, cal, clients } = await three({ dias: false });
-    const pair = [ann.power, bob.power].sort();
-    clients[0]!.send({ t: "vote", p: { kind: "draw", value: true, include: pair } });
-    clients[1]!.send({ t: "vote", p: { kind: "draw", value: true, include: pair } });
+    // One AI power is already off the board.
+    await sql(ann.gameId, "UPDATE seats SET eliminated = 1 WHERE kind = 'ai' AND power = (SELECT MIN(power) FROM seats WHERE kind = 'ai')");
+    const gone = (await summary(ann.gameId)).seats.find((s) => s.eliminated)!.power;
+    // Every survivor but Cal. The AI powers have no vote, so no proposal may leave them out.
+    const sharers = POWERS.filter((p) => p !== cal.power && p !== gone);
+    clients[0]!.send({ t: "vote", p: { kind: "draw", value: true, include: sharers } });
+    clients[1]!.send({ t: "vote", p: { kind: "draw", value: true, include: sharers } });
     // Cal agrees to a draw, but to a different one: no draw.
     clients[2]!.send({ t: "vote", p: { kind: "draw", value: true } });
     const split = await clients[0]!.next("votes", (m) => m.p.draw.length === 3);
     expect(split.p.draw.find((v) => v.power === cal.power)).toMatchObject({ value: true, include: null });
-    expect(split.p.draw.find((v) => v.power === ann.power)).toMatchObject({ value: true, include: pair });
+    expect(split.p.draw.find((v) => v.power === ann.power)).toMatchObject({ value: true, include: sharers });
     await sleep(60);
     expect((await summary(ann.gameId)).status).toBe("active");
     // A draw cannot name a power that is not on the board.
-    await sql(ann.gameId, "UPDATE seats SET eliminated = 1 WHERE kind = 'ai' AND power = (SELECT MIN(power) FROM seats WHERE kind = 'ai')");
-    const gone = (await summary(ann.gameId)).seats.find((s) => s.eliminated)!.power;
     clients[2]!.send({ t: "vote", id: "bad", p: { kind: "draw", value: true, include: [gone] } });
-    expect((await clients[2]!.next("error")).p.code).toBe("bad_vote");
-    // Cal concedes the two-way draw.
-    clients[2]!.send({ t: "vote", p: { kind: "draw", value: true, include: pair } });
+    expect((await clients[2]!.next("error", (m) => m.id === "bad")).p.code).toBe("bad_vote");
+    // Nor may it cut out a power that has no say in the matter: the AI seats always share.
+    clients[2]!.send({ t: "vote", id: "voiceless", p: { kind: "draw", value: true, include: [ann.power, bob.power] } });
+    expect((await clients[2]!.next("error", (m) => m.id === "voiceless")).p.code).toBe("bad_vote");
+    // Cal concedes the draw that leaves only him out.
+    clients[2]!.send({ t: "vote", p: { kind: "draw", value: true, include: sharers } });
     const finished = await clients[0]!.next("finished");
     expect(finished.p.result).toBe("draw");
-    expect(finished.p.winners).toEqual(pair);
+    expect(finished.p.winners).toEqual(sharers);
     expect(finished.p.scores[cal.power]).toBe(0);
-    expect(finished.p.scores[ann.power]! + finished.p.scores[bob.power]!).toBeCloseTo(1);
+    expect(sharers.reduce((sum, p) => sum + finished.p.scores[p]!, 0)).toBeCloseTo(1);
   });
 
   it("clears votes when the phase resolves: a yes from last phase counts for nothing", async () => {

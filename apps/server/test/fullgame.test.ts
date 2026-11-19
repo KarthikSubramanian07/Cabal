@@ -11,7 +11,10 @@ import { Game, pledgeCommit, pledgeOpens, randomNonce } from "@cabal/engine";
 import type { GameRecord, PhaseSummary, PowerName, ReplayExtension, SeatView, ServerMessage, StateView } from "@cabal/protocol";
 import { CabalSocket, type SocketLike, createApi } from "@cabal/protocol/client";
 import { botOrders } from "../src/bot.js";
-import { nextIp, until, untilIndexed } from "./helpers.js";
+import { nextIp, realBots, until, untilIndexed } from "./helpers.js";
+
+// This suite is about real play: the AI seats are the real bot, which supports its attacks and dislodges.
+realBots();
 
 const api = createApi({
   baseUrl: "http://cabal",

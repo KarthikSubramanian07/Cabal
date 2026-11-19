@@ -2,10 +2,22 @@
 import { env, runDurableObjectAlarm, runInDurableObject, SELF } from "cloudflare:test";
 import { expect } from "vitest";
 import type { GameRecord, GameSettings, ServerMessage } from "@cabal/protocol";
+import { botOrders } from "../src/bot.js";
+import { botRuntime } from "../src/brain.js";
 import type { Env as ServerEnv } from "../src/env.js";
 import type { GameRoom } from "../src/room.js";
+import { peacefulOrders } from "./peaceful-bot.js";
 
 export const serverEnv = env as unknown as ServerEnv;
+
+// Suites are about the room unless they say otherwise: AI seats are played by a bot that never
+// dislodges anything, so a test meets no retreat it did not arrange. See `realBots`.
+botRuntime.orders = peacefulOrders;
+
+/** Put the real bot (the Rust heuristic player) behind the AI seats for the rest of this file. */
+export function realBots(): void {
+  botRuntime.orders = botOrders;
+}
 export const POWERS = ["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"] as const;
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 

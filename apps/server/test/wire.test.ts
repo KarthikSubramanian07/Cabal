@@ -6,6 +6,7 @@ import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { Game, pledgeCommit, pledgeOpens, randomNonce } from "@cabal/engine";
 import { type LedgerResponse, PROTOCOL_VERSION, type PressPage, type ReplayExtension, type SeatView, ServerMessage } from "@cabal/protocol";
+import { LIMITS } from "../src/room.js";
 import { Client, POWERS, create, holdAndReady, inRoom, join, nextIp, sql, start, summary, until } from "./helpers.js";
 
 const get = (path: string, token?: string) =>
@@ -102,14 +103,17 @@ describe("numbered frames and resume", () => {
     expect(page2.p).toMatchObject({ more: false, gap: false });
     expect(a.frames.filter((f) => f.seq !== undefined)).toHaveLength(120);
 
-    // The oldest frames are pruned: a cursor from before them cannot be resumed.
-    await sql(ann.gameId, "DELETE FROM events WHERE seq <= ?", first + 300);
+    // A room keeps a window of frames behind the newest: a cursor from before it cannot be resumed.
+    await inRoom(ann.gameId, (room) => {
+      room.sql.exec("INSERT INTO events (seq, audience, payload_json) VALUES (?, 'ALL', ?)", page2.p.seq + LIMITS.eventsKept, JSON.stringify({ t: "error", p: { code: "filler", message: "far ahead" } }));
+    });
+    const newest = page2.p.seq + LIMITS.eventsKept;
     a.clear();
     a.send({ t: "sync", p: { since: first } });
-    expect((await a.next("synced")).p).toMatchObject({ gap: true, more: false, seq: page2.p.seq });
+    expect((await a.next("synced")).p).toMatchObject({ gap: true, more: false, seq: newest });
     expect(a.frames.filter((f) => f.seq !== undefined)).toHaveLength(0);
     // So is a cursor from the future.
-    a.send({ t: "sync", p: { since: page2.p.seq + 50 } });
+    a.send({ t: "sync", p: { since: newest + 50 } });
     expect((await a.next("synced")).p.gap).toBe(true);
   });
 

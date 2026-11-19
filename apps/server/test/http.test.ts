@@ -5,7 +5,8 @@ import { type GameListing, type GameRecord, GameSummary, HealthResponse, PROTOCO
 import { version as engineVersion } from "@cabal/engine";
 import worker from "../src/index.js";
 import { gameIndex } from "../src/game-index.js";
-import { Client, create, join, nextIp, registry, serverEnv, start, summary, until, untilIndexed } from "./helpers.js";
+import { MIGRATIONS } from "../src/registry.js";
+import { Client, create, deadlineIn, join, nextIp, registry, serverEnv, start, summary, until, untilIndexed } from "./helpers.js";
 
 const get = (path: string) => SELF.fetch(`http://cabal${path}`, { headers: { "cf-connecting-ip": nextIp() } });
 const live = async (status: "open" | "active") => ((await (await get(`/api/games?status=${status}&limit=100`)).json()) as { games: GameListing[] }).games;
@@ -58,7 +59,7 @@ describe("creating a game", () => {
 
 describe("listing games", () => {
   it("lists a public game while it is open, then while it is running, then as finished; an unlisted game never", async () => {
-    const pub = await create("Ann", { visibility: "public", aiFill: true });
+    const pub = await create("Ann", { visibility: "public", aiFill: true, graceSeconds: 0 });
     const hidden = await create("Zed", { visibility: "unlisted", aiFill: true });
     const open = await until(async () => (await live("open")).find((g) => g.gameId === pub.gameId), "the lobby to be listed");
     expect(open).toMatchObject({ status: "lobby", hostName: "Ann", humans: 1, openSeats: 6, phase: "S1901M", cluster: "standard:full:async" });
@@ -77,6 +78,9 @@ describe("listing games", () => {
     const a = await Client.connect(pub.gameId, pub.token);
     const b = await Client.connect(pub.gameId, bob.token);
     await Promise.all([a.next("welcome"), b.next("welcome")]);
+    // One phase is played (its clock runs out), then the two agree a draw.
+    await deadlineIn(pub.gameId, 15);
+    await a.next("state", (m) => m.p.phase !== "S1901M");
     a.send({ t: "vote", p: { kind: "draw", value: true } });
     b.send({ t: "vote", p: { kind: "draw", value: true } });
     await a.next("finished");
@@ -112,7 +116,12 @@ describe("listing games", () => {
 describe("health and failure", () => {
   it("reports the engine version, the build and whether the index answers", async () => {
     const health = HealthResponse.parse(await (await get("/health")).json());
-    expect(health).toMatchObject({ ok: true, protocol: PROTOCOL_VERSION, engine: engineVersion(), registry: { reachable: true, schema: 3 } });
+    expect(health).toMatchObject({ ok: true, protocol: PROTOCOL_VERSION, engine: engineVersion(), registry: { reachable: true, schema: MIGRATIONS.at(-1)!.version } });
+    // Asked again at once, it answers from memory: the index is probed at most once every few seconds.
+    let probes = 0;
+    const counting = { idFromName: () => "id", get: () => ({ schemaVersion: async () => (probes++, 9) }) } as never;
+    for (let i = 0; i < 5; i++) await worker.fetch(new Request("http://cabal/health"), { ...serverEnv, REGISTRY: counting });
+    expect(probes).toBe(1);
     expect(health.build.length).toBeGreaterThan(0);
     expect(Math.abs(health.time - Date.now())).toBeLessThan(5_000);
 
