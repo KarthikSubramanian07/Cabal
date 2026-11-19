@@ -22,15 +22,21 @@ export function StatusPage({ stamp, eyebrow, title, pageTitle, tone = "pending",
   useEffect(() => {
     const before = document.title;
     document.title = `${pageTitle} — Cabal`;
-    // These pages have nothing for a search index yet.
-    const robots = document.createElement("meta");
-    robots.name = "robots";
-    robots.content = "noindex";
-    document.head.append(robots);
+    // A notice is not a page for a search index.
+    let robots = document.head.querySelector<HTMLMetaElement>('meta[name="robots"]');
+    const added = !robots;
+    if (!robots) {
+      robots = document.createElement("meta");
+      robots.name = "robots";
+      document.head.append(robots);
+    }
+    const previous = robots.content;
+    robots.content = "noindex, follow";
     heading.current?.focus();
     return () => {
       document.title = before;
-      robots.remove();
+      if (added) robots.remove();
+      else robots.content = previous;
     };
   }, [pageTitle]);
 
