@@ -10,6 +10,7 @@
 //! - [`legal`]: legal order enumeration per unit.
 //! - [`game`]: phase progression, supply centre bookkeeping, victory.
 //! - [`json`]: MILA / Cicero compatible saved game format.
+//! - [`snapshot`]: lossless restore without adjudicating the past.
 //! - [`pledge`]: seals (commitments) and receipts.
 //!
 //! No I/O, no randomness, no host dependencies: the same crate runs natively
@@ -25,6 +26,7 @@ pub mod outcome;
 pub mod parse;
 pub mod pledge;
 pub mod rulebook;
+pub mod snapshot;
 pub mod state;
 pub mod text;
 
