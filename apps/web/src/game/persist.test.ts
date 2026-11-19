@@ -14,6 +14,7 @@ import {
 const save = {
   savedAt: 1_800_000_000_000,
   game: '{"phases":[{"name":"S1901M"}]}',
+  written: [{ FRANCE: { "A PAR": "A PAR - BUR" } }, {}],
   orders: { FRANCE: { "A PAR": "A PAR - BUR" } },
   active: "FRANCE",
 };
@@ -55,9 +56,26 @@ describe("sandbox save", () => {
       JSON.stringify({ schema: SAVE_SCHEMA, ...save, orders: { FRANCE: { "A PAR": 1 } } }),
       JSON.stringify({ schema: SAVE_SCHEMA, ...save, orders: { FRANCE: ["A PAR - BUR"] } }),
       JSON.stringify({ schema: SAVE_SCHEMA, ...save, active: null }),
+      JSON.stringify({ schema: SAVE_SCHEMA, ...save, written: undefined }),
+      JSON.stringify({ schema: SAVE_SCHEMA, ...save, written: {} }),
+      JSON.stringify({ schema: SAVE_SCHEMA, ...save, written: [{ FRANCE: ["A PAR - BUR"] }] }),
     ]) {
       expect(decodeSave(raw), String(raw)).toBeNull();
     }
+  });
+
+  it("keeps what was written in each resolved phase", () => {
+    expect(decodeSave(encodeSave(save))?.written).toEqual(save.written);
+  });
+
+  it("still reads a schema 1 save, which has no record of what was written", () => {
+    const { written: _written, ...old } = save;
+    expect(decodeSave(JSON.stringify({ schema: 1, ...old }))).toEqual({ schema: SAVE_SCHEMA, ...save, written: [] });
+  });
+
+  it("does not open a power that does not exist", () => {
+    expect(decodeSave(encodeSave({ ...save, active: "ATLANTIS" }))?.active).toBe("FRANCE");
+    expect(decodeSave(encodeSave({ ...save, active: "RUSSIA" }))?.active).toBe("RUSSIA");
   });
 
   it("writes, reads and clears through storage", () => {

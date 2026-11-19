@@ -7,20 +7,24 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Game, type PhaseOutcome, type State, engineReady } from "../engine.js";
 import { type Board, loadBoard } from "../map/boardData.js";
-import { type OrderBook, eraseOrder, flatten, keepLegal, toBook, waiveBuild, writeOrder } from "./book.js";
+import { type OrderBook, eraseOrder, flatten, keepLegal, waiveBuild, writeOrder } from "./book.js";
 import type { Piece } from "./compose.js";
-import { POWER_NAMES, type PhaseKind, forUnit, parseUnit, phaseKind } from "./notation.js";
-import { ImportError, clearSave, parseSavedGame, readSave, writeSave } from "./persist.js";
+import { POWER_NAMES, type PhaseKind, parseUnit, phaseKind } from "./notation.js";
+import { clearSave, readSave, writeSave } from "./persist.js";
+import { type Loaded, type PhaseRecord, loadSaved, replay, tidyLegal, tidyOutcome } from "./saved.js";
 import { type TrackedHistory, trackUnits } from "./unitIds.js";
 
 export type { OrderBook } from "./book.js";
+export type { PhaseRecord } from "./saved.js";
 
-export interface PhaseRecord {
+/** A saved game that has been read and checked but not put on the board yet. */
+export interface OpenedGame {
+  /** The phase it would resume at. */
   phase: string;
-  /** The board as the phase began. */
-  state: State;
-  orders: OrderBook;
-  outcome: PhaseOutcome;
+  /** How many phases it has resolved. */
+  resolved: number;
+  /** Replace the game on the board with this one. */
+  load: () => void;
 }
 
 export interface PowerSummary {
@@ -75,55 +79,6 @@ export type SandboxLoad =
   | { status: "error"; error: Error; retry: () => void }
   | { status: "ready"; sandbox: Sandbox };
 
-/** Retreat results name the unit that retreated (see `forUnit`). */
-export function tidyOutcome(outcome: PhaseOutcome): PhaseOutcome {
-  if (phaseKind(outcome.phase) !== "R") return outcome;
-  return { ...outcome, results: outcome.results.map((r) => (r.unit ? { ...r, order: forUnit(r.order, r.unit) } : r)) };
-}
-
-/** Legal orders by unit, with retreat orders naming the unit they belong to. */
-export function tidyLegal(byUnit: Record<string, string[]>, kind: PhaseKind): Record<string, string[]> {
-  if (kind !== "R") return byUnit;
-  return Object.fromEntries(Object.entries(byUnit).map(([unit, options]) => [unit, options.map((o) => forUnit(o, unit))]));
-}
-
-interface Loaded {
-  game: Game;
-  history: PhaseRecord[];
-}
-
-/** Build a game and its phase records from saved-game JSON. */
-function loadSaved(json: string): Loaded {
-  const saved = parseSavedGame(json);
-  let game: Game;
-  try {
-    game = Game.fromSaved(json);
-  } catch (err) {
-    throw new ImportError(
-      "That file is not a Cabal game export. The engine could not replay it.",
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-  const history: PhaseRecord[] = saved.phases.slice(0, game.historyLength()).map((p, i) => ({
-    phase: p.name,
-    state: p.state as State,
-    orders: toBook(p.orders ?? {}, phaseKind(p.name)),
-    outcome: tidyOutcome(game.outcome(i)),
-  }));
-  return { game, history };
-}
-
-function replay(records: PhaseRecord[], origin: State): Loaded {
-  const game = Game.fromState(origin);
-  const history: PhaseRecord[] = [];
-  for (const r of records) {
-    const state = game.state();
-    const outcome = tidyOutcome(game.process(game.normaliseOrders({ orders: flatten(r.orders) })));
-    history.push({ phase: r.phase, state, orders: r.orders, outcome });
-  }
-  return { game, history };
-}
-
 export function useSandbox(): SandboxLoad {
   const [board, setBoard] = useState<Board | null>(null);
   const [game, setGame] = useState<Game | null>(null);
@@ -134,7 +89,8 @@ export function useSandbox(): SandboxLoad {
   const [history, setHistory] = useState<PhaseRecord[]>([]);
   const [resumed, setResumed] = useState<string | null>(null);
   const [resumedActive, setResumedActive] = useState<string | null>(null);
-  const active = useRef("FRANCE");
+  /** The power whose orders are open. Kept here so that choosing one is saved like any other change. */
+  const [active, setActive] = useState<string>("FRANCE");
 
   useEffect(() => {
     let live = true;
@@ -147,7 +103,7 @@ export function useSandbox(): SandboxLoad {
         const save = readSave();
         if (save) {
           try {
-            loaded = loadSaved(save.game);
+            loaded = loadSaved(save.game, save.written);
           } catch {
             // A save that no longer loads is worth less than a working board.
             clearSave();
@@ -162,7 +118,7 @@ export function useSandbox(): SandboxLoad {
           if (loaded && save) {
             setHistory(loaded.history);
             setOrders(save.orders);
-            active.current = save.active;
+            setActive(save.active);
             setResumedActive(save.active);
             setResumed(game.phase());
           }
@@ -249,8 +205,14 @@ export function useSandbox(): SandboxLoad {
       clearSave();
       return;
     }
-    writeSave({ savedAt: Date.now(), game: game.toSaved("cabal-sandbox"), orders, active: active.current });
-  }, [game, snapshot, orders, history]);
+    writeSave({
+      savedAt: Date.now(),
+      game: game.toSaved("cabal-sandbox"),
+      written: history.map((h) => h.orders),
+      orders,
+      active,
+    });
+  }, [game, snapshot, orders, history, active]);
 
   const setOrder = useCallback(
     (power: string, key: string, text: string) => {
@@ -323,17 +285,21 @@ export function useSandbox(): SandboxLoad {
 
   const importSaved = useCallback((json: string) => {
     const loaded = loadSaved(json);
-    setGame(loaded.game);
-    setHistory(loaded.history);
-    setOrders({});
-    setResumed(null);
-    bump();
+    return {
+      phase: loaded.game.phase(),
+      resolved: loaded.history.length,
+      load: () => {
+        setGame(loaded.game);
+        setHistory(loaded.history);
+        setOrders({});
+        setResumed(null);
+        bump();
+      },
+    };
   }, []);
 
   const dismissResumed = useCallback(() => setResumed(null), []);
-  const noteActive = useCallback((power: string) => {
-    active.current = power;
-  }, []);
+  const noteActive = useCallback((power: string) => setActive(power), []);
 
   if (error) return { status: "error", error, retry };
   if (!board || !game || !snapshot) return { status: "loading" };

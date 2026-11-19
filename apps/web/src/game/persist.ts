@@ -7,9 +7,16 @@
  * this one cannot read is left alone and ignored, never half-loaded.
  */
 import type { OrderBook } from "./book.js";
+import { POWER_NAMES } from "./notation.js";
 
 export const SAVE_KEY = "cabal.sandbox";
-export const SAVE_SCHEMA = 1;
+/**
+ * 2 added `written`: the order book of every resolved phase. Schema 1 kept only the game as
+ * adjudicated, so a reload turned every unit left alone into a written hold.
+ */
+export const SAVE_SCHEMA = 2;
+/** An older shape this build still reads. It has no `written`, so the books are rebuilt from the game. */
+const LEGACY_SCHEMA = 1;
 
 export interface SandboxSave {
   schema: typeof SAVE_SCHEMA;
@@ -17,6 +24,12 @@ export interface SandboxSave {
   savedAt: number;
   /** The game so far in the MILA saved-game format, exactly what Export writes. */
   game: string;
+  /**
+   * What the player wrote in each resolved phase, oldest first. The game above lists orders
+   * as adjudicated, with a hold filled in for every unit left alone; this is the record of
+   * which of them were really given. Empty when it is not known (a schema 1 save).
+   */
+  written: OrderBook[];
   /** Orders written for the phase in progress, not yet adjudicated. */
   orders: OrderBook;
   /** The power whose orders were open. */
@@ -51,12 +64,16 @@ export function decodeSave(raw: string | null | undefined): SandboxSave | null {
   }
   if (typeof data !== "object" || data === null) return null;
   const d = data as Record<string, unknown>;
-  if (d["schema"] !== SAVE_SCHEMA) return null;
+  if (d["schema"] !== SAVE_SCHEMA && d["schema"] !== LEGACY_SCHEMA) return null;
   if (typeof d["game"] !== "string" || d["game"].length === 0) return null;
   if (typeof d["savedAt"] !== "number" || !Number.isFinite(d["savedAt"])) return null;
   if (typeof d["active"] !== "string") return null;
   if (!isOrderBook(d["orders"])) return null;
-  return { schema: SAVE_SCHEMA, savedAt: d["savedAt"], game: d["game"], orders: d["orders"], active: d["active"] };
+  const written = d["schema"] === LEGACY_SCHEMA ? [] : d["written"];
+  if (!Array.isArray(written) || !written.every(isOrderBook)) return null;
+  // A power that does not exist (an edited or damaged save) must not become the open one.
+  const active = (POWER_NAMES as readonly string[]).includes(d["active"]) ? d["active"] : POWER_NAMES[2];
+  return { schema: SAVE_SCHEMA, savedAt: d["savedAt"], game: d["game"], written, orders: d["orders"], active };
 }
 
 function store(): Store | null {

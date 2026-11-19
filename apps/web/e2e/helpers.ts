@@ -6,6 +6,8 @@ export const isPhone = (info: TestInfo) => info.project.name === "phone";
 export async function ready(page: Page, path = "/") {
   await page.goto(path);
   await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
+  // The map is drawn in passes; the province codes are the last of them.
+  await expect(page.locator("svg.board text.label").first()).toBeVisible({ timeout: 20_000 });
 }
 
 /**
