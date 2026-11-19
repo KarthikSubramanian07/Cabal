@@ -420,9 +420,27 @@ const Labels = memo(function Labels({ board, size, r }: { board: BoardData; size
  * helpers in dashed brass, the units against it in vermilion with sights. Shapes, not only
  * colours, so the picture holds without colour vision.
  */
-function Highlight({ board, highlight, r }: { board: BoardData; highlight: BoardHighlight; r: number }) {
+function Highlight({
+  board,
+  highlight,
+  r,
+  plan,
+}: {
+  board: BoardData;
+  highlight: BoardHighlight;
+  r: number;
+  /** While a phase is shown, a unit is ringed where it now stands, not where it began. */
+  plan: Choreography | null;
+}) {
   const ring = markSizes(r).ring + 3;
-  const at = (code: string): Point | null => board.provinces[code]?.unit ?? null;
+  const at = (code: string): Point | null => {
+    const moved = plan?.units.find((u) => parseUnit(u.unit)?.province === code && !u.gone);
+    if (moved) {
+      const p = regionPoint(board, moved.region);
+      return moved.dislodged ? standAside(p, r) : p;
+    }
+    return board.provinces[code]?.unit ?? null;
+  };
   const focus = highlight.focus ? at(highlight.focus) : null;
   return (
     <g className="highlight">
@@ -961,7 +979,7 @@ export function Board({
             />
           ) : null;
         })}
-        {highlight ? <Highlight board={board} highlight={highlight} r={r} /> : null}
+        {highlight ? <Highlight board={board} highlight={highlight} r={r} plan={plan} /> : null}
         {/* Written orders are drawn over the pieces; a phase's results under them, so a piece that
             has marched stands on the head of its own arrow. The pieces keep their place in the
             tree either way, so each keeps its DOM node from phase to phase. */}
