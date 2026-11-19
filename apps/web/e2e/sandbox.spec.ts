@@ -48,7 +48,7 @@ test.describe("classic board", () => {
     await page.getByRole("button", { name: "Adjudicate Spring 1901" }).click();
     const results = page.getByLabel("Adjudication results");
     await expect(results).toContainText("A PAR - BUR");
-    await expect(results).toContainText("bounced with PAR");
+    await expect(results).toContainText("bounced with A PAR");
     await expect(page.locator(".tag")).toHaveText("Results");
 
     await page.getByRole("button", { name: "Continue to Fall 1901" }).click();
