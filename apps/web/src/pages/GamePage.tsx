@@ -97,7 +97,7 @@ function Terms({ view }: { view: RoomView }) {
 }
 
 function JoinPanel({ view, selected, onJoin }: { view: RoomView; selected: PowerName | null; onJoin: Room["join"] }) {
-  const { player, ensurePlayer } = useIdentity();
+  const { player, asPlayer } = useIdentity();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const errorId = useId();
@@ -106,12 +106,12 @@ function JoinPanel({ view, selected, onJoin }: { view: RoomView; selected: Power
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (busy) return;
-    const me = await ensurePlayer("You are about to take a seat. The table, the Ledger and your record will know you by this name.");
-    if (!me) return;
-    setBusy(true);
     setError(null);
     try {
-      await onJoin(me, selected ?? undefined);
+      await asPlayer("You are about to take a seat. The table, the Ledger and your record will know you by this name.", async (me) => {
+        setBusy(true);
+        await onJoin(me, selected ?? undefined);
+      });
     } catch (err) {
       setError(failureText(err));
     } finally {
