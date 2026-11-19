@@ -1,6 +1,6 @@
 [package]
 name = "cabal-cli"
-description = "Command line tools for the Cabal engine: datc, adjudicate, explain, bench"
+description = "Command line tools for the Cabal engine: datc, explain, legal, replay"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,4 +14,6 @@ path = "src/main.rs"
 
 [dependencies]
 cabal-engine = { path = "../cabal-engine" }
+serde.workspace = true
 serde_json.workspace = true
+indexmap = { version = "2", features = ["serde"] }

@@ -1,14 +1,13 @@
 //! `cabal`: command line tools for the Cabal engine.
 //!
 //! ```text
-//! cabal datc [--report]                 run the DATC v3.0 corpus and print a section report
+//! cabal datc [--report]                 adjudicate the DATC v3.0 corpus; pass, fail and skip totals (exit 1 on any failure)
 //! cabal explain [--graph] <order>...              adjudicate a movement phase from order text and explain it
 //! cabal legal <power> [<order>...]      list legal orders for a power (after optional setup orders)
 //! cabal replay [--json] <file|dir>...   replay saved games and report every divergence (exit 1 on any)
 //! cabal version
 //! ```
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -23,10 +22,15 @@ use cabal_engine::state::Position;
 use cabal_engine::text::order_text;
 use cabal_engine::{Game, VERSION};
 
+/// The conformance harness is the one `cargo test` runs, compiled in from the
+/// engine's test directory so the two can never disagree.
+#[path = "../../cabal-engine/tests/datc_harness/mod.rs"]
+mod datc_harness;
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        Some("datc") => datc(),
+        Some("datc") => datc(&args[1..]),
         Some("explain") => explain(&args[1..]),
         Some("legal") => legal(&args[1..]),
         Some("replay") => replay(&args[1..]),
@@ -289,22 +293,30 @@ fn replay(args: &[String]) -> ExitCode {
     }
 }
 
-/// Run the DATC corpus shipped with the engine and print a section report.
-fn datc() -> ExitCode {
-    let corpus: serde_json::Value =
-        serde_json::from_str(include_str!("../../cabal-engine/tests/data/datc_v3.json"))
-            .expect("corpus");
-    let cases = corpus["cases"].as_array().expect("cases");
-    let mut by_section: BTreeMap<String, usize> = BTreeMap::new();
-    for c in cases {
-        let name = c["name"].as_str().unwrap_or("");
-        let section = name.get(2..3).unwrap_or("?").to_ascii_uppercase();
-        *by_section.entry(section).or_default() += 1;
+/// Adjudicate the DATC corpus and Cabal's supplementary cases, and report.
+///
+/// Prints pass, fail and skip totals and every failure; `--report` adds the
+/// per-section table. Exit status 1 when any case fails.
+fn datc(args: &[String]) -> ExitCode {
+    let sections = args.iter().any(|a| a == "--report");
+    if let Some(unknown) = args.iter().find(|a| a.as_str() != "--report") {
+        eprintln!("unknown option {unknown}\nusage: cabal datc [--report]");
+        return ExitCode::from(2);
     }
-    println!("DATC v3.0 corpus: {} cases", cases.len());
-    for (s, n) in &by_section {
-        println!("  6.{s}: {n}");
+    let datc = datc_harness::run_corpus(datc_harness::DATC_V3);
+    let cabal = datc_harness::run_corpus(datc_harness::CABAL_CASES);
+    print!("{}", datc_harness::render("DATC v3.0", &datc, sections));
+    print!("{}", datc_harness::render("Cabal cases", &cabal, sections));
+    let failed = datc.failed() + cabal.failed();
+    println!(
+        "total: {} passed, {} failed, {} skipped",
+        datc.passed() + cabal.passed(),
+        failed,
+        datc.skipped() + cabal.skipped()
+    );
+    if failed == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
-    println!("run `cargo test -p cabal-engine --test datc -- --nocapture` for pass/fail detail");
-    ExitCode::SUCCESS
 }
