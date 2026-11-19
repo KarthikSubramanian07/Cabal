@@ -25,7 +25,7 @@ export {
   FallbackBrain,
   MAX_INPUT_TOKENS,
   MAX_OUTPUT_TOKENS,
-  MAX_PROMPT_CHARS,
+  MAX_PROMPT_BYTES,
   MEMORY_LIMITS,
   type Memory,
   PERSONAS,

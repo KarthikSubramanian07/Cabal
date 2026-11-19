@@ -15,7 +15,7 @@ import {
   type Decision,
   MAX_INPUT_TOKENS,
   MAX_OUTPUT_TOKENS,
-  MAX_PROMPT_CHARS,
+  MAX_PROMPT_BYTES,
   MEMORY_LIMITS,
   Player,
   validateOrders,
@@ -182,7 +182,7 @@ describe("the cached prefix", () => {
     const game = new Game();
     const user = userPrompt({ power: "FRANCE", persona: "A persona.", phase: "S1901M", state: game.state(), map, legal: game.legal("FRANCE"), press: [], diary: [], relationships: [], myPledges: [], trust: {} });
     expect(user).toContain("# Persona\nA persona.");
-    expect(system.length + user.length).toBeLessThan(MAX_PROMPT_CHARS / 2);
+    expect(new TextEncoder().encode(system + user).byteLength).toBeLessThan(MAX_PROMPT_BYTES / 2);
   });
 });
 
@@ -315,9 +315,15 @@ describe("ClaudeBrain", () => {
 
   it("refuses to send a prompt longer than the bound its cost cap assumes", async () => {
     const { brain, requests } = claude(() => ({ json: message(JSON.stringify(good)) }));
-    const failure = await brain.decide({ ...request, prompt: "x".repeat(MAX_PROMPT_CHARS) }).catch((e: unknown) => e);
+    const failure = await brain.decide({ ...request, prompt: "x".repeat(MAX_PROMPT_BYTES) }).catch((e: unknown) => e);
     expect(failure).toMatchObject({ billed: "no" });
+    // The bound is in bytes, which bound tokens whatever the script: a third as many CJK characters are refused too.
+    const dense = await brain.decide({ ...request, prompt: "\u6218".repeat(MAX_PROMPT_BYTES / 3) }).catch((e: unknown) => e);
+    expect(dense).toMatchObject({ billed: "no" });
     expect(requests).toHaveLength(0);
+    // So the reservation covers the dearest prompt the brain will send, at one token per byte.
+    const dearest = costMicros("claude-opus-5-5", { inputTokens: 0, outputTokens: MAX_OUTPUT_TOKENS.movement, cacheReadTokens: 0, cacheWriteTokens: MAX_PROMPT_BYTES });
+    expect(maxCallCostMicros("claude-opus-5-5", MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS.movement)).toBeGreaterThanOrEqual(dearest);
   });
 
   it("surfaces tokens and cost in the played decision, including for a failed turn", async () => {

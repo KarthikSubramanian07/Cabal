@@ -195,25 +195,62 @@ short message or two, and attach a pledge if you have not made one. Update your 
 a short diary entry.`;
 }
 
-/** Press included in one prompt, newest kept, and the longest body quoted. */
+/**
+ * Press included in one prompt: how many messages, the longest body quoted, and the UTF-8 bytes
+ * all of them may take together. The newest are kept. Bodies are player-written, so the byte
+ * budgets are what keeps a flood (or a wall of text in a dense script) from crowding out the
+ * board, inflating the bill or pushing the prompt past the size the spend cap assumes.
+ */
 export const MAX_PRESS_IN_PROMPT = 40;
 export const MAX_PRESS_CHARS = 1000;
+export const MAX_PRESS_BYTES = 16_000;
 export const MAX_EARLIER_PRESS = 20;
 export const MAX_EARLIER_CHARS = 300;
+export const MAX_EARLIER_BYTES = 4_000;
+
+const utf8 = new TextEncoder();
+
+/** The longest prefix of `text` that fits in `maxBytes` of UTF-8, never splitting a character. */
+export function clipBytes(text: string, maxBytes: number): string {
+  if (text.length <= maxBytes / 3) return text; // a UTF-16 unit is at most three bytes
+  let bytes = 0;
+  let end = 0;
+  for (const ch of text) {
+    const size = utf8.encode(ch).byteLength;
+    if (bytes + size > maxBytes) break;
+    bytes += size;
+    end += ch.length;
+  }
+  return text.slice(0, end);
+}
+
+/** The newest lines that fit the byte budget, oldest first. */
+function newestWithin(lines: string[], maxBytes: number): string[] {
+  const kept: string[] = [];
+  let left = maxBytes;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const size = utf8.encode(lines[i]!).byteLength + 1;
+    if (size > left) break;
+    left -= size;
+    kept.unshift(lines[i]!);
+  }
+  return kept;
+}
 
 export function userPrompt(input: PromptInput): string {
   // Bodies are player-written: JSON-quote them so a newline cannot forge another message or section,
   // and keep only the latest ones so a flood cannot crowd out the board or inflate the bill.
-  const recent = input.press.slice(-MAX_PRESS_IN_PROMPT);
-  const press = recent.length
-    ? recent
-        .map(
-          (m) =>
-            `${m.from} -> ${m.to}: ${JSON.stringify(m.body.slice(0, MAX_PRESS_CHARS))}` +
-            (m.pledge ? ` [pledge: ${m.pledge.join("; ")}]` : ""),
-        )
-        .join("\n")
-    : "none";
+  const recent = newestWithin(
+    input.press
+      .slice(-MAX_PRESS_IN_PROMPT)
+      .map(
+        (m) =>
+          `${m.from} -> ${m.to}: ${JSON.stringify(clipBytes(m.body.slice(0, MAX_PRESS_CHARS), MAX_PRESS_BYTES / 4))}` +
+          (m.pledge ? ` [pledge: ${m.pledge.join("; ")}]` : ""),
+      ),
+    MAX_PRESS_BYTES,
+  );
+  const press = recent.length ? recent.join("\n") : "none";
   const diary = input.diary.length ? input.diary.map((d) => `- ${d}`).join("\n") : "none";
   const rel = input.relationships.length
     ? input.relationships.map((r) => `${r.power}: ${r.stance >= 0 ? "+" : ""}${r.stance} ${r.note}`).join("\n")
@@ -222,10 +259,13 @@ export function userPrompt(input: PromptInput): string {
     .map(([p, t]) => `${p}: kept ${t.kept}, broken ${t.broken}`)
     .join("\n");
   const pledges = input.myPledges.length ? input.myPledges.map((p) => p.join("; ")).join("\n") : "none";
-  const earlier = (input.earlierPress ?? []).slice(-MAX_EARLIER_PRESS);
-  const history = earlier.length
-    ? earlier.map((m) => `[${m.phase}] ${m.from} -> ${m.to}: ${JSON.stringify(m.body.slice(0, MAX_EARLIER_CHARS))}`).join("\n")
-    : "none";
+  const earlier = newestWithin(
+    (input.earlierPress ?? [])
+      .slice(-MAX_EARLIER_PRESS)
+      .map((m) => `[${m.phase}] ${m.from} -> ${m.to}: ${JSON.stringify(clipBytes(m.body.slice(0, MAX_EARLIER_CHARS), MAX_EARLIER_BYTES / 4))}`),
+    MAX_EARLIER_BYTES,
+  );
+  const history = earlier.length ? earlier.join("\n") : "none";
   return [
     `# Persona\n${input.persona}`,
     `# Situation\n${boardReport(input)}`,

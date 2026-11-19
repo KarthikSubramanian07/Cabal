@@ -127,12 +127,22 @@ export const DEFAULT_EFFORT: EffortPlan = { negotiate: "low", movement: "medium"
 export const MAX_OUTPUT_TOKENS = { negotiate: 4000, movement: 8000, retreat: 4000, adjustment: 4000 } as const;
 
 /**
- * The longest prompt a `ClaudeBrain` will send, in characters, system and user parts together. A
- * longer one is refused before the request, so the input side of a call's cost is bounded too.
- * Order text is dense in short upper-case words, so budget two characters per token.
+ * The longest prompt a `ClaudeBrain` will send, in UTF-8 bytes: the system and user parts and the
+ * output schema together. A longer one is refused before the request, so the input side of a
+ * call's cost is bounded too.
+ *
+ * The bound is in bytes because bytes bound tokens: a token is never shorter than one byte,
+ * whatever the script. A bound in characters does not: prompts quote player-written press, and
+ * CJK, emoji and rare scripts cost a token per character or more. `MAX_INPUT_TOKENS` adds a fixed
+ * allowance for what the API wraps around the text (roles, the structured-output instructions).
  */
-export const MAX_PROMPT_CHARS = 60_000;
-export const MAX_INPUT_TOKENS = MAX_PROMPT_CHARS / 2;
+export const MAX_PROMPT_BYTES = 48_000;
+export const PROMPT_FRAMING_TOKENS = 1_000;
+export const MAX_INPUT_TOKENS = MAX_PROMPT_BYTES + PROMPT_FRAMING_TOKENS;
+
+const utf8 = new TextEncoder();
+/** UTF-8 size of a string. */
+export const byteLength = (text: string): number => utf8.encode(text).byteLength;
 
 export const DEFAULT_MODEL = "claude-opus-5-5";
 
@@ -166,8 +176,9 @@ export class ClaudeBrain implements Brain {
   }
 
   async decide(request: BrainRequest): Promise<BrainReply> {
-    if (request.system.length + request.prompt.length > MAX_PROMPT_CHARS) {
-      throw new BrainFailure(`prompt is longer than ${MAX_PROMPT_CHARS} characters`, "no", null, this.model);
+    const promptBytes = byteLength(request.system) + byteLength(request.prompt) + byteLength(JSON.stringify(DecisionFormat.schema));
+    if (promptBytes > MAX_PROMPT_BYTES) {
+      throw new BrainFailure(`prompt is ${promptBytes} bytes, over the ${MAX_PROMPT_BYTES} its cost cap assumes`, "no", null, this.model);
     }
     const kind = requestKind(request.kind, request.step);
     let response: Anthropic.Message;

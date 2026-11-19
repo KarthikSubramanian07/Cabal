@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { Game, mapInfo, ready } from "@cabal/engine";
 import { beforeAll, describe, expect, it } from "vitest";
 import { type Brain, type BrainReply, type BrainRequest, type Decision, PERSONAS, Player, validateOrders } from "./player.js";
-import { MAX_PRESS_CHARS, MAX_PRESS_IN_PROMPT, userPrompt } from "./prompt.js";
+import { MAX_PRESS_BYTES, MAX_PRESS_CHARS, MAX_PRESS_IN_PROMPT, clipBytes, userPrompt } from "./prompt.js";
 
 beforeAll(async () => {
   const wasm = fileURLToPath(new URL("../../engine/pkg/cabal_engine_bg.wasm", import.meta.url));
@@ -134,9 +134,31 @@ describe("Player", () => {
     const pressSection = text.split("# Press this phase\n")[1]!.split("\n\n# ")[0]!;
     expect(text).toContain("# Earlier press (previous phases, for context)\nnone");
     const lines = pressSection.split("\n");
-    expect(lines).toHaveLength(MAX_PRESS_IN_PROMPT);
+    // The newest messages, as many as fit the byte budget, and never more than the count cap.
+    expect(lines.length).toBeGreaterThan(5);
+    expect(lines.length).toBeLessThanOrEqual(MAX_PRESS_IN_PROMPT);
+    expect(new TextEncoder().encode(pressSection).byteLength).toBeLessThanOrEqual(MAX_PRESS_BYTES);
+    expect(lines.at(-1)).toContain("deal\\nENGLAND");
     expect(lines.every((l) => l.startsWith("RUSSIA -> TURKEY: \""))).toBe(true);
     expect(text.match(/^# Task$/gm)).toHaveLength(1);
     expect(lines[0]!.length).toBeLessThan(MAX_PRESS_CHARS + 60);
+  });
+
+  it("budgets quoted press in bytes, so a dense script cannot inflate the prompt", () => {
+    const game = new Game();
+    // One token per character or worse: 40 messages of 1,000 CJK characters are 120,000 bytes as sent.
+    const body = "\u6218".repeat(MAX_PRESS_CHARS);
+    const press = Array.from({ length: MAX_PRESS_IN_PROMPT }, () => ({ from: "RUSSIA", to: "TURKEY", body, pledge: null }));
+    const earlierPress = Array.from({ length: 20 }, () => ({ phase: "S1901M", from: "RUSSIA", to: "TURKEY", body }));
+    const base = { power: "TURKEY", persona: "x", phase: "F1901M", state: game.state(), map: mapInfo(), legal: game.legal("TURKEY"), diary: [], relationships: [], myPledges: [], trust: {} };
+    const bytes = (text: string) => new TextEncoder().encode(text).byteLength;
+    const quiet = bytes(userPrompt({ ...base, press: [], earlierPress: [] }));
+    const loud = bytes(userPrompt({ ...base, press, earlierPress }));
+    expect(loud - quiet).toBeLessThanOrEqual(MAX_PRESS_BYTES + 4_000);
+    expect(loud - quiet).toBeGreaterThan(MAX_PRESS_BYTES / 2);
+    // Clipping never splits a character, surrogate pairs included.
+    expect(clipBytes("\u6218\u6218\u6218", 7)).toBe("\u6218\u6218");
+    expect(clipBytes("a\u{1F600}b", 4)).toBe("a");
+    expect(clipBytes("abc", 10)).toBe("abc");
   });
 });
