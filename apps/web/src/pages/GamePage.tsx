@@ -16,7 +16,8 @@ import { describeTerms, phaseLabel, powerLabel, timeLeft } from "../lobby/terms.
 import { type Room, useRoom } from "../lobby/useRoom.js";
 import { failureText } from "../net/api.js";
 import { isGameCode, spacedCode } from "../net/code.js";
-import { readName } from "../net/seats.js";
+import { NotifyOffer } from "../profile/NotificationsPanel.jsx";
+import { useIdentity } from "../profile/Identity.jsx";
 
 const LiveTable = lazy(() => import("../room/LiveTable.jsx").then((m) => ({ default: m.LiveTable })));
 
@@ -96,25 +97,21 @@ function Terms({ view }: { view: RoomView }) {
 }
 
 function JoinPanel({ view, selected, onJoin }: { view: RoomView; selected: PowerName | null; onJoin: Room["join"] }) {
-  const [name, setName] = useState(readName);
+  const { player, ensurePlayer } = useIdentity();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const input = useRef<HTMLInputElement>(null);
   const errorId = useId();
   const open = openSeats(view);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed) {
-      setError("Write the name the table will know you by.");
-      input.current?.focus();
-      return;
-    }
+    if (busy) return;
+    const me = await ensurePlayer("You are about to take a seat. The table, the Ledger and your record will know you by this name.");
+    if (!me) return;
     setBusy(true);
     setError(null);
     try {
-      await onJoin(trimmed, selected ?? undefined);
+      await onJoin(me, selected ?? undefined);
     } catch (err) {
       setError(failureText(err));
     } finally {
@@ -124,23 +121,13 @@ function JoinPanel({ view, selected, onJoin }: { view: RoomView; selected: Power
 
   if (open.length === 0) return <p className="talk-note">Every seat is taken. You can watch and read the table talk.</p>;
   return (
-    <form className="join-panel" onSubmit={submit} noValidate>
+    <form className="join-panel" onSubmit={submit} noValidate aria-describedby={error ? errorId : undefined}>
       <h2>Take a seat</h2>
-      <p className="fine">Choose an open seat above, or leave it to chance.</p>
+      <p className="fine">
+        Choose an open seat above, or leave it to chance.{" "}
+        {player ? `You sit as ${player.handle}.` : "You choose a handle as you sit down."}
+      </p>
       <div className="join-row">
-        <div className="field">
-          <label htmlFor="join-name">Your name at the table</label>
-          <input
-            ref={input}
-            id="join-name"
-            autoComplete="nickname"
-            maxLength={32}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            aria-invalid={error !== null && name.trim() === ""}
-            aria-describedby={error ? errorId : undefined}
-          />
-        </div>
         <button type="submit" className="btn brass big" disabled={busy}>
           {busy ? "Taking the seat" : selected ? `Sit as ${powerLabel(selected)}` : "Take any open seat"}
         </button>
@@ -263,12 +250,13 @@ function Table({ room, view }: { room: Room; view: RoomView }) {
             <h2 id="seats-title">{lobby ? "Seating plan" : "The powers"}</h2>
             {room.seat ? (
               <p className="fine">
-                You sit as {powerLabel(room.seat.power)}. Your seat is kept in this browser only; open this table on another device and you will be watching.
+                You sit as {powerLabel(room.seat.power)}. Open this table on another device signed in to your account and you are seated there too.
               </p>
             ) : null}
             <SeatingPlan seats={view.seats} me={me} running={running} picking={lobby && !room.seat} selected={selected} onSelect={setSelected} />
           </section>
           {lobby && !room.seat ? <JoinPanel view={view} selected={selected} onJoin={room.join} /> : null}
+          {lobby && room.seat ? <NotifyOffer moment="seated" /> : null}
           {lobby && isHost ? <HostPanel view={view} onStart={room.start} /> : null}
           <Terms view={view} />
         </div>

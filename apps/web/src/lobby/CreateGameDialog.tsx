@@ -16,7 +16,7 @@ import {
 import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { navigate } from "../app/router.jsx";
 import { api, failureText } from "../net/api.js";
-import { readName } from "../net/seats.js";
+import { useIdentity } from "../profile/Identity.jsx";
 import { PACING, PRESS, RULEBOOK, SCORING } from "./terms.js";
 import { keepCreatedSeat } from "./useRoom.js";
 
@@ -73,10 +73,9 @@ const DEFAULTS = resolveSettings({ visibility: "public" });
 
 export function CreateGameDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const nameInput = useRef<HTMLInputElement>(null);
   const titleId = useId();
   const errorId = useId();
-  const [name, setName] = useState("");
+  const { player, ensurePlayer } = useIdentity();
   const [pacing, setPacing] = useState<Pacing>(DEFAULTS.pacing);
   const [press, setPress] = useState<PressMode>(DEFAULTS.press);
   const [rulebook, setRulebook] = useState<Rulebook>(DEFAULTS.rulebook);
@@ -92,28 +91,24 @@ export function CreateGameDialog({ open, onClose }: { open: boolean; onClose: ()
     const d = ref.current;
     if (!d) return;
     if (open && !d.open) {
-      setName((current) => current || readName());
       setError(null);
       d.showModal();
-      nameInput.current?.focus();
+      d.querySelector<HTMLInputElement>("input[name='pacing']:checked")?.focus();
     }
     if (!open && d.open) d.close();
   }, [open]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed) {
-      setError("Write the name the table will know you by.");
-      nameInput.current?.focus();
-      return;
-    }
+    if (busy) return;
+    const me = await ensurePlayer("You are about to set a table. The other players, the Ledger and your record will know you by this name.");
+    if (!me) return;
     const settings: GameSettingsInput = { pacing, press, rulebook, dias, scoring, aiFill, aiBrain, visibility };
     setBusy(true);
     setError(null);
     try {
-      const res = await api.createGame({ name: trimmed, settings });
-      keepCreatedSeat({ gameId: res.gameId, power: res.power, token: res.token, name: trimmed });
+      const res = await api.createGame({ settings }, me.secret);
+      keepCreatedSeat({ gameId: res.gameId, power: res.power, token: res.token, name: me.handle });
       onClose();
       navigate(`/g/${res.gameId}`);
     } catch (err) {
@@ -132,21 +127,10 @@ export function CreateGameDialog({ open, onClose }: { open: boolean; onClose: ()
         </button>
       </header>
       <form className="create-form" onSubmit={submit} noValidate aria-describedby={error ? errorId : undefined}>
-        <div className="field">
-          <label htmlFor="create-name">Your name at the table</label>
-          <input
-            ref={nameInput}
-            id="create-name"
-            name="name"
-            autoComplete="nickname"
-            maxLength={32}
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            aria-invalid={error !== null && name.trim() === ""}
-          />
-          <p className="field-note">You are dealt a power at random. The other six seats open for players.</p>
-        </div>
+        <p className="field-note create-who">
+          {player ? `You sit as ${player.handle}, at a power dealt at random.` : "You choose a handle when you set the table, and are dealt a power at random."} The other six seats open
+          for players.
+        </p>
 
         <div className="create-columns">
           <div>

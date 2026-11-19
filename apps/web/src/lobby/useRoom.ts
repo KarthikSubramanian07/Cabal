@@ -8,6 +8,7 @@ import type { CabalSocket, ConnectionStatus, Frame } from "@cabal/protocol/clien
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CabalError } from "@cabal/protocol/client";
 import { ApiError, api, failureText, openSocket } from "../net/api.js";
+import { readPlayer } from "../net/player.js";
 import { type HeldSeat, forgetSeat, readSeat, saveName, saveSeat } from "../net/seats.js";
 import { type RoomView, applyFrame, fromSummary, markThreadRead } from "./room.js";
 
@@ -19,7 +20,8 @@ export interface Room {
   connection: ConnectionStatus;
   /** Something the player should know that is not an error in what they just did. */
   notice: string | null;
-  join: (name: string, power?: PowerName) => Promise<void>;
+  /** Sit down as the signed-in player: at `power`, or any open seat. */
+  join: (player: { handle: string; secret: string }, power?: PowerName) => Promise<void>;
   start: () => Promise<void>;
   say: (body: string) => Promise<void>;
   retry: () => void;
@@ -73,6 +75,29 @@ export function useRoom(code: string): Room {
   const ready = load.kind === "ready";
   const token = seat?.token;
 
+  // A seat this player holds from another device: the account gets its own token for this one.
+  const mine = load.kind === "ready" && !seat ? load.view.seats.find((s) => s.handle && s.handle.toLowerCase() === readPlayer()?.handle.toLowerCase()) : undefined;
+  const claim = mine?.power;
+  useEffect(() => {
+    if (!claim) return;
+    const player = readPlayer();
+    if (!player) return;
+    let live = true;
+    api.seatToken(code, player.secret).then(
+      (res) => {
+        if (!live) return;
+        const held = { gameId: res.gameId, power: res.power, token: res.token, name: player.handle };
+        saveSeat(held);
+        setSeat({ ...held, savedAt: Date.now() });
+      },
+      // Not this player's seat after all, or the server would not say: keep watching.
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [code, claim]);
+
   // The socket, once the table is known to exist. A new token (a seat just taken) rebinds it.
   useEffect(() => {
     if (!ready) return;
@@ -113,8 +138,9 @@ export function useRoom(code: string): Room {
   }, [code, token, ready]);
 
   const join = useCallback(
-    async (name: string, power?: PowerName) => {
-      const res = await api.joinGame(code, { name, ...(power ? { power } : {}) });
+    async (player: { handle: string; secret: string }, power?: PowerName) => {
+      const res = await api.joinGame(code, power ? { power } : {}, player.secret);
+      const name = player.handle;
       const held = { gameId: res.gameId, power: res.power, token: res.token, name };
       saveName(name);
       if (!saveSeat(held)) setNotice("This browser will not store your seat, so it lasts until you close this tab.");

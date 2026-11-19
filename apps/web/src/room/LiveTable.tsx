@@ -35,6 +35,7 @@ import { PressPanel } from "./PressPanel.jsx";
 import { SeatBar } from "./SeatBar.jsx";
 import { readiness } from "./seatState.js";
 import { threadList, totalUnread } from "./threads.js";
+import { NotifyOffer } from "../profile/NotificationsPanel.jsx";
 import { useDesk } from "./useDesk.js";
 
 type Tab = "orders" | "press" | "table";
@@ -154,6 +155,8 @@ function Floor({
   const [speed, setSpeed] = useState<Speed>(1);
   const [announcement, setAnnouncement] = useState("");
   const [saved, setSaved] = useState<PhaseRecord[]>([]);
+  /** This seat has readied at least once this visit: the moment notifications are worth offering. */
+  const [readied, setReadied] = useState(false);
   const boardWrap = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<HTMLInputElement>(null);
@@ -473,6 +476,7 @@ function Floor({
       return;
     }
     const sent = room.setReady(view.phase, !isReady);
+    if (sent && !isReady) setReadied(true);
     if (!sent) announce("Not connected. Try again when the table is back.");
     else announce(isReady ? "You are no longer ready." : "Ready. The phase resolves when every seat is.");
   };
@@ -726,6 +730,7 @@ function Floor({
             </div>
 
             <div role="tabpanel" id="panel-orders" aria-labelledby="tab-orders" hidden={tab !== "orders"} className="live-panel">
+              {readied && !record ? <NotifyOffer moment="ready" /> : null}
               {record ? (
                 <Results record={record} names={desk.board.provinces} />
               ) : me && canOrder ? (
