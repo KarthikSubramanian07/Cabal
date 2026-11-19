@@ -49,27 +49,47 @@ export function HowToPlay({
               <tr>
                 <th>Hold</th>
                 <td>
-                  Click the unit twice, or press <kbd>H</kbd>.
+                  Click the unit twice, or choose Hold
+                  <span className="keys-only">
+                    {" "}
+                    (<kbd>H</kbd>)
+                  </span>
+                  .
                 </td>
               </tr>
               <tr>
                 <th>Support</th>
                 <td>
-                  Click your unit, press <kbd>S</kbd>, click the unit you are helping, then its destination. Click that
-                  unit a second time to support it holding.
+                  Click your unit, choose Support
+                  <span className="keys-only">
+                    {" "}
+                    (<kbd>S</kbd>)
+                  </span>
+                  , click the unit you are helping, then its destination. Click that unit a second time to support
+                  it holding.
                 </td>
               </tr>
               <tr>
                 <th>Convoy</th>
                 <td>
-                  Click a fleet at sea, press <kbd>C</kbd>, click the army, then where it lands. An army that could
-                  either walk or sail gets a By convoy switch on its order.
+                  Click a fleet at sea, choose Convoy
+                  <span className="keys-only">
+                    {" "}
+                    (<kbd>C</kbd>)
+                  </span>
+                  , click the army, then where it lands. An army that could either walk or sail gets a By convoy
+                  switch on its order.
                 </td>
               </tr>
               <tr>
                 <th>Retreat</th>
                 <td>
-                  Click the dislodged unit, then an empty neighbour. Press <kbd>D</kbd> to disband it.
+                  Click the dislodged unit, then an empty neighbour. Choose Disband
+                  <span className="keys-only">
+                    {" "}
+                    (<kbd>D</kbd>)
+                  </span>{" "}
+                  to give it up.
                 </td>
               </tr>
               <tr>
@@ -79,15 +99,20 @@ export function HowToPlay({
               <tr>
                 <th>Cancel</th>
                 <td>
-                  <kbd>Esc</kbd>
+                  Choose Cancel
+                  <span className="keys-only">
+                    {" "}
+                    (<kbd>Esc</kbd>)
+                  </span>{" "}
+                  to drop an order half written.
                 </td>
               </tr>
             </tbody>
           </table>
           <p className="fine">
-            Only legal orders are offered. Units without an order hold. On a phone, use the buttons under the map
-            instead of the keys, pinch to zoom and drag to move the map. Your game is saved on this device as you
-            play.
+            Only legal orders are offered. Units without an order hold. The Move, Support, Convoy and Hold buttons
+            are under the map. On a touch screen, pinch to zoom and drag to move the map. Your game is saved on this
+            device as you play.
           </p>
           <p className="fine">
             Without a mouse, use the choices under the map: pick a unit, then where it goes. The same orders are
