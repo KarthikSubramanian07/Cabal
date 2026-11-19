@@ -1,4 +1,4 @@
-export { AgentClient, type AgentClientOptions } from "./client.js";
+export { AgentClient, type AgentClientOptions, type DecisionInfo } from "./client.js";
 export {
   PRICES,
   type Price,
