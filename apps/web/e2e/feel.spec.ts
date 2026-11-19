@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, test } from "@playwright/test";
-import { closeSheet, openSheet, primary, ready } from "./helpers.js";
+import { closeSheet, isPhone, openSheet, primary, ready } from "./helpers.js";
 
 const field = (page: Page) => page.getByRole("combobox", { name: "Write an order" });
 const results = (page: Page) => page.getByRole("group", { name: "Adjudication results" });
@@ -98,6 +98,40 @@ test.describe("a phase played on the board", () => {
     await settle(page);
     await expect(live(page).locator("g.unit.dislodged")).toHaveCount(1);
     expect(await pieceIn(page, "France: A PAR", "BUR")).toBe(true);
+  });
+});
+
+test.describe("ink and the keyboard while a phase plays", () => {
+  test("no ink shows on the map before an order starts to draw", async ({ page }, info) => {
+    test.skip(isPhone(info), "the mask is the same at any size");
+    await ready(page);
+    await write(page, "A PAR - BUR; A MAR S A PAR - BUR; A MUN - BUR; F TRI - VEN; A VEN - TRI");
+    await primary(page).click();
+    // Hold the phase at its very start and look at the order marks alone. (Paused first: a time
+    // set on a running animation has moved on a frame by the time a pause takes hold.)
+    await page.evaluate(() => document.getAnimations().forEach((a) => (a.pause(), (a.currentTime = 0))));
+    // Every ink mask starts with its dashes clear of both ends of its path (a path length of 1):
+    // the dash before it ends short of the start, the next one begins past the end. A dash of no
+    // length at an end is still painted, as a dot, by the round cap.
+    const masks = await page.evaluate(() =>
+      [...document.querySelectorAll(".order-marks .reveal")].map((el) => {
+        const cs = getComputedStyle(el);
+        const [dash, gap] = cs.strokeDasharray.split(/[ ,]+/).map(parseFloat);
+        return { dash: dash!, gap: gap!, offset: parseFloat(cs.strokeDashoffset) };
+      }),
+    );
+    expect(masks.length).toBeGreaterThan(0);
+    for (const m of masks) {
+      expect(m.dash - m.offset).toBeLessThan(0);
+      expect(m.dash + m.gap - m.offset).toBeGreaterThan(1);
+    }
+    await page.addStyleTag({ content: "svg.board, .board-live .units, .board-tools, .zoom, .pan { visibility: hidden !important }" });
+    const withMarks = await live(page).screenshot();
+    await page.addStyleTag({ content: ".board-live .order-marks { display: none !important }" });
+    const without = await live(page).screenshot();
+    // Nothing has been drawn yet, so the marks add not one pixel (a round cap on a zero-length
+    // dash at either end of a mark used to paint a dot there).
+    expect(withMarks.equals(without)).toBe(true);
   });
 });
 

@@ -13,13 +13,18 @@
   stroke: #fff;
   stroke-width: 26;
   stroke-linecap: round;
-  stroke-dasharray: 1 1;
+  /*
+   * The gap is a hair longer than the path, and the draw starts a hair past its end, so before a
+   * mark starts no dash (not even a zero-length one, which a round cap would paint as a dot)
+   * touches either end of the path.
+   */
+  stroke-dasharray: 1 1.02;
   stroke-dashoffset: 0;
 }
 
 @keyframes ink-draw {
   from {
-    stroke-dashoffset: 1;
+    stroke-dashoffset: 1.01;
   }
 }
 
