@@ -52,3 +52,48 @@ export function regionPoint(board: Board, region: string): Point {
   if (coast && province.coasts?.[coast]) return province.coasts[coast];
   return province.unit;
 }
+
+/** The rings of a province outline. Paths in board.json use only `M`, relative `l` and `z`. */
+export function pathRings(d: string): Point[][] {
+  const rings: Point[][] = [];
+  let ring: Point[] = [];
+  let x = 0;
+  let y = 0;
+  for (const m of d.matchAll(/([Mlz])([^Mlz]*)/g)) {
+    const nums = (m[2] ?? "").trim().split(/[\s,]+/).filter(Boolean).map(Number);
+    if (m[1] === "z") {
+      if (ring.length) rings.push(ring);
+      ring = [];
+      continue;
+    }
+    for (let i = 0; i + 1 < nums.length; i += 2) {
+      if (m[1] === "M" && i === 0) {
+        if (ring.length) rings.push(ring);
+        ring = [];
+        x = nums[0]!;
+        y = nums[1]!;
+      } else {
+        // After the first pair, `M` continues as absolute line-tos; `l` pairs are relative.
+        x = m[1] === "M" ? nums[i]! : x + nums[i]!;
+        y = m[1] === "M" ? nums[i + 1]! : y + nums[i + 1]!;
+      }
+      ring.push([x, y]);
+    }
+  }
+  if (ring.length) rings.push(ring);
+  return rings;
+}
+
+/** Even-odd test: is the point inside any ring an odd number of times. */
+export function insideRings(rings: readonly Point[][], point: Point): boolean {
+  const [px, py] = point;
+  let inside = false;
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i]!;
+      const [xj, yj] = ring[j]!;
+      if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+  }
+  return inside;
+}

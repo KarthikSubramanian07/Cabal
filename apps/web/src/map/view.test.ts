@@ -117,7 +117,7 @@ describe("sizes", () => {
   });
 
   it("is capped so a far-out overview does not turn into a wall of text", () => {
-    expect(labelSize(0.2)).toBeLessThanOrEqual(15.5);
+    expect(labelSize(0.2)).toBeLessThanOrEqual(16);
     expect(unitRadius(0.2)).toBeLessThanOrEqual(12.5);
   });
 });
@@ -183,6 +183,14 @@ describe("layoutLabels", () => {
       const at = out[code]!;
       expect(Math.hypot(at[0] - other.unit[0], at[1] - other.unit[1])).toBeGreaterThan(12);
     }
+  });
+
+  it("keeps a code inside its own province when the preferred side falls outside it", () => {
+    // A province that only extends upwards from where the piece stands.
+    const inside = ([x, y]: [number, number]) => x > 70 && x < 130 && y > 20 && y < 108;
+    const out = layoutLabels([{ code: "KIE", unit: [100, 100], label: [100, 116], inside }], 12, 14);
+    expect(inside(out["KIE"]!)).toBe(true);
+    expect(out["KIE"]![1]).toBeLessThan(100);
   });
 
   it("is stable: the same input gives the same layout", () => {

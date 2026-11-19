@@ -25,10 +25,11 @@ export interface Box extends Size {
 export const READABLE_SCALE = 0.62;
 
 /**
- * Below this scale the whole board is too small to play on (pieces a few pixels across), so
- * the frame opens on a theatre. Between the two the whole board is shown, a little small.
+ * Below this scale the whole board is too small to read, so the frame opens zoomed in on the
+ * active power at the readable scale: a theatre on a phone, most of the map on a short laptop
+ * screen. Between the two scales the whole board is shown, a little small.
  */
-export const WHOLE_BOARD_MIN_SCALE = 0.45;
+export const WHOLE_BOARD_MIN_SCALE = 0.55;
 
 /** How far in the view can zoom, as a fraction of the board's width. */
 const MIN_VIEW_FRACTION = 1 / 8;
@@ -100,7 +101,7 @@ export function homeView(board: Size, frame: Size, focus: readonly Point[]): Box
 export function labelSize(scale: number): number {
   const s = Math.max(scale, 0.05);
   const px = 9.6 * (s / READABLE_SCALE) ** 0.4;
-  return clampNumber(px / s, 6, 15.5);
+  return clampNumber(px / s, 6, 16);
 }
 
 /** Piece radius in board units: about 16 CSS pixels across at the readable scale. */
@@ -131,6 +132,8 @@ export interface LabelSpot {
   unit: Point;
   /** Where the map maker wrote the code. */
   label: Point;
+  /** Whether a point lies inside the province. A code should stay in the province it names. */
+  inside?: ((point: Point) => boolean) | undefined;
 }
 
 /** Roughly how much room a three-letter code takes at a given size. */
@@ -161,31 +164,40 @@ export function layoutLabels(spots: readonly LabelSpot[], radius: number, size: 
   const out: Record<string, Point> = {};
   const vertical = radius * 1.1 + size * 0.62 + 1.5;
   const sideways = radius + size * 1.02 + 2;
-  const diagonal = (vertical + sideways) / 2 / Math.SQRT2;
   for (const spot of spots) {
     const preferred = placeLabel(spot.unit, spot.label, radius, size);
     const [ux, uy] = spot.unit;
-    const candidates: Point[] = [
-      preferred,
-      [ux, uy + vertical],
-      [ux, uy - vertical],
-      [ux + sideways, uy],
-      [ux - sideways, uy],
-      [ux + diagonal * 1.25, uy + diagonal],
-      [ux - diagonal * 1.25, uy + diagonal],
-      [ux + diagonal * 1.25, uy - diagonal],
-      [ux - diagonal * 1.25, uy - diagonal],
-    ];
+    // Below, above and beside first (how a map is usually lettered), then all round the piece,
+    // then further out for a long thin province whose near spots fall outside it.
+    const candidates: Point[] = [preferred];
+    for (const reach of [1, 1.4, 1.9]) {
+      for (const turn of [90, 270, 0, 180, 45, 135, 315, 225, 68, 112, 292, 248, 22, 158, 338, 202]) {
+        const a = (turn * Math.PI) / 180;
+        candidates.push([ux + Math.cos(a) * sideways * reach, uy + Math.sin(a) * vertical * reach]);
+      }
+    }
     let best = preferred;
     let bestCost = Number.POSITIVE_INFINITY;
     for (const [i, at] of candidates.entries()) {
       const box = labelBox(at, size);
-      let cost = i * 0.01; // earlier candidates win ties
+      let cost = i * 0.004; // earlier candidates win ties
       for (const other of spots) {
         // Fleets are drawn a little wider than the radius.
-        if (other.code !== spot.code && boxHitsCircle(box, other.unit, radius * 1.2 + 1)) cost += 2;
+        if (boxHitsCircle(box, other.unit, radius * 1.2 + 1)) cost += 2;
       }
       for (const p of placed) if (boxesOverlap(box, p.box)) cost += 1;
+      if (spot.inside) {
+        // Most of all, a code belongs inside its own province: its middle, and both ends.
+        if (!spot.inside(at)) cost += 12;
+        for (const [dx, dy] of [
+          [-0.75, 0],
+          [0.75, 0],
+          [0, -0.4],
+          [0, 0.4],
+        ] as const) {
+          if (!spot.inside([at[0] + dx * size, at[1] + dy * size])) cost += 0.8;
+        }
+      }
       if (cost < bestCost) {
         best = at;
         bestCost = cost;

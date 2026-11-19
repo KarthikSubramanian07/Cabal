@@ -12,7 +12,7 @@ import {
 } from "react";
 import { type ParsedOrder, parseOrder, parseUnit } from "../game/notation.js";
 import { type UnitIds, unitKey } from "../game/unitIds.js";
-import { type Board as BoardData, type Point, regionPoint } from "./boardData.js";
+import { type Board as BoardData, type Point, insideRings, pathRings, regionPoint } from "./boardData.js";
 import {
   type Box,
   type Size,
@@ -67,6 +67,8 @@ export interface BoardProps {
 
 /** How close, in CSS pixels, a touch must land to a province it can act on to count for it. */
 const TOUCH_REACH_PX = 26;
+/** The same reach in board units is capped, so on a far-out overview a tap cannot jump provinces away. */
+const TOUCH_REACH_MAX = 34;
 
 function toward(from: Point, to: Point, trimStart: number, trimEnd: number): [Point, Point] {
   const dx = to[0] - from[0];
@@ -277,7 +279,10 @@ const Labels = memo(function Labels({ board, size, r }: { board: BoardData; size
     () =>
       Object.entries(board.provinces)
         .filter(([, p]) => p.kind !== "impassable")
-        .map(([code, p]) => ({ code, unit: p.unit, label: p.label })),
+        .map(([code, p]) => {
+          const rings = pathRings(p.d);
+          return { code, unit: p.unit, label: p.label, inside: (point: Point) => insideRings(rings, point) };
+        }),
     [board],
   );
   const at = useMemo(() => layoutLabels(spots, r, size), [spots, r, size]);
@@ -532,7 +537,7 @@ export function Board({
     const code =
       e.pointerType === "mouse"
         ? under
-        : resolveTap(toBoard(e.clientX, e.clientY, view), under, candidates, TOUCH_REACH_PX / scale);
+        : resolveTap(toBoard(e.clientX, e.clientY, view), under, candidates, Math.min(TOUCH_REACH_PX / scale, TOUCH_REACH_MAX));
     if (code) onProvince(code, { x: e.clientX, y: e.clientY });
   };
 
