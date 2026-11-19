@@ -68,13 +68,13 @@ pub fn resolve_adjustment(
                 } else if left >= 0 {
                     Err(AdjustIllegal::AllowanceUsed)
                 } else {
-                    match pos.unit_at(unit) {
-                        None => Err(if removed.contains(&unit) {
-                            AdjustIllegal::AllowanceUsed
-                        } else {
-                            AdjustIllegal::NoUnit
-                        }),
+                    // Judged against the board the phase started from, so the
+                    // verdict cannot depend on whether another power's build in
+                    // the same province happened to be read first.
+                    match position.unit_at(unit) {
+                        None => Err(AdjustIllegal::NoUnit),
                         Some(u) if u.power != o.power => Err(AdjustIllegal::ForeignUnit),
+                        Some(_) if removed.contains(&unit) => Err(AdjustIllegal::AllowanceUsed),
                         Some(_) => {
                             pos.remove_unit_at(unit);
                             removed.push(unit);
