@@ -13,6 +13,10 @@ import init, * as wasm from "../pkg/cabal_engine.js";
 export type {
   AdjustOptions,
   AttackInfo,
+  BotDecision,
+  BotFear,
+  BotIntent,
+  BotSupport,
   BuildInfo,
   BuildOption,
   ConvoyInfo,
@@ -134,6 +138,35 @@ export const canonicalOrder = (
   phaseKind: "M" | "R" | "A",
   power: string,
 ): string => wasm.canonicalOrder(text, phaseKind, power);
+
+/** Strength of the built-in heuristic bot. */
+export type BotLevel = "easy" | "standard" | "hard";
+
+export interface BotOptions {
+  /**
+   * Any stable value, usually the game id. The same game state, power, seed and
+   * level always give the same decision; the seed is mixed with the phase and
+   * the power, so one seed serves a whole game.
+   */
+  seed: string | number;
+  /** Defaults to `standard`. */
+  level?: BotLevel;
+}
+
+/**
+ * Orders for `power` in the game's current phase from the built-in heuristic bot
+ * (the Rust crate `cabal-bot`, compiled into this module): one legal order per
+ * unit, builds and disbands filled to the allowance, plus a short `intent`
+ * (targets, supports, fears) for press and the UI. No network, no model, and a
+ * few milliseconds at the default level. Throws when the game is finished or the
+ * power or level is unknown.
+ */
+export const botOrders = (
+  game: wasm.Game,
+  power: string,
+  options: BotOptions,
+): wasm.BotDecision =>
+  game.botOrders(power, String(options.seed), options.level);
 
 /** A seal: BLAKE3 commitment over canonical orders plus a hex nonce. */
 export const pledgeCommit = (orders: string[], nonceHex: string): string =>

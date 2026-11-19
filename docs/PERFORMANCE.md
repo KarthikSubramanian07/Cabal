@@ -34,7 +34,7 @@ change. Cold start figures are the median of seven fresh Node processes.
 | Opening adjudication (22 units) | `bench` job | 30 percent slower than the base commit, same runner |
 | Legal orders, all powers, fleet-heavy midgame, one power at a time | `bench` job | same |
 | Legal orders, all powers, fleet-heavy midgame, shared convoy search | `bench` job | same |
-| Engine wasm, gzip | `wasm` job, `WASM_SIZE_BUDGET_BYTES` | 353,600 bytes, about 10 percent above the build |
+| Engine wasm, gzip | `wasm` job, `WASM_SIZE_BUDGET_BYTES` | 409,000 bytes, about 10 percent above the build |
 | Worker bundle, gzip | `deploy-dry-run` job | 655,360 bytes |
 
 The base commit and the change are benchmarked back to back on one runner,
@@ -125,8 +125,10 @@ not compute them.
 | Before (`14e48cd`) | 796,133 | 289,382 | 220,035 |
 | After, shipped (`opt-level = 3`, fat LTO, one codegen unit, `panic = "abort"`, `wasm-opt -Oz`) | 854,820 | 321,347 | 244,269 |
 
+| After, with the heuristic bot merged from `main` | 994,307 | 371,808 | 281,181 |
+
 The new API (verdicts, explanations, structured moves, build info) costs
-32 KB gzip; baking the maps and dropping the map JSON parser from the binary
+32 KB gzip, and the bot (`cabal-bot`, merged separately) another 50 KB; baking the maps and dropping the map JSON parser from the binary
 paid back part of what it added.
 
 The size-oriented settings were measured and **not adopted**, because the rule

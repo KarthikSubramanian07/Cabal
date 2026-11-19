@@ -5,8 +5,11 @@
 //! cabal explain [--graph] <order>...              adjudicate a movement phase from order text and explain it
 //! cabal legal <power> [<order>...]      list legal orders for a power (after optional setup orders)
 //! cabal replay [--json] <file|dir>...   replay saved games and report every divergence (exit 1 on any)
+//! cabal arena [--games N] ...           bot against bot on every core (see `arena.rs`)
 //! cabal version
 //! ```
+
+mod arena;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -34,6 +37,7 @@ fn main() -> ExitCode {
         Some("explain") => explain(&args[1..]),
         Some("legal") => legal(&args[1..]),
         Some("replay") => replay(&args[1..]),
+        Some("arena") => arena::run(&args[1..]),
         Some("version") | None => {
             println!(
                 "cabal {VERSION} ({}, {} opt-level {}, {})",
@@ -46,7 +50,7 @@ fn main() -> ExitCode {
         }
         Some(other) => {
             eprintln!("unknown subcommand: {other}");
-            eprintln!("usage: cabal <datc|explain|legal|replay|version> ...");
+            eprintln!("usage: cabal <datc|explain|legal|replay|arena|version> ...");
             ExitCode::from(2)
         }
     }

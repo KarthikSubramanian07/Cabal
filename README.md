@@ -115,6 +115,7 @@ flowchart LR
 cargo run -p cabal-cli -- datc --report   # adjudicate the DATC corpus: pass, fail and skip totals per section
 cargo run -p cabal-cli -- replay crates/cabal-engine/tests/data/games   # replay saved games, report every divergence
 cargo run -p cabal-cli -- explain "ENG: F NTH - HOL" "ENG: A BEL S F NTH - HOL" "GER: A HOL H"
+cargo run --release -p cabal-cli -- arena --games 100   # bot against bot on every core, with a strength table
 ```
 
 ## What is built today
@@ -122,7 +123,8 @@ cargo run -p cabal-cli -- explain "ENG: F NTH - HOL" "ENG: A BEL S F NTH - HOL" 
 | Piece | State |
 |---|---|
 | `cabal-engine` | 171 of 171 DATC v3.0 cases, property tests, benches, verifiable MILA saved games, lossless snapshots, seals and receipts |
-| `cabal-wasm`, `@cabal/engine` | one wasm module for browser and Workers (321 KB gzipped, CI fails above 354 KB), generated TypeScript types |
+| `cabal-wasm`, `@cabal/engine` | one wasm module for browser and Workers (372 KB gzipped with the bot inside, CI fails above 409 KB), generated TypeScript types |
+| `cabal-bot`, `cabal arena` | a deterministic heuristic player at three levels, exported as `botOrders`, and a native arena that plays 6 games a second and checks every order; see [docs/BOT.md](docs/BOT.md) |
 | `@cabal/protocol` | zod schemas for every frame, settings, pledges and scoring |
 | `apps/server` | GameRoom Durable Object: seats, deadlines, orders, press, sealed pledges with receipts, replay export |
 | `apps/web` | the classic board sandbox: click-to-order from the legal list, coast picker, receipts with reasons, phase replay, undo, MILA import and export, phone and desktop |
@@ -134,7 +136,8 @@ cargo run -p cabal-cli -- explain "ENG: F NTH - HOL" "ENG: A BEL S F NTH - HOL" 
 ```
 crates/cabal-engine   Rust rules engine (geo, orders, parser, resolver, phases, json, pledges)
 crates/cabal-wasm     wasm-bindgen + tsify bindings, TypeScript types generated from Rust
-crates/cabal-cli      cabal CLI: datc, explain, legal, replay, version
+crates/cabal-bot      the heuristic player: tactical candidates searched on the real adjudicator
+crates/cabal-cli      cabal CLI: datc, explain, legal, replay, arena, version
 packages/engine       @cabal/engine   npm wrapper for the wasm build
 packages/protocol     @cabal/protocol zod schemas for the WebSocket and HTTP protocol
 packages/agents       @cabal/agents   Claude powered player harness
