@@ -693,6 +693,8 @@ export function Board({
   // only, on a layer of their own, so nothing is laid out again while they run), the marks'
   // CSS animations are put on the same clock, and the cues are handed to the sound deck.
   const liveRef = useRef<SVGSVGElement>(null);
+  const skipRef = useRef<HTMLButtonElement>(null);
+  const soundRef = useRef<HTMLButtonElement>(null);
   const [animating, setAnimating] = useState(false);
   const playing = useRef<{ skip: () => void; retime: (rate: number) => void } | null>(null);
   const settled = useRef(onSettled);
@@ -733,10 +735,15 @@ export function Board({
     let silence = sound ? deck.schedule(cues, { rate: speed }) : () => {};
 
     let done = false;
+    /** Skip is about to go: keep focus on the board's tools rather than drop it to the page. */
+    const release = () => {
+      if (document.activeElement === skipRef.current) soundRef.current?.focus();
+    };
     const settle = () => {
       if (done) return;
       done = true;
       silence();
+      release();
       setAnimating(false);
       settled.current?.(key);
     };
@@ -782,6 +789,7 @@ export function Board({
       silence();
       for (const a of mine) a.cancel();
       playing.current = null;
+      release();
       setAnimating(false);
     };
     // The sound switch is read when a phase starts; the effect below follows the speed.
@@ -792,6 +800,19 @@ export function Board({
   }, [rate]);
   /** Jump to the end of the phase being played: every piece where it lands, every stamp down. */
   const skip = useCallback(() => playing.current?.skip(), []);
+  // Escape skips too, so the keyboard need not travel to the button while a phase plays.
+  useEffect(() => {
+    if (!animating) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const el = e.target instanceof Element ? e.target : null;
+      if (el?.closest("input, textarea, select, dialog[open], [role='menu']")) return;
+      skip();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [animating, skip]);
+
   const candidates = useMemo<TapCandidate[]>(() => {
     const codes = new Set<string>([...(targets ?? []), ...(hot ?? [])]);
     return [...codes].flatMap((code) => (board.provinces[code] ? [{ code, at: board.provinces[code]!.unit }] : []));
@@ -1042,6 +1063,7 @@ export function Board({
 
       <div className="board-tools" role="group" aria-label="Board">
         <button
+          ref={soundRef}
           type="button"
           className="sound-toggle"
           aria-pressed={soundOn}
@@ -1052,7 +1074,7 @@ export function Board({
           <SoundIcon on={soundOn} />
         </button>
         {animating ? (
-          <button type="button" className="skip" onClick={skip}>
+          <button ref={skipRef} type="button" className="skip" onClick={skip} aria-keyshortcuts="Escape">
             Skip<span className="sr-only"> the animation</span>
           </button>
         ) : null}

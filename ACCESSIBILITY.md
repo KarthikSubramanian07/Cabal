@@ -63,9 +63,11 @@ part of `pnpm test:e2e` (`apps/web/e2e`):
 ## Motion, sound and explanations (2026-11-19)
 
 - A resolved phase plays on the board: pieces march, bounce, are knocked aside and are built.
-  It lasts one to three seconds, a **Skip** button stops it at its end state (WCAG 2.2.2), and
-  under `prefers-reduced-motion: reduce` nothing travels: marks appear and each moved piece
-  dissolves into its new place. The results are announced in the live region either way.
+  It lasts one to three seconds, a **Skip** button (or Escape, from anywhere but a text field or
+  a menu) stops it at its end state (WCAG 2.2.2). When Skip goes away, because it was pressed or
+  the phase finished, focus that was on it moves to the Sound button beside it, never to the
+  page (WCAG 2.4.3). Under `prefers-reduced-motion: reduce` nothing travels: marks appear and
+  each moved piece dissolves into its new place. The results are announced in the live region either way.
 - Order marks differ in shape as well as colour (WCAG 1.4.1): solid moves with a barbed head,
   dashed supports with a round knot, dotted convoys with a square knot, rings for holds, a cross
   for every failure. Highlighted units are ringed in brass (the order), dashed brass (helpers) or
@@ -77,8 +79,8 @@ part of `pnpm test:e2e` (`apps/web/e2e`):
   well as tally strokes.
 - The replay scrubber is a native range input; its spoken value names the phase and what
   happened in it ("Spring 1901 movement results: 1 standoff").
-- Automated: `e2e/feel.spec.ts` runs an axe scan with the explanation open, and checks Skip,
-  reduced motion, the disclosure state and the scrubber's spoken value on desktop and phone.
+- Automated: `e2e/feel.spec.ts` runs an axe scan with the explanation open, and checks Skip
+  (and where focus goes after it), Escape, reduced motion, the disclosure state and the scrubber's spoken value on desktop and phone.
 
 ## Manual pass (2026-11-10)
 

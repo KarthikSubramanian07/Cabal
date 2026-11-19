@@ -150,6 +150,42 @@ test.describe("ink and the keyboard while a phase plays", () => {
     expect(withMarks.equals(without)).toBe(true);
   });
 
+  test("pressing Skip keeps focus on the board's tools", async ({ page }, info) => {
+    test.skip(isPhone(info), "keyboard");
+    await ready(page);
+    await write(page, "A PAR - BUR; A MUN - BUR");
+    await primary(page).click();
+    await skipButton(page).focus();
+    await page.keyboard.press("Enter");
+    await expect(skipButton(page)).toBeHidden();
+    await expect(page.getByRole("button", { name: "Sound" })).toBeFocused();
+  });
+
+  test("a focused Skip that goes at the end of the phase hands focus on", async ({ page }, info) => {
+    test.skip(isPhone(info), "keyboard");
+    await ready(page);
+    await write(page, "A PAR - BUR; A MUN - BUR");
+    await primary(page).click();
+    await skipButton(page).focus();
+    await expect(skipButton(page)).toBeHidden({ timeout: 5000 });
+    await expect(page.getByRole("button", { name: "Sound" })).toBeFocused();
+  });
+
+  test("Escape skips the phase from wherever focus is", async ({ page }, info) => {
+    test.skip(isPhone(info), "keyboard");
+    await ready(page);
+    await write(page, "A PAR - BUR; A MUN - BUR");
+    await primary(page).click();
+    await expect(skipButton(page)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(skipButton(page)).toBeHidden();
+    const running = await page.evaluate(
+      () => document.querySelector("svg.board-live")!.getAnimations({ subtree: true }).filter((a) => a.playState === "running").length,
+    );
+    expect(running).toBe(0);
+    expect(await pieceIn(page, "France: A PAR", "PAR")).toBe(true);
+  });
+
   test("a speed changed part way through a phase keeps Skip until every piece has landed", async ({ page }, info) => {
     test.skip(isPhone(info), "one viewport is enough");
     await ready(page);
