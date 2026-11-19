@@ -92,6 +92,22 @@ Error codes: `rate_limited`, `too_large` (the socket is then closed with 1009), 
 | `ai` | played by the built-in bot, or by Claude when the game sets `aiBrain: "claude"` and the server has a key |
 | `civil_disorder` | its player has missed two movement phases; `autopilot: true` means the bot is covering it |
 
+### AI seats
+
+Every AI seat is played every phase. The moment a phase opens the built-in bot's orders are on file for each AI seat and each seat on autopilot, so an AI seat can never leave a phase without orders or hold one up.
+
+A game that sets `aiBrain: "claude"` on a server that holds an API key then asks Claude for better orders. Claude seats use no part of this protocol and hold no token: their turns travel through an internal queue as `{ gameId, power, phase, step }` and reach the room over its private binding, which the internet cannot address. What they send is ordinary press and ordinary orders, subject to the same rules as a player's.
+
+A movement phase is played in two steps, both visible to the table as `seats` frames (`ready` stays false for a Claude seat until its orders are in):
+
+1. **Negotiate.** Each seat reads the press so far and sends up to three messages and at most one pledge. Talks close after 60 seconds.
+2. **Listen.** The room waits for the table to answer: a quarter of the phase, two minutes at most, or until every human who can act is ready.
+3. **Order.** Each seat reads everything said in the phase, then submits orders. Orders are due 90 seconds later.
+
+Retreat and adjustment phases, gunboat games and movement phases shorter than four minutes skip straight to step 3. Every limit is also capped by the phase deadline. When a limit passes, a call fails, the queue is down or the budget is spent, nothing has to happen: the orders already on file are adjudicated.
+
+Spend is capped per game (5 US dollars unless the server says otherwise). The worst-case price of each call is reserved before it is made and the real price settled from the API's usage report, so the cap holds whatever the calls cost. `GET /api/games/:id` reports it as `ai: { brain, model, claudeTurns, claudeCalls, spentUsd, capUsd, tokens, stopped }`; `stopped` is null, or why the game went back to the bot (`spend_cap`, `model_failing`, `model_unauthorised`).
+
 A seat in civil disorder still belongs to its player, whose token keeps working: submitting orders takes it back. After four missed movement phases the seat is vacant, and a seated player may open it to a substitute (see HTTP).
 
 ## Draws
@@ -114,7 +130,7 @@ A draw passes when every surviving, present human player has voted yes in the cu
 | `POST /api/games/:id/join` | `{ name, power? }` claims a lobby seat; `{ name, invite }` takes a vacated seat in a running game. Refused with 409 for a caller who presents a seat token for this game |
 | `POST /api/games/:id/start` | the creator starts early; open seats become AI seats when `aiFill` is on |
 | `POST /api/games/:id/substitute` | `{ power }` with a seated player's bearer token: returns a one-time `invite` for a seat whose player has missed four movement phases |
-| `GET /api/games/:id` | public summary |
+| `GET /api/games/:id` | public summary, including who plays the AI seats and what it has cost (`ai`) |
 | `GET /api/games/:id/replay` | MILA-compatible saved game JSON |
 | `GET /api/games/:id/ledger` | kept, broken and void pledge counts per power |
 | `GET /api/games/:id/ws` | the WebSocket |

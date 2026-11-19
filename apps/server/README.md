@@ -11,7 +11,7 @@ One Worker, two Durable Object classes and one Queue.
 | Rule | Behaviour |
 |---|---|
 | Ready-advance | A phase resolves early only when every seat that can act is ready, AI seats included, and at least one present human is playing. |
-| AI seats | The built-in bot puts orders on file the moment a phase opens. With `aiBrain: "claude"` and a key configured, Claude is then asked for better ones; the room waits at most 90 seconds, then the bot's orders stand. |
+| AI seats | Every AI seat is played through a `SeatBrain` (`src/brain.ts`). The built-in bot puts orders on file the moment a phase opens. With `aiBrain: "claude"` and a key configured, Claude seats then negotiate (60 seconds), listen (up to two minutes, or until the humans are ready) and order (90 seconds); when any limit passes, or anything fails, the orders on file stand. Their diary and relationships are kept in the room between turns. |
 | No humans | A game nobody human is playing is driven by its deadline alone. It is finished when no human power survives, and abandoned after three movement phases with no human order. |
 | Deadlines | `live` 10 and 5 minutes, `daily` 24 and 12 hours, `async` 48 and 24 hours (movement, then retreat and adjustment). Explicit seconds override the preset. |
 | Grace | When the deadline arrives and a present player still owes orders, the phase waits `graceSeconds` longer, once. |
@@ -39,7 +39,8 @@ Everything is declared in `wrangler.jsonc` for the owner's account. Nothing need
 Secrets and variables:
 
 - `ANTHROPIC_API_KEY` (secret, optional). Without it every AI seat is played by the built-in bot, whatever a game asks for.
-- `CLAUDE_TURNS_PER_GAME` (optional, default 400). The hard cap on Claude requests one game may make; the bot plays every turn after it.
+- `CLAUDE_TURNS_PER_GAME` (optional, default 400). The hard cap on Claude turns (one seat, one phase) one game may take; the bot plays every turn after it.
+- `CLAUDE_USD_PER_GAME` (optional, default 5). The hard cap on what one game may spend on Claude. The worst-case price of a call is reserved before it is made and the real price settled from the usage the API reports, so the cap cannot be overdrawn; a call that never reports back is charged its whole reservation. `0` turns Claude seats off.
 
 Check a change to the config with `pnpm --filter @cabal/server exec wrangler deploy --dry-run`. Deploys are manual (`pnpm deploy:server`).
 
