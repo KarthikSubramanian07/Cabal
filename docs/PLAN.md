@@ -13,7 +13,7 @@ Cabal is an online negotiation strategy game built on the adjudication rules of 
 - **Cabals.** Optional mode: at game start some players are secretly dealt into two or three person cabals with a shared hidden win condition. Reveal at the end.
 - **Vendettas.** Publicly stake rating on a declared goal against a named power with a deadline. Fail and the target collects.
 - **Ghost votes.** Eliminated players keep press and one draw vote, so the dead stay dangerous.
-- **AI players.** Any seat can be filled by a Claude powered agent that negotiates, pledges, and betrays through the same protocol humans use.
+- **AI players.** Any seat can be filled by an AI. The default is a free, instant heuristic bot written in Rust; a game can opt in to Claude powered agents that negotiate, pledge, and betray through the same protocol humans use.
 
 Everything above the line is a layer. The adjudicator underneath is a pure, deterministic Rust engine that passes the full Diplomacy Adjudicator Test Cases (DATC v3.0) and never knows the cabal layer exists.
 
@@ -32,7 +32,7 @@ We surveyed webDiplomacy, Backstabbr, Playdiplomacy, Diplicity and the late Cons
 9. Paywalled or missing variants.
 10. Thin onboarding and dead press.
 
-Cabal answers each: sealed default orders and one-tap substitutes for NMRs, soft deadlines with "ready to advance", a tap-tap order UI with live legality from the in-browser engine, the classic board drawn from public domain geography in a distinctive brand palette, mobile-first layout with push notifications, one Glicko-2 rating per settings cluster, free variants, and AI seats so a table can always start.
+Cabal answers each: sealed default orders and one-tap substitutes for NMRs, soft deadlines with "ready to advance", a tap-tap order UI with live legality from the in-browser engine, the classic board drawn from public domain geography in a distinctive brand palette, mobile-first layout with push notifications, weighted pairwise Glicko ratings with a separate reliability score, free variants, and AI seats so a table can always start.
 
 ## 2. Product pillars
 
@@ -52,7 +52,7 @@ Cabal answers each: sealed default orders and one-tap substitutes for NMRs, soft
 - Convoy intent: explicit `via convoy` or a same-power fleet ordered to convoy (2023). No fallback to land when the convoy is disrupted.
 - Civil disorder disbands: 2023 distance-to-owned-supply-centre rule, fleets before armies, then alphabetical.
 - Victory: 18 supply centres after a Fall phase. Draws by vote, DIAS by default (all survivors included).
-- Scoring: Sum-of-Squares for draws, solo takes the pot. Rating: Glicko-2, one rating per settings cluster (press mode x pacing x variant).
+- Scoring: Sum-of-Squares for draws, solo takes the pot. Rating: weighted pairwise Glicko (each game scored as pairwise results between the players, weighted 2/(N-1) as diplicity does), plus a separate reliability score and the trust ledger.
 - Map: classic 1901 Europe, 75 provinces, 34 supply centres, 7 powers. Variant maps are data files.
 
 ## 4. Architecture at a glance
@@ -61,21 +61,21 @@ Cabal answers each: sealed default orders and one-tap substitutes for NMRs, soft
 flowchart LR
   subgraph Browser
     UI[React 19 UI] --> WASM[cabal-engine.wasm]
-    UI <-->|WebSocket| DO
   end
   subgraph Cloudflare
-    Pages[Pages: playcabal.pages.dev] --> UI
-    API[Worker: cabal-api] --> DO[(Durable Object: GameRoom)]
+    Pages[Pages: playcabal.pages.dev] -->|/api via service binding| API[Worker: cabal-server]
+    API --> DO[(Durable Object: GameRoom)]
     DO --> SQL[(DO SQLite)]
-    DO --> WASM2[cabal-engine.wasm]
-    API --> D1[(D1: accounts, ratings, history)]
-    DO --> Q[Queue: side effects]
-    Q --> Agents[Worker: cabal-agents]
-    Agents -->|AI Gateway| Claude[Anthropic API]
+    DO --> WASM2[cabal-engine.wasm + heuristic bot]
+    API --> REG[(Durable Object: Registry\naccounts, ratings, history)]
+    DO -->|game over| REG
+    DO --> Q[Queue: cabal-agent-turns]
+    Q -->|opt-in Claude seats| Claude[Anthropic API]
   end
+  UI <-->|HTTPS and WebSocket, same origin| Pages
 ```
 
-One Rust crate, `cabal-engine`, is compiled once with `wasm-bindgen` and loaded in two places: the browser (instant legality checks, order preview, what-if sandbox) and the `GameRoom` Durable Object (authoritative adjudication). The Durable Object owns one game: its SQLite tables, its WebSocket connections, and one alarm for the phase deadline. Cross-game data (accounts, ratings, match history) lives in D1. Full detail in [ARCHITECTURE.md](ARCHITECTURE.md).
+One Rust crate, `cabal-engine`, is compiled once with `wasm-bindgen` and loaded in two places: the browser (instant legality checks, order preview, what-if sandbox) and the `GameRoom` Durable Object (authoritative adjudication). The Durable Object owns one game: its SQLite tables, its WebSocket connections, and one alarm for the phase deadline. Cross-game data (accounts, ratings, match history, the trust ledger) lives in a singleton `Registry` Durable Object, not D1 ([ADR 0009](adr/0009-registry-durable-object-instead-of-d1.md)). The browser reaches the server through the Pages origin, which forwards `/api` to the Worker. Full detail in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## 5. Roadmap
 
@@ -110,12 +110,14 @@ The seven issues are grouped into three subteams, each named after a job at a re
 | [#6](https://github.com/KarthikSubramanian07/Cabal/issues/6) | Adjudicators | Engine: order normalisation, second oracle corpus, fuzzing, explanation graph | Rust | Zero skipped cases in any corpus; `cabal explain --graph` |
 | [#7](https://github.com/KarthikSubramanian07/Cabal/issues/7) | Adjudicators | Engine: deterministic replay fixtures, variant map format, performance gates | Rust | Every fixture replays with zero divergence; variants load from JSON |
 | [#11](https://github.com/KarthikSubramanian07/Cabal/issues/11) | Adjudicators | Agents: arena runner, prompt tuning, cost controls, nightly evaluation | TS / LLM | Seven agents finish 1901 to 1910 with zero illegal orders under budget |
-| [#8](https://github.com/KarthikSubramanian07/Cabal/issues/8) | Couriers | Server: GameRoom lifecycle, deadlines, NMR policy, press channels, D1 hand-off | TS / Durable Objects | A full game with two humans and five AI seats, no operator |
-| [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12) | Couriers | Platform: identity, D1 schema, Glicko-2 ratings, deploy pipeline, observability, SEO, integrations (Discord bot, email digests, Slack bridge) | TS / Cloudflare | Zero-touch deploy on merge; ratings update after each game |
+| [#8](https://github.com/KarthikSubramanian07/Cabal/issues/8) | Couriers | Server: GameRoom lifecycle, deadlines, NMR policy, press channels, game-over hand-off to the Registry | TS / Durable Objects | A full game with two humans and five AI seats, no operator |
+| [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12) | Couriers | Platform: guest identity, Registry Durable Object, ratings and trust ledger, manual deploy runbook, observability, SEO, integrations (Discord bot, email digests, Slack bridge) | TS / Cloudflare | A maintainer deploys web and server with one command from a green `main`, with the deploy dry run gated in CI ([ADR 0008](adr/0008-manual-wrangler-deploys.md)); ratings and the trust ledger update after each game |
 | [#9](https://github.com/KarthikSubramanian07/Cabal/issues/9) | Cartographers | Web: every order type polished, animated results, replay scrubber, multiplayer mode, accessibility | React | A full game against AI seats on a phone without typing |
 | [#10](https://github.com/KarthikSubramanian07/Cabal/issues/10) | Cartographers | Web: lobby, press, seals and receipts, trust ledger, notifications, PWA | React | Create, invite, negotiate with sealed pledges and see receipts from a phone |
 
 Each issue is written up in full on GitHub with scope, non-goals, interfaces it must honour, a test plan, the exit criteria that close it, and a getting started checklist.
+
+Four smaller issues were opened during the phase: [#56](https://github.com/KarthikSubramanian07/Cabal/issues/56) (the deploy decision, recorded in [ADR 0008](adr/0008-manual-wrangler-deploys.md)), [#57](https://github.com/KarthikSubramanian07/Cabal/issues/57) (measuring the success metrics in section 8), [#60](https://github.com/KarthikSubramanian07/Cabal/issues/60) (explaining failed orders and what-if previews) and [#61](https://github.com/KarthikSubramanian07/Cabal/issues/61) (measuring and gating the WASM cold start).
 
 ### Phase 2: The Cabal layer
 
@@ -140,12 +142,14 @@ Each issue is written up in full on GitHub with scope, non-goals, interfaces it 
 | Risk | Mitigation |
 |---|---|
 | Adjudicator subtle bugs | DATC v3.0 corpus, second oracle corpus (position-based), property tests, fuzzing, explanation graph for debugging |
-| WASM in Durable Object cold start | Module instantiated once per isolate, size budget enforced in CI, benchmark gate |
+| WASM in Durable Object cold start | Module instantiated once per isolate; gzip size budgets on the wasm and on the whole Worker bundle in CI; adjudication benchmark gate. Start-up time itself is not yet measured (#61) |
 | LLM players break protocol | Legal order list in prompt, lenient parser with repair pass, hard fallback to hold, per-seat budget cap |
 | Abandoned games | Sealed defaults, substitutes, AI takeover after two missed phases, reliability rating |
 | Scope creep | Cabal mechanics are all post-adjudication layers; the engine API is frozen after phase 1 issue 2 |
 
 ## 8. Success metrics for phase 1
+
+How each one is measured, and its recorded value, is tracked on [#57](https://github.com/KarthikSubramanian07/Cabal/issues/57).
 
 - 100 percent DATC v3.0, zero skipped cases.
 - A full 7 seat game completes on production with no manual intervention.

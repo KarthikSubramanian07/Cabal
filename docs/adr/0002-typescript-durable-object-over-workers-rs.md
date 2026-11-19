@@ -8,7 +8,7 @@ Cloudflare offers `workers-rs` (Rust Workers with Durable Object support, 0.8.x)
 
 ## Decision
 
-The `GameRoom` Durable Object is TypeScript (built on `partyserver`) and imports the same `cabal_engine_bg.wasm` through Wrangler's `CompiledWasm` rule. All rules logic still runs in Rust; TypeScript owns only I/O and orchestration (sockets, SQLite, alarms, auth).
+The `GameRoom` Durable Object is TypeScript (planned on `partyserver`; as built it uses the Durable Object WebSocket Hibernation API directly and `partyserver` was never added) and imports the same `cabal_engine_bg.wasm` through Wrangler's `CompiledWasm` rule. All rules logic still runs in Rust; TypeScript owns only I/O and orchestration (sockets, SQLite, alarms, auth).
 
 ## Consequences
 
