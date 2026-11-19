@@ -51,6 +51,19 @@ describe("homeView", () => {
     expect(isWholeView(board, desktop, homeView(board, desktop, france))).toBe(true);
   });
 
+  it("shows the whole board on a short laptop screen, where it is small but complete", () => {
+    // What the layout gives the board at 1280x720 and 1366x768.
+    for (const frame of [
+      { w: 585, h: 570 },
+      { w: 634, h: 618 },
+    ]) {
+      expect(fitsWhole(board, frame)).toBe(true);
+      expect(isWholeView(board, frame, homeView(board, frame, france))).toBe(true);
+      const scale = frame.w / wholeView(board, frame).w;
+      expect(labelSize(scale) * scale).toBeGreaterThanOrEqual(7.5);
+    }
+  });
+
   it("opens a phone on the active power's theatre at a readable scale", () => {
     expect(fitsWhole(board, phone)).toBe(false);
     for (const frame of [phone, landscape]) {
@@ -104,7 +117,7 @@ describe("sizes", () => {
     const desktopScale = desktop.w / wholeView(board, desktop).w;
     const phoneScale = phone.w / homeView(board, phone, [[330, 520]]).w;
     for (const scale of [desktopScale, phoneScale]) {
-      expect(labelSize(scale) * scale).toBeGreaterThanOrEqual(9);
+      expect(labelSize(scale) * scale).toBeGreaterThanOrEqual(9.9);
       expect(unitRadius(scale) * scale * 2).toBeGreaterThanOrEqual(15);
     }
   });

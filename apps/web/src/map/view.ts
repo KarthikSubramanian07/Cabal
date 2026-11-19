@@ -25,11 +25,13 @@ export interface Box extends Size {
 export const READABLE_SCALE = 0.62;
 
 /**
- * Below this scale the whole board is too small to read, so the frame opens zoomed in on the
- * active power at the readable scale: a theatre on a phone, most of the map on a short laptop
- * screen. Between the two scales the whole board is shown, a little small.
+ * Below this scale the whole board is too small to play on, so the frame opens zoomed in on
+ * the active power at the readable scale: one theatre of the map on a phone. Between the two
+ * scales the whole board is shown, a little small. A 1280x720 or 1366x768 laptop gives the
+ * board about 0.49 and 0.53, and a Diplomacy board that opens with Russia and Turkey off
+ * screen is not one a desktop player expects, so those show all of it.
  */
-export const WHOLE_BOARD_MIN_SCALE = 0.55;
+export const WHOLE_BOARD_MIN_SCALE = 0.48;
 
 /** How far in the view can zoom, as a fraction of the board's width. */
 const MIN_VIEW_FRACTION = 1 / 8;
@@ -95,12 +97,15 @@ export function homeView(board: Size, frame: Size, focus: readonly Point[]): Box
 }
 
 /**
- * Province code size in board units. Aims for about 10 CSS pixels at the readable scale and
- * grows gently as the player zooms in, without ever swamping a small province.
+ * Province code size in board units. Ten CSS pixels at the readable scale, growing gently
+ * as the player zooms in, without ever swamping a small province. The cap of 16 board units
+ * is as large as a code can be before it covers pieces in Italy and the Low Countries, so a
+ * whole board on a short laptop screen has codes of about 8 pixels: small, complete, and one
+ * zoom step from comfortable.
  */
 export function labelSize(scale: number): number {
   const s = Math.max(scale, 0.05);
-  const px = 9.6 * (s / READABLE_SCALE) ** 0.4;
+  const px = 10 * (s / READABLE_SCALE) ** 0.4;
   return clampNumber(px / s, 6, 16);
 }
 
