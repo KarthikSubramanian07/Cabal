@@ -1,6 +1,6 @@
 # ADR 0005: Durable Object SQLite per game, D1 for cross-game data
 
-Status: accepted (2026-09-15)
+Status: accepted (2026-09-15). The D1 half is superseded by [ADR 0009](0009-registry-durable-object-instead-of-d1.md): cross-game data lives in a `Registry` Durable Object, because the account is at its D1 database limit. The per-game half stands.
 
 ## Decision
 
