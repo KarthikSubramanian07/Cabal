@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * Post-Vite emit: trust pages, markdown siblings, llms.txt, and Pages _worker.js
- * for Accept negotiation + real 404s.
+ * Post-Vite emit: trust pages, markdown siblings, llms.txt, Pages _worker.js for Accept
+ * negotiation + real 404s, and the service worker `sw.js` with this build's precache list.
  */
-import { mkdirSync, readFileSync, writeFileSync, copyFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync, copyFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
@@ -379,7 +380,7 @@ function writeSitemap() {
   );
 }
 
-async function bundleWorker() {
+function loadEsbuild() {
   // Resolve esbuild from wrangler or vite's dependency tree.
   let esbuild;
   const candidates = [
@@ -406,6 +407,10 @@ async function bundleWorker() {
     }
   }
 
+  return esbuild;
+}
+
+async function bundleWorker(esbuild) {
   const entry = join(root, "worker/entry.ts");
   await esbuild.build({
     entryPoints: [entry],
@@ -418,6 +423,45 @@ async function bundleWorker() {
   });
 }
 
+/** Unhashed files the shell needs offline; keep in step with SHELL_FILES in src/sw/policy.ts. */
+const SHELL_FILES = ["/favicon.svg", "/site.webmanifest", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"];
+
+/**
+ * What the service worker stores at install: the app shell exactly as built, the unhashed files it
+ * needs offline, and every hashed file under /assets (code, styles, the engine, the fonts).
+ */
+export function precacheList(distDir) {
+  const assets = readdirSync(join(distDir, "assets"))
+    .filter((f) => /\.(?:js|css|wasm|woff2)$/.test(f))
+    .sort()
+    .map((f) => `/assets/${f}`);
+  const shell = SHELL_FILES.filter((f) => existsSync(join(distDir, f.slice(1))));
+  return ["/index.html", ...shell, ...assets];
+}
+
+/**
+ * The version is a hash of every precached file's bytes, so any change to what the worker would
+ * serve offline ships a byte-different sw.js, and browsers install it and offer the update.
+ */
+async function bundleServiceWorker(esbuild) {
+  const precache = precacheList(dist);
+  const hash = createHash("sha256");
+  for (const path of precache) hash.update(path).update(readFileSync(join(dist, path.slice(1))));
+  const version = hash.digest("hex").slice(0, 16);
+  await esbuild.build({
+    entryPoints: [join(root, "src/sw/worker.ts")],
+    outfile: join(dist, "sw.js"),
+    bundle: true,
+    format: "iife",
+    platform: "browser",
+    target: "es2022",
+    minify: true,
+    define: { __CABAL_SW__: JSON.stringify({ version, precache }) },
+    logLevel: "warning",
+  });
+  return { version, files: precache.length };
+}
+
 async function main() {
   if (!existsSync(join(dist, "index.html"))) {
     throw new Error("dist/index.html missing; run vite build first");
@@ -428,8 +472,10 @@ async function main() {
   writeLlms();
   writeSitemap();
   enrichIndexHtml();
-  await bundleWorker();
-  console.log("emit-agent-site: wrote trust pages, markdown siblings, llms.txt, _worker.js");
+  const esbuild = loadEsbuild();
+  await bundleWorker(esbuild);
+  const sw = await bundleServiceWorker(esbuild);
+  console.log(`emit-agent-site: wrote trust pages, markdown siblings, llms.txt, _worker.js, sw.js (build ${sw.version}, ${sw.files} files precached)`);
 }
 
 // Run as a script (the build); imported for `renderTrustPage` by the dev server.
