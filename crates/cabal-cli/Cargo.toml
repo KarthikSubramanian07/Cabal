@@ -18,3 +18,4 @@ cabal-bot = { path = "../cabal-bot" }
 rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+indexmap = { version = "2", features = ["serde"] }

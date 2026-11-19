@@ -31,11 +31,10 @@ struct Convoys {
 }
 
 impl Convoys {
-    fn new(map: &Map, position: &Position, seas: &BTreeSet<ProvinceId>, power: Power) -> Self {
+    /// `convoys`: some unit being enumerated is a fleet at sea, so the per-fleet
+    /// route tables are needed as well as the destinations.
+    fn new(map: &Map, position: &Position, seas: &BTreeSet<ProvinceId>, convoys: bool) -> Self {
         let n = map.provinces().len();
-        let convoys = position
-            .units_of(power)
-            .any(|u| u.kind == UnitKind::Fleet && map.is_sea(u.province()));
         let mut dests = vec![None; n];
         let mut routes = vec![None; n];
         if seas.is_empty() {
@@ -95,99 +94,190 @@ fn can_reach(map: &Map, convoys: &Convoys, unit: &Unit, p: ProvinceId) -> bool {
         || (unit.kind == UnitKind::Army && convoys.possible(unit.province(), p))
 }
 
+fn at_sea(map: &Map, unit: &Unit) -> bool {
+    unit.kind == UnitKind::Fleet && map.is_sea(unit.province())
+}
+
 /// All legal movement orders for every unit of `power`, keyed by the unit's province.
+///
+/// Asking for every power in turn repeats the convoy search each time; use
+/// [`legal_movement_all`] when the whole board is wanted.
 pub fn legal_movement(
     map: &Map,
     position: &Position,
     power: Power,
 ) -> BTreeMap<ProvinceId, Vec<Order>> {
     let seas = fleet_seas(map, position);
-    let convoys = Convoys::new(map, position, &seas, power);
-    let mut out = BTreeMap::new();
-    for unit in position.units_of(power) {
-        let mut orders = vec![Order {
+    let convoys = position.units_of(power).any(|u| at_sea(map, u));
+    let convoys = Convoys::new(map, position, &seas, convoys);
+    position
+        .units_of(power)
+        .map(|unit| (unit.province(), unit_orders(map, position, &convoys, unit)))
+        .collect()
+}
+
+/// All legal movement orders for every unit on the board, keyed by the unit's
+/// province. Convoy reachability does not depend on who asks, so it is searched
+/// once for all seven powers: on a fleet-heavy board this is several times
+/// faster than calling [`legal_movement`] per power, with identical lists.
+pub fn legal_movement_all(map: &Map, position: &Position) -> BTreeMap<ProvinceId, Vec<Order>> {
+    let seas = fleet_seas(map, position);
+    let convoys = Convoys::new(map, position, &seas, !seas.is_empty());
+    position
+        .units
+        .iter()
+        .map(|unit| (unit.province(), unit_orders(map, position, &convoys, unit)))
+        .collect()
+}
+
+/// All legal movement orders for the unit in `province`; empty when there is none.
+/// The list a click-to-order interface needs for the unit just selected.
+pub fn legal_movement_for(map: &Map, position: &Position, province: ProvinceId) -> Vec<Order> {
+    let Some(unit) = position.unit_at(province) else {
+        return Vec::new();
+    };
+    let seas = fleet_seas(map, position);
+    let convoys = Convoys::new(map, position, &seas, at_sea(map, unit));
+    unit_orders(map, position, &convoys, unit)
+}
+
+/// The legal movement orders of one unit as data rather than a list of orders:
+/// what a board highlights when the unit is picked up. Nothing here is text.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct UnitOptions {
+    pub unit: Unit,
+    /// Destinations, each with whether the move goes by convoy. A region names
+    /// a coast only where the province has more than one.
+    pub moves: Vec<(Region, bool)>,
+    /// Provinces whose unit this one may support in place.
+    pub support_holds: Vec<ProvinceId>,
+    /// `(unit, destination)`: moves by other units this one may support.
+    pub support_moves: Vec<(ProvinceId, ProvinceId)>,
+    /// `(army, destination)`: convoys this fleet may be part of.
+    pub convoys: Vec<(ProvinceId, ProvinceId)>,
+}
+
+impl UnitOptions {
+    /// Group the legal orders of `unit` (from [`legal_movement_all`]) by kind.
+    pub fn from_orders(unit: Unit, orders: &[Order]) -> UnitOptions {
+        let mut out = UnitOptions {
+            unit,
+            moves: Vec::new(),
+            support_holds: Vec::new(),
+            support_moves: Vec::new(),
+            convoys: Vec::new(),
+        };
+        for o in orders {
+            match o.command {
+                Command::Hold => {}
+                Command::Move {
+                    dest,
+                    coast,
+                    via_convoy,
+                } => out.moves.push((Region::new(dest, coast), via_convoy)),
+                Command::SupportHold { target } => out.support_holds.push(target),
+                Command::SupportMove { target, dest, .. } => out.support_moves.push((target, dest)),
+                Command::Convoy { army, dest } => out.convoys.push((army, dest)),
+            }
+        }
+        out
+    }
+}
+
+/// [`legal_movement_all`] as [`UnitOptions`], one per unit in board order.
+pub fn movement_options(map: &Map, position: &Position) -> Vec<UnitOptions> {
+    let all = legal_movement_all(map, position);
+    position
+        .units
+        .iter()
+        .map(|u| UnitOptions::from_orders(*u, &all[&u.province()]))
+        .collect()
+}
+
+/// Every legal movement order of one unit, given the board's convoy tables.
+fn unit_orders(map: &Map, position: &Position, convoys: &Convoys, unit: &Unit) -> Vec<Order> {
+    let power = unit.power;
+    let mut orders = vec![Order {
+        power,
+        unit: unit.province(),
+        command: Command::Hold,
+    }];
+    // moves
+    for (r, via) in destinations(map, convoys, unit) {
+        let coast = if map.province(r.province).coasts.is_empty() {
+            None
+        } else {
+            r.coast
+        };
+        orders.push(Order {
             power,
             unit: unit.province(),
-            command: Command::Hold,
-        }];
-        // moves
-        for (r, via) in destinations(map, &convoys, unit) {
-            let coast = if map.province(r.province).coasts.is_empty() {
-                None
-            } else {
-                r.coast
-            };
-            orders.push(Order {
-                power,
-                unit: unit.province(),
-                command: Command::Move {
-                    dest: r.province,
-                    coast,
-                    via_convoy: via,
-                },
-            });
-        }
-        // supports: any province this unit could move to directly
-        let mut targets: Vec<ProvinceId> = map
-            .reachable(unit.region, unit.kind)
-            .map(|r| r.province)
-            .collect();
-        targets.sort();
-        targets.dedup();
-        for p in targets {
-            if let Some(occ) = position.unit_at(p) {
-                if occ.province() != unit.province() {
-                    orders.push(Order {
-                        power,
-                        unit: unit.province(),
-                        command: Command::SupportHold { target: p },
-                    });
-                }
+            command: Command::Move {
+                dest: r.province,
+                coast,
+                via_convoy: via,
+            },
+        });
+    }
+    // supports: any province this unit could move to directly
+    let mut targets: Vec<ProvinceId> = map
+        .reachable(unit.region, unit.kind)
+        .map(|r| r.province)
+        .collect();
+    targets.sort_unstable();
+    targets.dedup();
+    for p in targets {
+        if let Some(occ) = position.unit_at(p) {
+            if occ.province() != unit.province() {
+                orders.push(Order {
+                    power,
+                    unit: unit.province(),
+                    command: Command::SupportHold { target: p },
+                });
             }
-            for other in &position.units {
-                if other.province() == unit.province() || other.province() == p {
-                    continue;
-                }
-                if can_reach(map, &convoys, other, p) {
+        }
+        for other in &position.units {
+            if other.province() == unit.province() || other.province() == p {
+                continue;
+            }
+            if can_reach(map, convoys, other, p) {
+                orders.push(Order {
+                    power,
+                    unit: unit.province(),
+                    command: Command::SupportMove {
+                        target: other.province(),
+                        dest: p,
+                        coast: None,
+                    },
+                });
+            }
+        }
+    }
+    // convoys
+    if at_sea(map, unit) {
+        for army in position
+            .units
+            .iter()
+            .filter(|a| a.kind == UnitKind::Army && map.is_coastal(a.province()))
+        {
+            for dest in map.province_ids() {
+                if dest != army.province()
+                    && map.is_coastal(dest)
+                    && convoys.on_route(army.province(), dest, unit.province())
+                {
                     orders.push(Order {
                         power,
                         unit: unit.province(),
-                        command: Command::SupportMove {
-                            target: other.province(),
-                            dest: p,
-                            coast: None,
+                        command: Command::Convoy {
+                            army: army.province(),
+                            dest,
                         },
                     });
                 }
             }
         }
-        // convoys
-        if unit.kind == UnitKind::Fleet && map.is_sea(unit.province()) {
-            for army in position
-                .units
-                .iter()
-                .filter(|a| a.kind == UnitKind::Army && map.is_coastal(a.province()))
-            {
-                for dest in map.province_ids() {
-                    if dest != army.province()
-                        && map.is_coastal(dest)
-                        && convoys.on_route(army.province(), dest, unit.province())
-                    {
-                        orders.push(Order {
-                            power,
-                            unit: unit.province(),
-                            command: Command::Convoy {
-                                army: army.province(),
-                                dest,
-                            },
-                        });
-                    }
-                }
-            }
-        }
-        out.insert(unit.province(), orders);
     }
-    out
+    orders
 }
 
 /// All legal retreat orders for every dislodged unit of `power`.
@@ -369,6 +459,80 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The shared search must give every power exactly its own list.
+    fn assert_shared_search_agrees(map: &Map, pos: &Position) {
+        let mut per_power = BTreeMap::new();
+        for power in map.power_ids() {
+            per_power.extend(legal_movement(map, pos, power));
+        }
+        let all = legal_movement_all(map, pos);
+        assert_eq!(all, per_power);
+        for unit in &pos.units {
+            let orders = &all[&unit.province()];
+            assert_eq!(&legal_movement_for(map, pos, unit.province()), orders);
+            let options = UnitOptions::from_orders(*unit, orders);
+            // one hold plus every option is every order
+            assert_eq!(
+                1 + options.moves.len()
+                    + options.support_holds.len()
+                    + options.support_moves.len()
+                    + options.convoys.len(),
+                orders.len()
+            );
+        }
+        assert_eq!(movement_options(map, pos).len(), pos.units.len());
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(
+            std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
+        ))]
+
+        #[test]
+        fn prop_shared_convoy_search_matches_per_power(pos in arb_crowded_position()) {
+            assert_shared_search_agrees(Map::standard(), &pos);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(
+            std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
+        ))]
+
+        /// The batch formatter writes exactly what `order_text` writes.
+        #[test]
+        fn prop_batch_order_text_matches_order_text(pos in arb_crowded_position()) {
+            let map = Map::standard();
+            let texts = crate::text::OrderTexts::new(map, &pos);
+            for orders in legal_movement_all(map, &pos).values() {
+                for o in orders {
+                    prop_assert_eq!(texts.order(o), crate::text::order_text(map, &pos, o));
+                }
+            }
+            // orders that name empty provinces and coasts, legal or not
+            for unit in map.province_ids().step_by(7) {
+                for dest in map.province_ids().step_by(5) {
+                    for command in [
+                        Command::Move { dest, coast: Some(crate::geo::Coast::South), via_convoy: true },
+                        Command::SupportHold { target: dest },
+                        Command::SupportMove { target: dest, dest: unit, coast: Some(crate::geo::Coast::North) },
+                        Command::Convoy { army: dest, dest: unit },
+                    ] {
+                        let o = Order { power: Power(0), unit, command };
+                        prop_assert_eq!(texts.order(&o), crate::text::order_text(map, &pos, &o));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shared_search_agrees_at_the_opening() {
+        let map = Map::standard();
+        assert_shared_search_agrees(map, &Position::initial(map));
+        assert!(legal_movement_for(map, &Position::initial(map), ProvinceId(1)).is_empty());
     }
 
     #[test]

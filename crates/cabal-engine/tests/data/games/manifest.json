@@ -1,0 +1,413 @@
+{
+  "about": "Provenance of every saved game under tests/data/games. Checked by tests/replay.rs; see README.md.",
+  "games": [
+    {
+      "file": "generated/opening_1901.json",
+      "tier": "generated",
+      "source": "scripted: two movement phases with bounces",
+      "engine": "0.1.0",
+      "phases": 2,
+      "covers": [
+        "bounce",
+        "split_coast"
+      ]
+    },
+    {
+      "file": "generated/standoff_retreats.json",
+      "tier": "generated",
+      "source": "scripted: custom start; both bouncing units dislodged, retreats collide",
+      "engine": "0.1.0",
+      "phases": 3,
+      "covers": [
+        "bounce",
+        "dislodgement",
+        "elimination",
+        "retreat_bounce",
+        "standoff",
+        "support"
+      ]
+    },
+    {
+      "file": "generated/convoy_and_coasts.json",
+      "tier": "generated",
+      "source": "scripted: convoy, split coasts, a coastal build, a waive",
+      "engine": "0.1.0",
+      "phases": 4,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "split_coast",
+        "support",
+        "waive"
+      ]
+    },
+    {
+      "file": "generated/pledges_and_draw.json",
+      "tier": "generated",
+      "source": "scripted opening with press, a kept and a broken seal; seed 1901 for 9 phases; draw",
+      "engine": "0.1.0",
+      "phases": 12,
+      "covers": [
+        "bounce",
+        "build",
+        "civil_disorder",
+        "draw",
+        "pledges",
+        "press",
+        "split_coast",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "generated/civil_disorder_1971.json",
+      "tier": "generated",
+      "source": "seeded: 1971 rulebook, seed 1, 40 phases",
+      "engine": "0.1.0",
+      "phases": 40,
+      "covers": [
+        "bounce",
+        "build",
+        "civil_disorder",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "retreat",
+        "rulebook:1971",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "generated/short_victory_solo.json",
+      "tier": "generated",
+      "source": "seeded: victory at 7 centres, seed 0, played to the solo",
+      "engine": "0.1.0",
+      "phases": 20,
+      "covers": [
+        "bounce",
+        "build",
+        "disband",
+        "short_victory",
+        "solo",
+        "split_coast",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "generated/duel_build_anywhere.json",
+      "tier": "generated",
+      "source": "seeded: duel map, seed 0, played to the solo",
+      "engine": "0.1.0",
+      "phases": 6,
+      "covers": [
+        "bounce",
+        "build_anywhere",
+        "map:duel",
+        "short_victory",
+        "solo"
+      ]
+    },
+    {
+      "file": "generated/dptg_with_press.json",
+      "tier": "generated",
+      "source": "seeded: DPTG rulebook, random press and pledges, seed 0, 40 phases",
+      "engine": "0.1.0",
+      "phases": 40,
+      "covers": [
+        "bounce",
+        "build",
+        "disband",
+        "dislodgement",
+        "pledges",
+        "press",
+        "retreat",
+        "retreat_disband",
+        "rulebook:dptg",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "generated/elimination_1982.json",
+      "tier": "generated",
+      "source": "seeded: 1982 rulebook, seed 0, 70 phases",
+      "engine": "0.1.0",
+      "phases": 70,
+      "covers": [
+        "bounce",
+        "build",
+        "civil_disorder",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "elimination",
+        "retreat",
+        "rulebook:1982",
+        "split_coast",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "generated/retreat_start.json",
+      "tier": "generated",
+      "source": "scripted: standoff_retreats cut to begin in its retreat phase",
+      "engine": "0.1.0",
+      "phases": 2,
+      "covers": [
+        "bounce",
+        "elimination",
+        "retreat_bounce",
+        "standoff",
+        "starts_in_retreat"
+      ]
+    },
+    {
+      "file": "external/cicero_433761.json",
+      "tier": "external",
+      "source": "https://github.com/facebookresearch/diplomacy_cicero/blob/main/data/cicero_redacted_games/game_433761_ENGLAND_AG.json (states, orders and results as published; messages and logs removed; rules set to 1982, the edition whose civil disorder rule matches the recorded Winter 1908 removals)",
+      "licence": "MIT, Copyright (c) Meta, Inc. and its affiliates",
+      "phases": 35,
+      "covers": [
+        "bounce",
+        "build",
+        "civil_disorder",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "elimination",
+        "retreat",
+        "retreat_bounce",
+        "retreat_disband",
+        "rulebook:1982",
+        "split_coast",
+        "support",
+        "support_cut_or_void"
+      ]
+    },
+    {
+      "file": "recorded/sandbox_italy_takes_trieste.json",
+      "tier": "recorded",
+      "source": "played by hand in the web sandbox (driven through the real page with Playwright), exported from its autosave: Italy takes Trieste with support, a retreat, builds, then a four-way bounce",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 5,
+      "covers": [
+        "bounce",
+        "build",
+        "dislodgement",
+        "retreat",
+        "split_coast",
+        "support"
+      ]
+    },
+    {
+      "file": "recorded/sandbox_convoy_and_burgundy.json",
+      "tier": "recorded",
+      "source": "played by hand in the web sandbox (driven through the real page with Playwright), exported from its autosave: a convoy to Norway, supported moves, builds, bounces over Burgundy and Sweden",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 4,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "split_coast",
+        "support"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_0.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 0 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 17,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_1.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 1 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 18,
+      "covers": [
+        "bounce",
+        "build",
+        "disband",
+        "dislodgement",
+        "draw",
+        "elimination",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_2.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 2 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 19,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_3.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 3 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 17,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_4.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 4 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 17,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_5.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 5 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 18,
+      "covers": [
+        "bounce",
+        "build",
+        "disband",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_6.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 6 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 17,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "disband",
+        "dislodged_by_convoy",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
+    },
+    {
+      "file": "recorded/arena_1901_7.json",
+      "tier": "recorded",
+      "source": "cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR: game 7 of the run, seven heuristic bots at mixed levels",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 16,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "draw",
+        "retreat",
+        "retreat_disband",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void"
+      ]
+    }
+  ]
+}
