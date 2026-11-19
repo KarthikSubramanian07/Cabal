@@ -14,7 +14,7 @@ import {
 } from "react";
 import { parseUnit } from "../game/notation.js";
 import { type UnitIds, unitKey } from "../game/unitIds.js";
-import { type Choreography, type Frame, type ResolutionInput, choreograph, standAside } from "../motion/choreography.js";
+import { type Choreography, type Frame, type ResolutionInput, choreograph, standAside, trackAt } from "../motion/choreography.js";
 import { useReducedMotion } from "../motion/useReducedMotion.js";
 import { deck, useSound } from "../sound/deck.js";
 import { type MarkTiming, resultsTiming } from "./motion.js";
@@ -453,7 +453,7 @@ function Highlight({
 }) {
   const ring = markSizes(r).ring + 3;
   const at = (code: string): Point | null => {
-    const moved = plan?.units.find((u) => parseUnit(u.unit)?.province === code && !u.gone);
+    const moved = plan ? trackAt(plan, code) : undefined;
     if (moved) {
       const p = regionPoint(board, moved.region);
       return moved.dislodged ? standAside(p, r) : p;

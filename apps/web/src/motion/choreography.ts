@@ -69,6 +69,8 @@ export interface UnitTrack {
   region: string;
   /** Drawn as dislodged once the phase has played. */
   dislodged: boolean;
+  /** It stood dislodged as the phase began: a retreat phase's units, the ones its orders are for. */
+  wasDislodged: boolean;
   /** When a piece that ends dislodged turns so (its dashed vermilion outline). */
   turnsAt?: number;
   /** The piece leaves the board (disbanded or destroyed) and is hidden at the end. */
@@ -123,6 +125,18 @@ export interface Geometry {
 /** Where a dislodged piece stands: up and to the right of the province it lost. */
 export function standAside(at: Point, r: number): Point {
   return [at[0] + r * 1.15, at[1] - r * 1.15];
+}
+
+/**
+ * The piece an order's province names, for ringing it on the board. Before a retreat phase a
+ * province can hold two units, the one that took it and the one dislodged from it; every order
+ * and result of that phase is the dislodged one's, so it wins, even once it is gone (it is then
+ * ringed where it stood). Otherwise the one piece that began the phase there.
+ */
+export function trackAt(plan: Pick<Choreography, "units">, province: string): UnitTrack | undefined {
+  const here = plan.units.filter((u) => parseUnit(u.unit)?.province === province);
+  if (here.length <= 1) return here[0];
+  return here.find((u) => u.wasDislodged) ?? here.find((u) => !u.gone) ?? here[0];
 }
 
 /** Which beat a drawn mark belongs to. */
@@ -353,6 +367,7 @@ function track(piece: Piece, later: Piece, role: Role, end: Point, frames: Frame
     end,
     region: gone ? piece.region : later.region,
     dislodged: later.dislodged,
+    wasDislodged: piece.dislodged,
     gone,
     role,
     frames,

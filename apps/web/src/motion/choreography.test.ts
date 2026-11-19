@@ -14,6 +14,7 @@ import {
   choreograph,
   resolutionLength,
   standAside,
+  trackAt,
 } from "./choreography.js";
 
 beforeAll(async () => {
@@ -150,6 +151,25 @@ describe("retreats and adjustments", () => {
     const gone = c.units.filter((u) => u.gone);
     expect(gone).toHaveLength(1);
     expect(gone[0]!.frames.at(-1)!.opacity).toBe(0);
+  });
+
+  it("names the dislodged unit, not the one that took its place, for a province both stood in", () => {
+    for (const orders of [{}, { GERMANY: ["A BUR R MUN"] }]) {
+      const g = dislodged();
+      // Before this phase Burgundy holds the French army that took it and the German one beaten out.
+      const { input, marks } = phase(orders, g);
+      const c = choreograph(input, marks, { point, r });
+      const picked = trackAt(c, "BUR")!;
+      expect(picked.power).toBe("GERMANY");
+      expect(picked.wasDislodged).toBe(true);
+    }
+  });
+
+  it("names the one unit that began a movement phase in a province", () => {
+    const { input, marks } = phase({ FRANCE: ["A PAR - BUR"], GERMANY: ["A MUN - RUH"] });
+    const c = choreograph(input, marks, { point, r });
+    expect(trackAt(c, "PAR")?.power).toBe("FRANCE");
+    expect(trackAt(c, "BUR")).toBeUndefined();
   });
 
   it("stamps in a new build", () => {
