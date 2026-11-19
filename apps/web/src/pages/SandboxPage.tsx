@@ -607,6 +607,11 @@ function Table({ sb }: { sb: Sandbox }) {
     announce("The sketched orders are now your orders.");
   };
 
+  /** The power table counts the orders on the table: the sketch's while one is open. */
+  const tablePowers = useMemo(
+    () => (sketching ? sb.powers.map((p) => ({ ...p, given: Object.keys(whatIf.orders[p.power] ?? {}).length })) : sb.powers),
+    [sketching, sb.powers, whatIf.orders],
+  );
   const selectedProvince = draft.step === "idle" ? null : parseUnit(draft.unit)?.province ?? null;
   const activeSummary = sb.powers.find((p) => p.power === active);
   const orderableUnits = Object.keys(sb.legal[active] ?? {}).filter((u) => u !== "");
@@ -1018,7 +1023,7 @@ function Table({ sb }: { sb: Sandbox }) {
                 ) : null}
                 <section>
                   <PowerTable
-                    powers={sb.powers}
+                    powers={tablePowers}
                     active={active}
                     kind={sb.kind}
                     onSelect={(power) => {
