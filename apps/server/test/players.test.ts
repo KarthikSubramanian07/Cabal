@@ -1,6 +1,6 @@
 /** Guest identity: accounts, sessions, handles, recovery, and seats bound to players. */
 import { describe, expect, it } from "vitest";
-import { MeResponse, MyGamesResponse, PlayerProfile, PlayerSession } from "@cabal/protocol";
+import { type GamePlayerRecord, MeResponse, MyGamesResponse, PlayerProfile, PlayerSession } from "@cabal/protocol";
 import { RENAME_COOLDOWN_MS } from "../src/handles.js";
 import { SELF } from "cloudflare:test";
 import { Client, call, create, createAs, freshHandle, inRoom, join, joinAs, joinRaw, newPlayer, nextIp, serverEnv, start, summary, until } from "./helpers.js";
@@ -197,6 +197,9 @@ describe("seats bound to players", () => {
     await b.next("orders.ack");
     b.send({ t: "ready", p: { phase: "S1901M", ready: true } });
     await a.next("pledge.receipt");
+    // The room's record keeps Ann's kept pledge for her stint...
+    const stints = await inRoom(game.gameId, (room) => (room as unknown as { playersRecord(): GamePlayerRecord[] }).playersRecord());
+    expect(stints.find((p) => p.playerId === ann.player.id)!.ledger).toEqual({ kept: 1, broken: 0, void: 0 });
     a.send({ t: "vote", p: { kind: "draw", value: true } });
     b.send({ t: "vote", p: { kind: "draw", value: true } });
     await a.next("finished");
@@ -206,14 +209,15 @@ describe("seats bound to players", () => {
       return r === undefined && indexed.results.length === 7 ? indexed.results : null;
     }, "the game's stints in the index");
     const annRow = record.find((r) => r.power === game.power)!;
-    expect(annRow).toMatchObject({ player_id: ann.player.id, kind: "human", status: "finished", phases_due: 1, phases_on_time: 1, kept: 1, broken: 0 });
+    // ...but an unlisted one-phase game of two players is below the rated bar, so it reaches no ledger.
+    expect(annRow).toMatchObject({ player_id: ann.player.id, kind: "human", status: "finished", phases_due: 1, phases_on_time: 1, kept: 0, broken: 0 });
     expect(record.find((r) => r.power === bobSeat.power)).toMatchObject({ player_id: bob.player.id, phases_due: 1, phases_on_time: 1, kept: 0 });
     expect(record.filter((r) => r.kind === "ai")).toHaveLength(5);
     // Too short and too small a table to be rated, but it is on both records.
     const me = MeResponse.parse(await (await call("/api/me", ann.secret)).json());
     expect(me.rating).toBeNull();
     expect(me.games.played).toBe(1);
-    expect(me.trust).toMatchObject({ kept: 1, broken: 0 });
+    expect(me.trust).toMatchObject({ kept: 0, broken: 0 });
     expect(me.reliability).toMatchObject({ phasesDue: 1, phasesOnTime: 1, missed: 0 });
     // Unlisted: the owner sees the game, a stranger sees that a game was played but not its code.
     expect(me.recent[0]).toMatchObject({ gameId: game.gameId, result: "draw", ratingDelta: null });
