@@ -705,6 +705,8 @@ export function Board({
   settled.current = onSettled;
   const rateRef = useRef(rate);
   rateRef.current = rate;
+  /** When a phase was last left before it had finished: stepping fast plays only a tick each. */
+  const leftEarly = useRef(Number.NEGATIVE_INFINITY);
   const unitsDrawn = measuredFrame !== null && pass >= 3;
   useLayoutEffect(() => {
     const svg = liveRef.current;
@@ -735,7 +737,9 @@ export function Board({
       const t = mine[0]?.currentTime;
       return typeof t === "number" ? t : base + (performance.now() - since) * speed;
     };
-    const cues = plan.cues;
+    // Stepping through phases faster than they play: a telegraph tick each, not the whole score.
+    const hurried = performance.now() - leftEarly.current < 600;
+    const cues = hurried ? [{ at: 0, sound: "tick" as const }] : plan.cues;
     let silence = sound ? deck.schedule(cues, { rate: speed }) : () => {};
 
     let done = false;
@@ -791,6 +795,7 @@ export function Board({
     setSettledKey(null);
     setAnimating(plan.total > 0);
     return () => {
+      if (!done) leftEarly.current = performance.now();
       done = true;
       silence();
       for (const a of mine) a.cancel();
