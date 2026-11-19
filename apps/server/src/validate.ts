@@ -5,9 +5,10 @@
  *
  * The verdicts are derived from the engine's own legal-order menu for the position, which lists
  * every hold, move (by land, sea or convoy), support and convoy each unit may be given, every
- * retreat of each dislodged unit, and every build or disband. An order is legal exactly when the
- * menu holds it. If the engine grows a dedicated validator, this function is the only caller to
- * change.
+ * retreat of each dislodged unit, and every build or disband. A movement or adjustment order is
+ * legal exactly when the menu holds its text; a retreat is legal when the menu holds a retreat
+ * from the same province to the same place (see `legalOrders`). If the engine grows a dedicated
+ * validator, `legalOrders` is the only function to change.
  */
 import type { OrderVerdict } from "@cabal/protocol";
 import type { Game } from "./engine.js";
@@ -29,23 +30,91 @@ function unitOf(order: string): string | null {
 const province = (unit: string) => unit.slice(2, 5);
 
 /**
- * @param canonical parses one order under the seat's own power, or throws with the reason.
+ * A retreat or disband reduced to what identifies it: the province the unit was dislodged from and
+ * where it goes. `A VEN R TUS` and `F VEN R TUS` are the same retreat, because a province holds one
+ * dislodged unit: the letter is decoration, and the engine's own menu has been known to print the
+ * attacker's letter there. Null when the text is not a retreat order.
  */
-export function judgeOrders(game: Game, power: string, kind: PhaseKind, texts: string[], canonical: (text: string) => string): Judgement {
+function retreatKey(order: string): { from: string; tail: string; to: string | null } | null {
+  const m = /^[AF] ([A-Z]{3})(?:\/[A-Z]{2})? (?:R ([A-Z]{3})(\/[A-Z]{2})?|D)$/.exec(order);
+  if (!m) return null;
+  return m[2] ? { from: m[1]!, tail: `R ${m[2]}${m[3] ?? ""}`, to: m[2] } : { from: m[1]!, tail: "D", to: null };
+}
+
+export interface LegalOrders {
+  /** The canonical text to put on file for a legal order, or null when the board does not allow it. */
+  resolve(order: string): string | null;
+  /** The unit (the menu's key) a resolved order belongs to. */
+  unitFor(resolved: string): string;
+  /** Units the power may order this phase. */
+  units: string[];
+  allowance: number;
+}
+
+/**
+ * Everything `power` may legally order in the current phase, as a lookup from order text.
+ *
+ * Movement and adjustment orders are matched on their canonical text. Retreats are matched on the
+ * dislodged unit's province and its destination, and come back spelled with the unit as the board
+ * names it (`state.retreats`), whatever letter the caller or the engine's menu used.
+ *
+ * @param canonical parses one order under the power, or throws with the reason.
+ */
+export function legalOrders(game: Game, power: string, kind: PhaseKind, canonical: (text: string) => string): LegalOrders {
   const legal = game.legal(power);
-  /** Canonical spelling of every legal order -> the menu key (unit) it belongs to. */
-  const menu = new Map<string, string>();
+  /** Order text (or retreat key) -> the canonical order and the menu key (unit) it belongs to. */
+  const menu = new Map<string, { order: string; unit: string }>();
   for (const [unit, options] of Object.entries(legal.by_unit)) {
     for (const option of options) {
-      menu.set(option, unit);
+      if (kind === "R") {
+        const key = retreatKey(option);
+        if (!key) continue;
+        const entry = { order: `${unit} ${key.tail}`, unit };
+        menu.set(`${key.from} ${key.tail}`, entry);
+        // A coast the board makes unambiguous may be left out: `F MAO R SPA` for `F MAO R SPA/SC`.
+        if (key.to !== null && key.tail !== `R ${key.to}`) {
+          const bare = `${key.from} R ${key.to}`;
+          menu.set(bare, menu.has(bare) && menu.get(bare)!.order !== entry.order ? { order: "", unit } : entry);
+        }
+        continue;
+      }
+      menu.set(option, { order: option, unit });
       try {
-        menu.set(canonical(option), unit);
+        const spelled = canonical(option);
+        if (!menu.has(spelled)) menu.set(spelled, { order: spelled, unit });
       } catch {
         // the menu's own spelling is already in the map
       }
     }
   }
-  const units = Object.keys(legal.by_unit).filter((unit) => unit !== "");
+  const owner = new Map<string, string>();
+  const resolve = (order: string): string | null => {
+    let found: { order: string; unit: string } | undefined;
+    if (kind === "R") {
+      const key = retreatKey(order);
+      found = key ? menu.get(`${key.from} ${key.tail}`) : undefined;
+      if (found?.order === "") found = undefined; // two coasts of one province are open: say which
+    } else {
+      found = menu.get(order);
+    }
+    if (!found) return null;
+    owner.set(found.order, found.unit);
+    return found.order;
+  };
+  return {
+    resolve,
+    unitFor: (resolved) => owner.get(resolved) ?? unitOf(resolved) ?? resolved,
+    units: Object.keys(legal.by_unit).filter((unit) => unit !== ""),
+    allowance: legal.allowance,
+  };
+}
+
+/**
+ * @param canonical parses one order under the seat's own power, or throws with the reason.
+ */
+export function judgeOrders(game: Game, power: string, kind: PhaseKind, texts: string[], canonical: (text: string) => string): Judgement {
+  const legal = legalOrders(game, power, kind, canonical);
+  const units = legal.units;
 
   const verdicts: OrderVerdict[] = [];
   /** Index into `verdicts` of the accepted order for each unit (or each built province). */
@@ -73,7 +142,8 @@ export function judgeOrders(game: Game, power: string, kind: PhaseKind, texts: s
         // judged below as written
       }
     }
-    if (!menu.has(order)) {
+    const resolved = legal.resolve(order);
+    if (resolved === null) {
       const unit = unitOf(order);
       const known = unit !== null && (kind === "A" ? true : units.some((u) => province(u) === province(unit)));
       verdicts.push(
@@ -84,10 +154,11 @@ export function judgeOrders(game: Game, power: string, kind: PhaseKind, texts: s
       continue;
     }
     // One order per unit; in an adjustment phase, one per province. The last one sent stands.
-    const key = kind === "A" ? (unitOf(order) ? province(unitOf(order)!) : `WAIVE#${waives++}`) : menu.get(order)!;
+    order = resolved;
+    const key = kind === "A" ? (unitOf(order) ? province(unitOf(order)!) : `WAIVE#${waives++}`) : legal.unitFor(order);
     const earlier = holder.get(key);
     if (earlier !== undefined) {
-      verdicts[earlier] = { ...verdicts[earlier]!, ok: false, code: "superseded", reason: `replaced by a later order for ${kind === "A" ? key : menu.get(order)}` };
+      verdicts[earlier] = { ...verdicts[earlier]!, ok: false, code: "superseded", reason: `replaced by a later order for ${key}` };
     }
     holder.set(key, verdicts.length);
     verdicts.push({ text, order, ok: true, code: "ok", reason: "" });
