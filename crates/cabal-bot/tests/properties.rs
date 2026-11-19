@@ -136,7 +136,8 @@ proptest! {
 
     /// Arbitrary boards the rules would never produce (any unit anywhere, any
     /// ownership, any phase, made-up dislodgements, powers that do not exist):
-    /// the bot must answer without panicking, and never with an illegal movement order.
+    /// the bot must answer without panicking, and with a legal, complete order set
+    /// whenever the board is on the map, whatever the phase.
     #[test]
     fn prop_never_panics_on_arbitrary_states(
         picks in prop::collection::vec((0u8..90, 0u8..9, any::<bool>(), 0usize..2), 0..40),
@@ -192,8 +193,17 @@ proptest! {
                 && state.position.owners.iter().all(|(p, q)| p.0 < n && q.0 < 7);
             if !fits || asker >= 7 {
                 prop_assert!(d.orders.is_empty(), "a state off the map gets no orders");
-            } else if kind == PhaseKind::Movement {
-                assert_sound(&state, Power(asker), &d, "arbitrary board");
+            } else {
+                // made-up dislodgements may name provinces and powers that do not exist;
+                // the bot answers those with nothing, and everything else soundly
+                let real = state.dislodged.iter().all(|x| {
+                    x.unit.province().0 < n && x.unit.power.0 < 7 && x.attacker_from.0 < n
+                });
+                if kind != PhaseKind::Retreat || real {
+                    assert_sound(&state, Power(asker), &d, "arbitrary board");
+                } else {
+                    prop_assert!(d.orders.is_empty(), "a retreat list off the map gets no orders");
+                }
             }
         }
     }
