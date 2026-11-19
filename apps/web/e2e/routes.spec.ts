@@ -36,4 +36,27 @@ test.describe("routes", () => {
     await page.goto("/g/not/a/route");
     await expect(page.getByRole("heading", { level: 1, name: "That province is not on the map." })).toBeVisible();
   });
+
+  for (const path of ["/about", "/contact", "/privacy", "/404.html"]) {
+    test(`${path} wears the app's header, wordmark and typefaces`, async ({ page }) => {
+      await page.goto(path);
+      const banner = page.getByRole("banner");
+      await expect(banner.getByRole("img", { name: "Cabal" })).toBeVisible();
+      // The same ink bar with the vermilion rule as the board's.
+      const bar = await banner.evaluate((el) => {
+        const style = getComputedStyle(el);
+        return { background: style.backgroundColor, rule: style.borderBottomColor };
+      });
+      expect(bar).toEqual({ background: "rgb(18, 17, 16)", rule: "rgb(217, 79, 48)" });
+      await expect(banner.getByRole("link", { name: "Sandbox" })).toBeVisible();
+      const heading = page.getByRole("heading", { level: 1 });
+      await expect(heading).toBeVisible();
+      // The brand faces are really loaded, not just named in a font stack.
+      await page.evaluate(() => document.fonts.ready);
+      expect(await page.evaluate(() => document.fonts.check('16px "Archivo Black"'))).toBe(true);
+      expect(await heading.evaluate((el) => getComputedStyle(el).fontFamily)).toContain("Archivo Black");
+      await banner.getByRole("link", { name: "Cabal home" }).click();
+      await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
+    });
+  }
 });

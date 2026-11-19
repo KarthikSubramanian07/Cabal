@@ -77,11 +77,33 @@ function mdToHtmlBody(markdown) {
   return out.join("\n");
 }
 
-function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHref }) {
+/** The app's stylesheet, as Vite named it: the trust pages share its tokens, fonts and top bar. */
+function appStylesheet() {
+  const html = readFileSync(join(dist, "index.html"), "utf8");
+  const href = html.match(/<link rel="stylesheet"[^>]*href="([^"]+\.css)"/)?.[1];
+  if (!href) throw new Error("dist/index.html has no stylesheet link; cannot style the trust pages");
+  return href;
+}
+
+/** The wordmark as inline SVG, from the same paths the app's <Wordmark> draws. */
+function wordmarkSvg(height = 22) {
+  const mark = JSON.parse(readFileSync(join(root, "src/brand/wordmark.json"), "utf8"));
+  const [, , w, h] = mark.viewBox.split(" ").map(Number);
+  const width = Math.round(((height * w) / h) * 100) / 100;
+  return `<svg class="wordmark" viewBox="${mark.viewBox}" width="${width}" height="${height}" role="img" aria-label="Cabal"><path fill-rule="evenodd" fill="var(--bone)" d="${mark.letters}"/><path fill-rule="evenodd" fill="var(--vermilion, #d94f30)" d="${mark.turnedA}"/></svg>`;
+}
+
+/**
+ * A static page in the app's frame: the same ink top bar and wordmark, the same footer.
+ * There is no script here, so on a phone the links sit in a row under the bar instead of
+ * behind a menu button.
+ */
+function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHref, robots }) {
   const ld = jsonLd ? `<script type="application/ld+json">\n${JSON.stringify(jsonLd, null, 2)}\n    </script>` : "";
   const mdHref =
     markdownHref ??
     (canonical.endsWith("/") ? "/index.md" : `${canonical.replace(SITE, "")}/index.md`);
+  const current = (path) => (canonical === `${SITE}${path}` ? ' aria-current="page"' : "");
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -91,48 +113,38 @@ function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHr
     <meta name="description" content="${description}" />
     <link rel="canonical" href="${canonical}" />
     <link rel="describedby" href="/llms.txt" />
-    <link rel="alternate" type="text/markdown" href="${mdHref}" />
+    <link rel="alternate" type="text/markdown" href="${mdHref}" />${robots ? `\n    <meta name="robots" content="${robots}" />` : ""}
     <meta name="theme-color" content="#121110" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <style>
-      :root { color-scheme: light; --ink:#121110; --ink-3:#5f5a53; --bone:#f4f0e6; --paper:#fbf9f4; --rule:#d3cab5; --brass-deep:#94731f; --font-ui: "Inter Tight", system-ui, sans-serif; --font-display: "Archivo Black", "Arial Black", sans-serif; }
-      * { box-sizing: border-box; }
-      body { margin:0; background:var(--bone); color:var(--ink); font-family:var(--font-ui); font-size:16px; line-height:1.55; }
-      a { color: inherit; overflow-wrap: anywhere; }
-      .wrap { max-width: 42rem; margin: 0 auto; padding: 1.25rem 1.25rem 3rem; }
-      header.site { display:flex; justify-content:space-between; gap:1rem; align-items:baseline; padding: 0.85rem 0 1.25rem; border-bottom:1px solid var(--rule); margin-bottom:1.5rem; }
-      header.site a.brand { font-family:var(--font-display); letter-spacing:0.04em; text-decoration:none; font-size:1.1rem; }
-      nav { display:flex; flex-wrap:wrap; gap:0.85rem; font-size:0.92rem; color:var(--ink-3); }
-      nav a[aria-current="page"] { color:var(--ink); text-decoration:underline; text-underline-offset:3px; }
-      h1 { font-family:var(--font-display); font-size:clamp(1.8rem, 4vw, 2.4rem); line-height:1.1; text-wrap:balance; margin:0 0 0.75rem; }
-      h2 { font-size:1.15rem; margin:1.75rem 0 0.5rem; }
-      p, li { color:var(--ink); }
-      blockquote { margin:0 0 1rem; padding:0.75rem 1rem; background:var(--paper); border:1px solid var(--rule); }
-      blockquote p { margin:0; color:var(--ink-3); }
-      ul, ol { padding-left: 1.2rem; }
-      footer { margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--rule); color:var(--ink-3); font-size:0.9rem; display:flex; flex-wrap:wrap; gap:0.75rem; }
-    </style>
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="stylesheet" href="${appStylesheet()}" />
     ${ld}
   </head>
   <body>
-    <div class="wrap">
-      <header class="site">
-        <a class="brand" href="/">CABAL</a>
-        <nav>
-          <a href="/">Sandbox</a>
-          <a href="/about"${canonical.includes("/about") ? ' aria-current="page"' : ""}>About</a>
-          <a href="/contact"${canonical.includes("/contact") ? ' aria-current="page"' : ""}>Contact</a>
-          <a href="/privacy"${canonical.includes("/privacy") ? ' aria-current="page"' : ""}>Privacy</a>
+    <div class="app" data-route="page">
+      <a class="skip-link" href="#main">Skip to the page</a>
+      <header class="topbar static">
+        <a class="brand" href="/" aria-label="Cabal home">${wordmarkSvg()}</a>
+        <nav aria-label="Site">
+          <a href="/sandbox">Sandbox</a>
+          <a href="/about"${current("/about")}>About</a>
+          <a href="/contact"${current("/contact")}>Contact</a>
+          <a href="/privacy"${current("/privacy")}>Privacy</a>
+          <a class="nav-end" href="https://github.com/KarthikSubramanian07/Cabal">GitHub</a>
         </nav>
       </header>
-      <main>
+      <main class="prose" id="main" tabindex="-1">
 ${bodyHtml}
       </main>
-      <footer>
+      <footer class="footer">
         <span>Diplomacy with receipts.</span>
-        <a href="/llms.txt">llms.txt</a>
-        <a href="https://github.com/KarthikSubramanian07/Cabal">GitHub</a>
-        <a href="https://github.com/KarthikSubramanian07/Cabal/issues">Contact</a>
+        <span class="footer-links">
+          <a href="/about">About</a>
+          <a href="/contact">Contact</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/llms.txt">llms.txt</a>
+          <a href="https://github.com/KarthikSubramanian07/Cabal">Source</a>
+        </span>
       </footer>
     </div>
   </body>
@@ -286,6 +298,7 @@ function write404() {
     bodyHtml: mdToHtmlBody(markdown),
     jsonLd: null,
     markdownHref: "/404.md",
+    robots: "noindex",
   });
   writeFileSync(join(dist, "404.html"), html);
 }
