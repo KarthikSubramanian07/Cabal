@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
 use std::sync::OnceLock;
 
+use crate::rulebook::RulebookOverrides;
 use serde::{Deserialize, Serialize};
 
 /// Index of a province in the map's province table.
@@ -120,7 +121,7 @@ pub enum SupplyCenter {
     Home(Power),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct Province {
     /// Three letter short name, lower case (`stp`).
     pub name: String,
@@ -131,7 +132,7 @@ pub struct Province {
     pub coasts: Vec<Coast>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct PowerInfo {
     /// Three letter code (`ENG`).
     pub code: String,
@@ -140,9 +141,11 @@ pub struct PowerInfo {
 }
 
 /// The board graph.
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Map {
     pub name: String,
+    /// Variant-specific rulebook settings declared by the map document.
+    pub rulebook_overrides: RulebookOverrides,
     provinces: Vec<Province>,
     powers: Vec<PowerInfo>,
     by_name: HashMap<String, ProvinceId>,
@@ -152,172 +155,426 @@ pub struct Map {
     homes: Vec<Vec<ProvinceId>>,
     /// Starting units, `(power, kind, region)`.
     start_units: Vec<(Power, UnitKind, Region)>,
+    /// Province-level fleet adjacency, row-major `[from * len + to]`: can a fleet on
+    /// any region of `from` move directly into some region of `to`? Precomputed so
+    /// convoy route searches never allocate or walk border lists.
+    fleet_adjacency: Vec<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapDocument {
+    name: String,
+    provinces: Vec<MapProvince>,
+    regions: Vec<MapRegion>,
+    borders: Vec<MapBorder>,
+    powers: Vec<PowerInfo>,
+    homes: BTreeMap<String, Vec<String>>,
+    starting_units: Vec<MapStartUnit>,
+    #[serde(default)]
+    rulebook_overrides: RulebookOverrides,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapProvince {
+    name: String,
+    full_name: String,
+    #[serde(default)]
+    supply_center: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapRegion {
+    province: String,
+    #[serde(default)]
+    coast: Option<String>,
+    terrain: Terrain,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapBorder {
+    from: String,
+    to: String,
+    terrain: Terrain,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapStartUnit {
+    power: String,
+    kind: UnitKind,
+    region: String,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum MapError {
-    #[error("malformed map data at line {line}: {msg}")]
-    Malformed { line: usize, msg: String },
+    #[error("invalid map: {0}")]
+    Invalid(String),
     #[error("unknown province {0}")]
     UnknownProvince(String),
+    #[error("invalid map JSON: {0}")]
+    Json(String),
 }
 
+/// The bundled maps as tables generated at build time (see `build.rs`).
+// The explicit path keeps the file where it is for `build.rs` too, which
+// compiles this module from another directory.
+#[cfg(cabal_generated_maps)]
+#[path = "geo/bundled.rs"]
+mod bundled;
+
+/// A map as static tables: what `build.rs` writes for each bundled map after
+/// running it through [`Map::from_json`], so nothing is parsed or validated when
+/// the engine starts.
+#[cfg_attr(not(cabal_generated_maps), allow(dead_code))]
+struct Tables {
+    name: &'static str,
+    rulebook_overrides: RulebookOverrides,
+    /// `(name, full name, terrain, supply centre, coasts)`
+    provinces: &'static [ProvinceRow],
+    /// `(code, name)`
+    powers: &'static [(&'static str, &'static str)],
+    adjacency: &'static [(Region, &'static [(Region, Terrain)])],
+    homes: &'static [&'static [ProvinceId]],
+    start_units: &'static [(Power, UnitKind, Region)],
+    /// One byte per pair, row-major, zero or one.
+    fleet_adjacency: &'static [u8],
+}
+
+type ProvinceRow = (
+    &'static str,
+    &'static str,
+    Terrain,
+    SupplyCenter,
+    &'static [Coast],
+);
+
+#[cfg(cabal_generated_maps)]
 impl Map {
-    /// The classic 1901 map, parsed once and cached for the process lifetime.
+    /// The classic 1901 map, built once from static tables and cached for the
+    /// process lifetime.
     pub fn standard() -> &'static Map {
         static MAP: OnceLock<Map> = OnceLock::new();
-        MAP.get_or_init(|| {
-            Map::from_csv(
-                "standard",
-                include_str!("../data/provinces.csv"),
-                include_str!("../data/regions.csv"),
-                include_str!("../data/borders.csv"),
-                &STANDARD_POWERS,
-                STANDARD_START,
-            )
-            .expect("bundled standard map is valid")
-        })
+        MAP.get_or_init(|| Map::from_tables(&bundled::STANDARD))
     }
 
-    /// Look up a bundled map by name. Only `standard` ships today; variant maps are data files.
+    /// Look up a bundled map by name. `standard` and the three-province `duel` test board ship today; variant maps are data files.
     pub fn by_name(name: &str) -> Option<&'static Map> {
         match name.to_ascii_lowercase().as_str() {
             "standard" | "classic" => Some(Map::standard()),
+            "duel" => {
+                static DUEL: OnceLock<Map> = OnceLock::new();
+                Some(DUEL.get_or_init(|| Map::from_tables(&bundled::DUEL)))
+            }
             _ => None,
         }
     }
 
-    /// Build a map from the three CSV tables.
-    pub fn from_csv(
-        name: &str,
-        provinces_csv: &str,
-        regions_csv: &str,
-        borders_csv: &str,
-        powers: &[(&str, &str)],
-        start: &[(&str, char, &str)],
-    ) -> Result<Map, MapError> {
-        let powers: Vec<PowerInfo> = powers
+    /// A fresh copy of the standard map, built the way [`Map::standard`] builds
+    /// its cached one. For benchmarks of the start-up cost.
+    #[doc(hidden)]
+    pub fn standard_uncached() -> Map {
+        Map::from_tables(&bundled::STANDARD)
+    }
+
+    /// Copy the generated tables into the owned form the engine works on. No
+    /// parsing and no validation: `build.rs` did both.
+    fn from_tables(t: &Tables) -> Map {
+        let provinces: Vec<Province> = t
+            .provinces
             .iter()
-            .map(|(code, name)| PowerInfo {
-                code: code.to_string(),
-                name: name.to_string(),
-            })
+            .map(
+                |&(name, full_name, terrain, supply_center, coasts)| Province {
+                    name: name.to_string(),
+                    full_name: full_name.to_string(),
+                    terrain,
+                    supply_center,
+                    coasts: coasts.to_vec(),
+                },
+            )
             .collect();
-        let power_by_code: HashMap<&str, Power> = powers
+        let by_name = provinces
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.name.clone(), ProvinceId(i as u8)))
+            .collect();
+        Map {
+            name: t.name.to_string(),
+            rulebook_overrides: t.rulebook_overrides,
+            provinces,
+            powers: t
+                .powers
+                .iter()
+                .map(|&(code, name)| PowerInfo {
+                    code: code.to_string(),
+                    name: name.to_string(),
+                })
+                .collect(),
+            by_name,
+            adjacency: t
+                .adjacency
+                .iter()
+                .map(|&(region, borders)| (region, borders.to_vec()))
+                .collect(),
+            homes: t.homes.iter().map(|h| h.to_vec()).collect(),
+            start_units: t.start_units.to_vec(),
+            fleet_adjacency: t.fleet_adjacency.iter().map(|&b| b != 0).collect(),
+        }
+    }
+}
+
+/// Only in `build.rs`, which compiles this file to turn the map documents into
+/// the tables of `bundled.rs`.
+#[cfg(not(cabal_generated_maps))]
+impl Map {
+    /// Rust source for a `Tables` constant named `constant` describing this map.
+    pub fn to_tables_source(&self, constant: &str) -> String {
+        use std::fmt::Write;
+        let coast = |c: &Coast| format!("Coast::{c:?}");
+        let region = |r: &Region| match &r.coast {
+            Some(c) => format!(
+                "Region::new(ProvinceId({}), Some({}))",
+                r.province.0,
+                coast(c)
+            ),
+            None => format!("Region::land(ProvinceId({}))", r.province.0),
+        };
+        let option = |v: Option<String>| match v {
+            Some(v) => format!("Some({v})"),
+            None => "None".to_string(),
+        };
+        let o = &self.rulebook_overrides;
+        let mut s = String::new();
+        writeln!(s, "pub(super) static {constant}: Tables = Tables {{").unwrap();
+        writeln!(s, "    name: {:?},", self.name).unwrap();
+        writeln!(s, "    rulebook_overrides: RulebookOverrides {{").unwrap();
+        writeln!(
+            s,
+            "        edition: {},",
+            option(o.edition.map(|v| format!("Edition::{v:?}")))
+        )
+        .unwrap();
+        writeln!(
+            s,
+            "        convoy_intent: {},",
+            option(o.convoy_intent.map(|v| format!("ConvoyIntent::{v:?}")))
+        )
+        .unwrap();
+        writeln!(
+            s,
+            "        disband_distance: {},",
+            option(
+                o.disband_distance
+                    .map(|v| format!("DisbandDistance::{v:?}"))
+            )
+        )
+        .unwrap();
+        writeln!(s, "        convoy_fallback: {:?},", o.convoy_fallback).unwrap();
+        writeln!(s, "        build_anywhere: {:?},", o.build_anywhere).unwrap();
+        writeln!(s, "        fog_of_war: {:?},", o.fog_of_war).unwrap();
+        writeln!(s, "        victory_centers: {:?},", o.victory_centers).unwrap();
+        writeln!(s, "    }},").unwrap();
+        writeln!(s, "    provinces: &[").unwrap();
+        for p in &self.provinces {
+            let sc = match p.supply_center {
+                SupplyCenter::None => "SupplyCenter::None".to_string(),
+                SupplyCenter::Neutral => "SupplyCenter::Neutral".to_string(),
+                SupplyCenter::Home(power) => format!("SupplyCenter::Home(Power({}))", power.0),
+            };
+            let coasts: Vec<String> = p.coasts.iter().map(coast).collect();
+            writeln!(
+                s,
+                "        ({:?}, {:?}, Terrain::{:?}, {sc}, &[{}]),",
+                p.name,
+                p.full_name,
+                p.terrain,
+                coasts.join(", ")
+            )
+            .unwrap();
+        }
+        writeln!(s, "    ],").unwrap();
+        writeln!(s, "    powers: &[").unwrap();
+        for p in &self.powers {
+            writeln!(s, "        ({:?}, {:?}),", p.code, p.name).unwrap();
+        }
+        writeln!(s, "    ],").unwrap();
+        writeln!(s, "    adjacency: &[").unwrap();
+        for (from, borders) in &self.adjacency {
+            let list: Vec<String> = borders
+                .iter()
+                .map(|(to, terrain)| format!("({}, Terrain::{terrain:?})", region(to)))
+                .collect();
+            writeln!(s, "        ({}, &[{}]),", region(from), list.join(", ")).unwrap();
+        }
+        writeln!(s, "    ],").unwrap();
+        writeln!(s, "    homes: &[").unwrap();
+        for homes in &self.homes {
+            let list: Vec<String> = homes
+                .iter()
+                .map(|h| format!("ProvinceId({})", h.0))
+                .collect();
+            writeln!(s, "        &[{}],", list.join(", ")).unwrap();
+        }
+        writeln!(s, "    ],").unwrap();
+        writeln!(s, "    start_units: &[").unwrap();
+        for (power, kind, at) in &self.start_units {
+            writeln!(
+                s,
+                "        (Power({}), UnitKind::{kind:?}, {}),",
+                power.0,
+                region(at)
+            )
+            .unwrap();
+        }
+        writeln!(s, "    ],").unwrap();
+        let bits: String = self
+            .fleet_adjacency
+            .iter()
+            .map(|&b| if b { "\\x01" } else { "\\x00" })
+            .collect();
+        writeln!(s, "    fleet_adjacency: b\"{bits}\",").unwrap();
+        writeln!(s, "}};").unwrap();
+        s
+    }
+}
+
+impl Map {
+    /// Build a map from one self-contained JSON document (see `data/maps/`).
+    pub fn from_json(json: &str) -> Result<Map, MapError> {
+        let doc: MapDocument =
+            serde_json::from_str(json).map_err(|e| MapError::Json(e.to_string()))?;
+        Map::from_document(doc)
+    }
+
+    fn from_document(doc: MapDocument) -> Result<Map, MapError> {
+        let invalid = |msg: String| MapError::Invalid(msg);
+        let power_by_code: HashMap<&str, Power> = doc
+            .powers
             .iter()
             .enumerate()
             .map(|(i, p)| (p.code.as_str(), Power(i as u8)))
             .collect();
+        if doc.powers.is_empty() || doc.powers.len() > u8::MAX as usize {
+            return Err(invalid(format!("bad power count {}", doc.powers.len())));
+        }
+        if power_by_code.len() != doc.powers.len() {
+            return Err(invalid("duplicate power code".into()));
+        }
+        let power = |code: &str| {
+            power_by_code
+                .get(code)
+                .copied()
+                .ok_or_else(|| invalid(format!("unknown power {code}")))
+        };
 
-        let mut provinces = Vec::new();
-        let mut by_name = HashMap::new();
-        for (i, line) in provinces_csv.lines().enumerate().skip(1) {
-            if line.trim().is_empty() {
-                continue;
+        let mut provinces = Vec::with_capacity(doc.provinces.len());
+        let mut by_name = HashMap::with_capacity(doc.provinces.len());
+        for p in &doc.provinces {
+            let id = u8::try_from(provinces.len())
+                .map(ProvinceId)
+                .map_err(|_| invalid("more than 256 provinces".into()))?;
+            let name = p.name.to_ascii_lowercase();
+            if by_name.insert(name.clone(), id).is_some() {
+                return Err(invalid(format!("duplicate province {name}")));
             }
-            let cols: Vec<&str> = line.split(',').map(str::trim).collect();
-            if cols.len() < 3 {
-                return Err(MapError::Malformed {
-                    line: i + 1,
-                    msg: "expected 3 columns".into(),
-                });
-            }
-            let supply_center = match cols[2] {
-                "" => SupplyCenter::None,
-                "neutral" => SupplyCenter::Neutral,
-                code => SupplyCenter::Home(*power_by_code.get(code).ok_or_else(|| {
-                    MapError::Malformed {
-                        line: i + 1,
-                        msg: format!("unknown power {code}"),
-                    }
-                })?),
+            let supply_center = match p.supply_center.as_deref() {
+                None => SupplyCenter::None,
+                Some("neutral") => SupplyCenter::Neutral,
+                Some(code) => SupplyCenter::Home(power(code)?),
             };
-            let id = ProvinceId(provinces.len() as u8);
-            by_name.insert(cols[0].to_ascii_lowercase(), id);
             provinces.push(Province {
-                name: cols[0].to_ascii_lowercase(),
-                full_name: cols[1].to_string(),
-                terrain: Terrain::Land, // refined from regions.csv
+                name,
+                full_name: p.full_name.clone(),
+                terrain: Terrain::Land, // refined from the region table
                 supply_center,
                 coasts: Vec::new(),
             });
         }
 
-        for (i, line) in regions_csv.lines().enumerate().skip(1) {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let cols: Vec<&str> = line.split(',').map(str::trim).collect();
+        for r in &doc.regions {
             let id = *by_name
-                .get(&cols[0].to_ascii_lowercase())
-                .ok_or_else(|| MapError::UnknownProvince(cols[0].to_string()))?;
-            let terrain = parse_terrain(cols[2]).ok_or_else(|| MapError::Malformed {
-                line: i + 1,
-                msg: format!("bad terrain {}", cols[2]),
-            })?;
+                .get(&r.province.to_ascii_lowercase())
+                .ok_or_else(|| MapError::UnknownProvince(r.province.clone()))?;
             let province = &mut provinces[id.0 as usize];
-            if cols[1].is_empty() {
-                province.terrain = terrain;
-            } else {
-                let coast = Coast::parse(cols[1]).ok_or_else(|| MapError::Malformed {
-                    line: i + 1,
-                    msg: format!("bad coast {}", cols[1]),
-                })?;
-                province.coasts.push(coast);
-                province.terrain = Terrain::Coast;
+            match r.coast.as_deref() {
+                None => province.terrain = r.terrain,
+                Some(c) => {
+                    let coast = Coast::parse(c).ok_or_else(|| invalid(format!("bad coast {c}")))?;
+                    province.coasts.push(coast);
+                    province.terrain = Terrain::Coast;
+                }
             }
         }
 
         let mut adjacency: BTreeMap<Region, Vec<(Region, Terrain)>> = BTreeMap::new();
-        for (i, line) in borders_csv.lines().enumerate().skip(1) {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let cols: Vec<&str> = line.split(',').map(str::trim).collect();
-            let a = parse_region(&by_name, cols[0])?;
-            let b = parse_region(&by_name, cols[1])?;
-            let terrain = parse_terrain(cols[2]).ok_or_else(|| MapError::Malformed {
-                line: i + 1,
-                msg: format!("bad terrain {}", cols[2]),
-            })?;
-            adjacency.entry(a).or_default().push((b, terrain));
-            adjacency.entry(b).or_default().push((a, terrain));
+        for b in &doc.borders {
+            let a = parse_region(&by_name, &b.from)?;
+            let c = parse_region(&by_name, &b.to)?;
+            adjacency.entry(a).or_default().push((c, b.terrain));
+            adjacency.entry(c).or_default().push((a, b.terrain));
         }
         for edges in adjacency.values_mut() {
             edges.sort();
             edges.dedup();
         }
 
-        let mut homes = vec![Vec::new(); powers.len()];
+        let mut homes = vec![Vec::new(); doc.powers.len()];
         for (i, p) in provinces.iter().enumerate() {
             if let SupplyCenter::Home(power) = p.supply_center {
                 homes[power.0 as usize].push(ProvinceId(i as u8));
             }
         }
-
-        let mut start_units = Vec::new();
-        for (code, kind, region) in start {
-            let power = *power_by_code.get(code).ok_or_else(|| MapError::Malformed {
-                line: 0,
-                msg: format!("unknown power {code}"),
-            })?;
-            let kind = if *kind == 'A' {
-                UnitKind::Army
-            } else {
-                UnitKind::Fleet
-            };
-            start_units.push((power, kind, parse_region(&by_name, region)?));
+        // `homes` restates the supply centre column so a variant author sees
+        // each power's home set at a glance; the two must agree.
+        if doc.homes.len() != doc.powers.len() {
+            return Err(invalid("homes must list every power exactly once".into()));
+        }
+        for (code, named) in &doc.homes {
+            let p = power(code)?;
+            let mut actual: Vec<String> = named.iter().map(|s| s.to_ascii_lowercase()).collect();
+            let mut expected: Vec<String> = homes[p.0 as usize]
+                .iter()
+                .map(|id| provinces[id.0 as usize].name.clone())
+                .collect();
+            actual.sort();
+            expected.sort();
+            if actual != expected {
+                return Err(invalid(format!(
+                    "home centres for {code} do not match province declarations"
+                )));
+            }
         }
 
-        Ok(Map {
-            name: name.to_string(),
+        let mut start_units = Vec::with_capacity(doc.starting_units.len());
+        for u in &doc.starting_units {
+            start_units.push((power(&u.power)?, u.kind, parse_region(&by_name, &u.region)?));
+        }
+
+        let mut map = Map {
+            name: doc.name,
+            rulebook_overrides: doc.rulebook_overrides,
             provinces,
-            powers,
+            powers: doc.powers,
             by_name,
             adjacency,
             homes,
             start_units,
-        })
+            fleet_adjacency: Vec::new(),
+        };
+        let n = map.provinces.len();
+        let mut fleet_adjacency = vec![false; n * n];
+        for a in map.province_ids() {
+            for r in map.regions_of(a) {
+                for to in map.reachable(r, UnitKind::Fleet) {
+                    fleet_adjacency[a.0 as usize * n + to.province.0 as usize] = true;
+                }
+            }
+        }
+        map.fleet_adjacency = fleet_adjacency;
+        Ok(map)
     }
 
     pub fn provinces(&self) -> &[Province] {
@@ -410,6 +667,11 @@ impl Map {
         self.reachable(from, kind).any(|r| r.province == to)
     }
 
+    /// Can a fleet on any region of province `a` move directly into province `b`?
+    pub fn fleet_adjacent(&self, a: ProvinceId, b: ProvinceId) -> bool {
+        self.fleet_adjacency[a.0 as usize * self.provinces.len() + b.0 as usize]
+    }
+
     /// Provinces adjacent to `p` by any border at all (used for civil disorder distance).
     pub fn neighbours_any(&self, p: ProvinceId) -> Vec<ProvinceId> {
         let mut v: Vec<ProvinceId> = self
@@ -451,6 +713,12 @@ impl Map {
             .reachable(from, UnitKind::Fleet)
             .filter(|r| r.province == to)
             .collect();
+        if candidates.is_empty() {
+            return Err(CoastError::Unreachable);
+        }
+        // DATC 4.B.6: annotations naming a coast that this province does not have
+        // are irrelevant. A real but unreachable coast remains an error (4.B.3).
+        let coast = coast.filter(|c| self.province(to).coasts.contains(c));
         match coast {
             Some(c) => {
                 let want = Region::new(to, Some(c));
@@ -544,15 +812,6 @@ pub fn split_coast(s: &str) -> (&str, Option<&str>) {
     (s, None)
 }
 
-fn parse_terrain(s: &str) -> Option<Terrain> {
-    match s.to_ascii_lowercase().as_str() {
-        "land" => Some(Terrain::Land),
-        "coast" => Some(Terrain::Coast),
-        "sea" => Some(Terrain::Sea),
-        _ => None,
-    }
-}
-
 fn parse_region(by_name: &HashMap<String, ProvinceId>, s: &str) -> Result<Region, MapError> {
     let (name, coast) = split_coast(s);
     let province = *by_name
@@ -560,52 +819,43 @@ fn parse_region(by_name: &HashMap<String, ProvinceId>, s: &str) -> Result<Region
         .ok_or_else(|| MapError::UnknownProvince(name.to_string()))?;
     let coast = match coast {
         None => None,
-        Some(c) => Some(Coast::parse(c).ok_or_else(|| MapError::Malformed {
-            line: 0,
-            msg: format!("bad coast {c}"),
-        })?),
+        Some(c) => {
+            Some(Coast::parse(c).ok_or_else(|| MapError::Invalid(format!("bad coast {c}")))?)
+        }
     };
     Ok(Region::new(province, coast))
 }
 
-const STANDARD_POWERS: [(&str, &str); 7] = [
-    ("AUS", "Austria"),
-    ("ENG", "England"),
-    ("FRA", "France"),
-    ("GER", "Germany"),
-    ("ITA", "Italy"),
-    ("RUS", "Russia"),
-    ("TUR", "Turkey"),
-];
-
-const STANDARD_START: &[(&str, char, &str)] = &[
-    ("AUS", 'A', "vie"),
-    ("AUS", 'A', "bud"),
-    ("AUS", 'F', "tri"),
-    ("ENG", 'F', "lon"),
-    ("ENG", 'F', "edi"),
-    ("ENG", 'A', "lvp"),
-    ("FRA", 'A', "par"),
-    ("FRA", 'A', "mar"),
-    ("FRA", 'F', "bre"),
-    ("GER", 'A', "ber"),
-    ("GER", 'A', "mun"),
-    ("GER", 'F', "kie"),
-    ("ITA", 'A', "rom"),
-    ("ITA", 'A', "ven"),
-    ("ITA", 'F', "nap"),
-    ("RUS", 'A', "mos"),
-    ("RUS", 'A', "war"),
-    ("RUS", 'F', "sev"),
-    ("RUS", 'F', "stp(sc)"),
-    ("TUR", 'A', "con"),
-    ("TUR", 'A', "smy"),
-    ("TUR", 'F', "ank"),
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fleet_adjacency_matches_the_border_lists() {
+        for m in [Map::standard(), Map::by_name("duel").unwrap()] {
+            for a in m.province_ids() {
+                for b in m.province_ids() {
+                    let walked = m
+                        .regions_of(a)
+                        .into_iter()
+                        .any(|r| m.adjacent_province(r, UnitKind::Fleet, b));
+                    assert_eq!(m.fleet_adjacent(a, b), walked, "{a:?} -> {b:?}");
+                }
+            }
+        }
+    }
+
+    /// The tables written by `build.rs` are the documents, nothing more or less.
+    #[test]
+    fn bundled_maps_equal_their_documents() {
+        let standard = Map::from_json(include_str!("../data/maps/standard.json")).unwrap();
+        assert_eq!(Map::standard(), &standard);
+        assert_eq!(Map::standard_uncached(), standard);
+        let duel = Map::from_json(include_str!("../data/maps/duel.json")).unwrap();
+        assert_eq!(Map::by_name("duel").unwrap(), &duel);
+        assert_eq!(duel.rulebook_overrides.victory_centers, Some(2));
+        assert!(Map::by_name("atlantis").is_none());
+    }
 
     #[test]
     fn standard_map_shape() {
@@ -661,5 +911,60 @@ mod tests {
             let r = m.parse_region(s).unwrap();
             assert_eq!(m.parse_region(&m.region_name(r)), Some(r));
         }
+    }
+
+    #[test]
+    fn bundled_json_maps_load_standard_and_duel() {
+        let standard = Map::standard();
+        assert_eq!(standard.name, "standard");
+        assert_eq!(standard.provinces().len(), 76);
+        assert_eq!(Map::by_name("classic").unwrap().name, "standard");
+
+        let duel = Map::by_name("duel").unwrap();
+        assert_eq!(duel.powers().len(), 2);
+        assert_eq!(duel.start_units().len(), 2);
+        let game = crate::game::Game::new(duel, crate::rulebook::Rulebook::default());
+        assert!(game.rulebook.build_anywhere);
+        // A solo must be reachable: two of the three centres win.
+        assert_eq!(game.rulebook.victory_centers, 2);
+    }
+
+    fn duel_doc() -> serde_json::Value {
+        serde_json::from_str(include_str!("../data/maps/duel.json")).unwrap()
+    }
+
+    fn load(doc: &serde_json::Value) -> Result<Map, MapError> {
+        Map::from_json(&doc.to_string())
+    }
+
+    #[test]
+    fn map_documents_are_validated() {
+        assert!(load(&duel_doc()).is_ok());
+
+        let mut doc = duel_doc();
+        doc["provinces"][1]["name"] = "red".into();
+        assert!(
+            matches!(load(&doc), Err(MapError::Invalid(m)) if m.contains("duplicate province"))
+        );
+
+        let mut doc = duel_doc();
+        doc["homes"]["RED"] = serde_json::json!(["mid"]);
+        assert!(matches!(load(&doc), Err(MapError::Invalid(m)) if m.contains("home centres")));
+
+        let mut doc = duel_doc();
+        doc["borders"][0]["to"] = "nowhere".into();
+        assert!(matches!(load(&doc), Err(MapError::UnknownProvince(p)) if p == "nowhere"));
+
+        let mut doc = duel_doc();
+        doc["starting_units"][0]["power"] = "GREEN".into();
+        assert!(matches!(load(&doc), Err(MapError::Invalid(m)) if m.contains("unknown power")));
+
+        let mut doc = duel_doc();
+        doc["rulebook_overrides"] = serde_json::json!({"build_anywere": true});
+        assert!(matches!(load(&doc), Err(MapError::Json(_))));
+
+        let mut doc = duel_doc();
+        doc["regions"][0]["terrain"] = "lava".into();
+        assert!(matches!(load(&doc), Err(MapError::Json(_))));
     }
 }

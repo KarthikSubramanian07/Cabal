@@ -14,47 +14,96 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  WASM_SIZE_BUDGET_BYTES: 409600
+  # About 6 percent above the measured build (384,183 bytes gzip with the bot
+  # inside, see docs/PERFORMANCE.md). Raise it only with a number and a reason.
+  WASM_SIZE_BUDGET_BYTES: 409000
 
 jobs:
   rust:
-    name: "Rust: fmt, clippy, tests, DATC"
+    name: "Rust: fmt, clippy, tests, DATC, replay"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: 1.97.0
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The wasm-bindgen tests only compile for wasm32, so lint that target too.
+      - run: cargo clippy -p cabal-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
+      - run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
       - run: cargo test --workspace
+      # Adjudicates all 171 DATC cases plus Cabal's own and prints pass, fail and
+      # skip totals; exits 1 if any case fails.
       - name: DATC report
         run: cargo run -p cabal-cli -- datc --report
+      # Every committed saved game must replay with zero divergences.
+      - name: Replay fixtures
+        run: cargo run -p cabal-cli -- replay crates/cabal-engine/tests/data/games
+
+  bench:
+    name: "Bench: adjudication and legal-order gates"
+    runs-on: ubuntu-latest
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      CRITERION_HOME: ${{ github.workspace }}/target/criterion
+      # Gated: opening adjudication, and legal orders on the fleet-heavy midgame
+      # board (per power and with the shared convoy search).
+      BENCH_ARGS: --sample-size 30 --measurement-time 3 --warm-up-time 1 --noplot ^(adjudicate.spring.1901|midgame/legal.orders,.all.powers)
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      # Base and head run back to back on the same runner; comparing against a
+      # number recorded on another machine would gate on hardware, not code.
+      - name: Bench the base commit
+        # BENCH_ARGS is split into arguments on purpose.
+        run: |
+          # shellcheck disable=SC2086
+          if git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null && git worktree add -q ../base "$BASE_SHA" \
+            && test -f ../base/crates/cabal-engine/benches/adjudicate.rs; then
+            (cd ../base && cargo bench -p cabal-engine --bench adjudicate -- --save-baseline before $BENCH_ARGS)
+          else
+            echo "no benchable base commit; the recorded baseline will be used"
+          fi
+      - name: Bench this commit
+        run: |
+          # shellcheck disable=SC2086
+          cargo bench -p cabal-engine --bench adjudicate -- --baseline-lenient before $BENCH_ARGS
+      - name: Fail on a regression over 30 percent
+        run: python3 tools/check-bench-regression.py --against before
 
   wasm:
     name: WASM build and size gate
     runs-on: ubuntu-latest
-    needs: rust
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: 1.97.0
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         with:
           tool: wasm-pack
-      - run: wasm-pack build crates/cabal-wasm --target web --release --out-dir ../../packages/engine/pkg --out-name cabal_engine
+      - run: wasm-pack test --node crates/cabal-wasm
+      - run: wasm-pack build crates/cabal-wasm --target web --profile wasm-release --out-dir ../../packages/engine/pkg --out-name cabal_engine
       - name: Size gate
         run: |
           size=$(gzip -c packages/engine/pkg/cabal_engine_bg.wasm | wc -c | tr -d ' ')
           echo "gzip size: $size bytes (budget $WASM_SIZE_BUDGET_BYTES)"
           test "$size" -le "$WASM_SIZE_BUDGET_BYTES"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: engine-pkg
           path: packages/engine/pkg
@@ -65,13 +114,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: wasm
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: engine-pkg
           path: packages/engine/pkg
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -81,85 +130,143 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
-  e2e:
-    name: End-to-end (Playwright)
+  deploy-dry-run:
+    # Bundles the Worker exactly as `pnpm deploy:server` would, without credentials and without
+    # uploading anything (ADR 0008). Catches wrangler config, module rule and bundling errors on
+    # the pull request instead of during a production deploy, and gates the upload size.
+    name: "Deploy dry run: cabal-server bundle and size budget"
     runs-on: ubuntu-latest
-    needs: node
+    needs: wasm
+    env:
+      # Measured 755,828 bytes with the engine of this change (642,074 before it: the engine
+      # wasm grew by about 110 KB gzip with replay verification, snapshots, verdicts and
+      # explanations; see docs/PERFORMANCE.md). The budget leaves about 4 percent of headroom.
+      # Cloudflare's own limit is 3 MiB gzip on the free plan.
+      WORKER_GZIP_BUDGET_BYTES: 786432
+      WRANGLER_SEND_METRICS: "false"
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: engine-pkg
           path: packages/engine/pkg
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @cabal/web exec playwright install --with-deps chromium
+      # `exec` skips the package's predeploy hook, so copy the wasm into the worker tree first.
+      - run: pnpm --filter @cabal/server run engine:sync
+      - name: wrangler deploy --dry-run
+        run: |
+          set -o pipefail
+          pnpm --filter @cabal/server exec wrangler deploy --dry-run --outdir "$RUNNER_TEMP/cabal-server-dry-run" 2>&1 | tee "$RUNNER_TEMP/dry-run.log"
+      - name: Bundle size gate
+        run: |
+          shopt -s nullglob
+          files=("$RUNNER_TEMP/cabal-server-dry-run"/*.js "$RUNNER_TEMP/cabal-server-dry-run"/*.wasm)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::the dry run produced no bundle in $RUNNER_TEMP/cabal-server-dry-run"
+            exit 1
+          fi
+          raw=0
+          gz=0
+          {
+            echo "### cabal-server bundle"
+            echo
+            echo "| File | Raw bytes | Gzip bytes |"
+            echo "|---|---:|---:|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for f in "${files[@]}"; do
+            r=$(wc -c < "$f" | tr -d ' ')
+            g=$(gzip -c "$f" | wc -c | tr -d ' ')
+            raw=$((raw + r))
+            gz=$((gz + g))
+            echo "| $(basename "$f") | $r | $g |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          wrangler_line=$(grep -m1 'Total Upload' "$RUNNER_TEMP/dry-run.log" || echo "not reported")
+          {
+            echo "| **total** | **$raw** | **$gz** |"
+            echo
+            echo "Budget: $WORKER_GZIP_BUDGET_BYTES gzip bytes. Wrangler: $wrangler_line"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "worker bundle: $raw bytes raw, $gz bytes gzip (budget $WORKER_GZIP_BUDGET_BYTES)"
+          echo "wrangler: $wrangler_line"
+          if [ "$gz" -gt "$WORKER_GZIP_BUDGET_BYTES" ]; then
+            echo "::error::cabal-server bundle is $gz gzip bytes, over the $WORKER_GZIP_BUDGET_BYTES byte budget"
+            exit 1
+          fi
+
+  e2e:
+    name: End-to-end (Playwright)
+    runs-on: ubuntu-latest
+    needs: wasm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-pkg
+          path: packages/engine/pkg
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(pnpm --filter @cabal/web exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        id: browsers
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - if: steps.browsers.outputs.cache-hit != 'true'
+        run: pnpm --filter @cabal/web exec playwright install --with-deps chromium
+      - if: steps.browsers.outputs.cache-hit == 'true'
+        run: pnpm --filter @cabal/web exec playwright install-deps chromium
       - run: pnpm test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
           path: apps/web/playwright-report
           retention-days: 7
 
-  deploy-web:
-    name: Deploy web to Cloudflare Pages
-    needs: [node, e2e]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  audit:
+    name: Dependency and workflow audit
     runs-on: ubuntu-latest
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      - if: env.CLOUDFLARE_API_TOKEN == ''
-        run: echo "::notice::CLOUDFLARE_API_TOKEN not set, skipping Pages deploy."
-      - uses: actions/checkout@v5
-        if: env.CLOUDFLARE_API_TOKEN != ''
-      - uses: actions/download-artifact@v4
-        if: env.CLOUDFLARE_API_TOKEN != ''
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         with:
-          name: engine-pkg
-          path: packages/engine/pkg
-      - uses: pnpm/action-setup@v4
-        if: env.CLOUDFLARE_API_TOKEN != ''
-      - uses: actions/setup-node@v5
-        if: env.CLOUDFLARE_API_TOKEN != ''
+          tool: cargo-audit
+      - run: cargo audit
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
-      - if: env.CLOUDFLARE_API_TOKEN != ''
-        run: pnpm install --frozen-lockfile && pnpm --filter @cabal/web build
-      - if: env.CLOUDFLARE_API_TOKEN != ''
-        run: pnpm --filter @cabal/web exec wrangler pages deploy dist --project-name playcabal --branch main
+      - run: pnpm audit --prod --audit-level high
+      - name: actionlint
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
 
-  deploy-server:
-    name: Deploy server worker
-    needs: [node, e2e]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  fuzz-build:
+    name: Fuzz targets compile
     runs-on: ubuntu-latest
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      - if: env.CLOUDFLARE_API_TOKEN == ''
-        run: echo "::notice::CLOUDFLARE_API_TOKEN not set, skipping worker deploy."
-      - uses: actions/checkout@v5
-        if: env.CLOUDFLARE_API_TOKEN != ''
-      - uses: actions/download-artifact@v4
-        if: env.CLOUDFLARE_API_TOKEN != ''
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          name: engine-pkg
-          path: packages/engine/pkg
-      - uses: pnpm/action-setup@v4
-        if: env.CLOUDFLARE_API_TOKEN != ''
-      - uses: actions/setup-node@v5
-        if: env.CLOUDFLARE_API_TOKEN != ''
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - if: env.CLOUDFLARE_API_TOKEN != ''
-        run: pnpm install --frozen-lockfile && pnpm --filter @cabal/server deploy
+          workspaces: fuzz
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        with:
+          tool: cargo-fuzz
+      # Only the nightly Stress workflow runs the fuzzers; this keeps them building on every change.
+      # The prebuilt cargo-fuzz defaults to its own musl target, which has no sanitizer support.
+      - run: cargo +nightly fuzz build --target x86_64-unknown-linux-gnu

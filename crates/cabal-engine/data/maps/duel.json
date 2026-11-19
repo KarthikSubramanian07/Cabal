@@ -1,0 +1,27 @@
+{
+  "name": "duel",
+  "provinces": [
+    {"name": "red", "full_name": "Red Home", "supply_center": "RED"},
+    {"name": "blue", "full_name": "Blue Home", "supply_center": "BLUE"},
+    {"name": "mid", "full_name": "Middle", "supply_center": "neutral"}
+  ],
+  "regions": [
+    {"province": "red", "terrain": "land"},
+    {"province": "blue", "terrain": "land"},
+    {"province": "mid", "terrain": "land"}
+  ],
+  "borders": [
+    {"from": "red", "to": "mid", "terrain": "land"},
+    {"from": "mid", "to": "blue", "terrain": "land"}
+  ],
+  "powers": [
+    {"code": "RED", "name": "Red"},
+    {"code": "BLUE", "name": "Blue"}
+  ],
+  "homes": {"RED": ["red"], "BLUE": ["blue"]},
+  "starting_units": [
+    {"power": "RED", "kind": "army", "region": "red"},
+    {"power": "BLUE", "kind": "army", "region": "blue"}
+  ],
+  "rulebook_overrides": {"build_anywhere": true, "victory_centers": 2}
+}

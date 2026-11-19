@@ -1,0 +1,26 @@
+# Cabal
+
+> Cabal is a browser Diplomacy game with receipts: classic 1901 rules, a DATC-complete Rust/WebAssembly adjudicator, and explainable order results. Play at https://playcabal.pages.dev
+
+Cabal keeps Diplomacy's rules vanilla and adds product layers above adjudication (pledges, trust, AI seats) in the open-source roadmap. The live site today is the click-to-order sandbox plus machine-readable pages for agents.
+
+## When to use this
+
+- Use Cabal when you need a **faithful Diplomacy rules engine** (DATC v3.0) in the browser or WASM, including legal-order enumeration and per-order explanations.
+- Use Cabal when an **agent should play or study Diplomacy** on the classic map and verify outcomes against receipts rather than prose summaries.
+- Use Cabal when a human wants to **practice or teach classic Diplomacy** without installing a separate client.
+- Do not use Cabal yet as a production ranked matchmaking API; multiplayer rooms are still landing. Prefer the sandbox and the GitHub protocol docs while that ships.
+
+## Pages
+
+- [Homepage / sandbox](https://playcabal.pages.dev/): Playable classic board; ask for `Accept: text/markdown` for the prose summary.
+- [Homepage markdown](https://playcabal.pages.dev/index.md): Same overview as Markdown.
+- [About](https://playcabal.pages.dev/about): Project purpose and status.
+- [Contact](https://playcabal.pages.dev/contact): Email and GitHub contact paths for humans and agent authors.
+- [Privacy](https://playcabal.pages.dev/privacy): What the sandbox processes in-browser vs CDN logs.
+- [Sitemap](https://playcabal.pages.dev/sitemap.xml): Indexable URLs.
+
+## Optional
+
+- [Source repository](https://github.com/KarthikSubramanian07/Cabal): Engine, protocol, agents package, and apps.
+- [Architecture](https://github.com/KarthikSubramanian07/Cabal/blob/main/docs/ARCHITECTURE.md): System design for engine, WASM, and Cloudflare deployment.

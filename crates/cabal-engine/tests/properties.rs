@@ -1,10 +1,13 @@
 //! Property tests: the resolver never panics, is independent of order submission
-//! sequence, is invariant under relabelling of powers, and only ever offers legal orders.
+//! sequence, is invariant under relabelling of powers, only ever offers legal orders,
+//! and rejects exactly the orders `normalise` rejects.
+
+mod datc_harness;
 
 use std::collections::HashMap;
 
 use cabal_engine::adjudicate::movement::resolve_movement;
-use cabal_engine::geo::{Map, Power, Region, UnitKind};
+use cabal_engine::geo::{Coast, Map, Power, ProvinceId, Region, UnitKind};
 use cabal_engine::legal::legal_movement;
 use cabal_engine::order::{Command, Order, Unit};
 use cabal_engine::outcome::OrderOutcome;
@@ -50,6 +53,104 @@ fn arb_position(n: usize) -> impl Strategy<Value = Position> {
     )
 }
 
+/// A crowded board: up to 19 fleets at sea plus up to 20 units on land, so convoys
+/// are possible almost everywhere and convoy routes branch.
+fn arb_crowded_position() -> impl Strategy<Value = Position> {
+    let map = Map::standard();
+    let seas: Vec<ProvinceId> = map.province_ids().filter(|&p| map.is_sea(p)).collect();
+    let land: Vec<ProvinceId> = map
+        .province_ids()
+        .filter(|&p| !map.is_sea(p) && map.province(p).name != "swi")
+        .collect();
+    (
+        prop::collection::vec((prop::sample::select(seas), 0..7u8), 0..=19),
+        prop::collection::vec(
+            (prop::sample::select(land), 0..7u8, any::<bool>(), 0..2usize),
+            1..=20,
+        ),
+    )
+        .prop_map(move |(fleets, others)| {
+            let mut pos = Position::default();
+            for (p, power) in fleets {
+                if pos.unit_at(p).is_none() {
+                    pos.add_unit(Unit {
+                        power: Power(power),
+                        kind: UnitKind::Fleet,
+                        region: Region::land(p),
+                    });
+                }
+            }
+            for (p, power, fleet, coast_pick) in others {
+                if pos.unit_at(p).is_some() {
+                    continue;
+                }
+                let coasts = &map.province(p).coasts;
+                let (kind, region) = if fleet && map.is_coastal(p) {
+                    let coast = coasts.get(coast_pick % coasts.len().max(1)).copied();
+                    (UnitKind::Fleet, Region::new(p, coast))
+                } else {
+                    (UnitKind::Army, Region::land(p))
+                };
+                pos.add_unit(Unit {
+                    power: Power(power),
+                    kind,
+                    region,
+                });
+            }
+            pos
+        })
+}
+
+/// Any movement command at all, legal or not: random provinces and coasts.
+fn arb_command() -> impl Strategy<Value = Command> {
+    let provinces = Map::standard().provinces().len() as u8;
+    let province = (0..provinces).prop_map(ProvinceId);
+    let coast = prop::option::of(prop::sample::select(vec![
+        Coast::North,
+        Coast::South,
+        Coast::East,
+        Coast::West,
+    ]));
+    prop_oneof![
+        Just(Command::Hold),
+        (province.clone(), coast.clone(), any::<bool>()).prop_map(|(dest, coast, via_convoy)| {
+            Command::Move {
+                dest,
+                coast,
+                via_convoy,
+            }
+        }),
+        province
+            .clone()
+            .prop_map(|target| Command::SupportHold { target }),
+        (province.clone(), province.clone(), coast).prop_map(|(target, dest, coast)| {
+            Command::SupportMove {
+                target,
+                dest,
+                coast,
+            }
+        }),
+        (province.clone(), province).prop_map(|(army, dest)| Command::Convoy { army, dest }),
+    ]
+}
+
+/// One order per unit, each either one of its legal orders or an arbitrary command.
+fn arb_mixed_orders(pos: &Position) -> BoxedStrategy<Vec<Order>> {
+    let map = Map::standard();
+    let mut strategies = Vec::new();
+    for power in map.power_ids() {
+        for (unit, legal) in legal_movement(map, pos, power) {
+            let arbitrary = arb_command().prop_map(move |command| Order {
+                power,
+                unit,
+                command,
+            });
+            strategies.push(prop_oneof![prop::sample::select(legal), arbitrary].boxed());
+        }
+    }
+    strategies.boxed()
+}
+
 /// A random legal order set: for every unit, pick one of its legal orders.
 fn arb_orders(pos: &Position) -> BoxedStrategy<Vec<Order>> {
     let map = Map::standard();
@@ -65,6 +166,15 @@ fn arb_orders(pos: &Position) -> BoxedStrategy<Vec<Order>> {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(256)))]
+
+    #[test]
+    fn prop_normalise_is_idempotent((pos, orders) in arb_position(14).prop_flat_map(|pos| { let o = arb_orders(&pos); o.prop_map(move |orders| (pos.clone(), orders)) })) {
+        let map = Map::standard();
+        for order in orders {
+            let once = cabal_engine::order::normalise(map, &pos, order).expect("legal order");
+            prop_assert_eq!(cabal_engine::order::normalise(map, &pos, once), Ok(once));
+        }
+    }
 
     #[test]
     fn prop_legal_orders_are_never_illegal(pos in arb_position(14)) {
@@ -125,5 +235,42 @@ proptest! {
         };
         prop_assert_eq!(by_unit(&a), by_unit(&b));
         let _ = Command::Hold;
+    }
+
+    #[test]
+    fn prop_resolver_rejects_exactly_what_normalise_rejects((pos, orders) in arb_crowded_position().prop_flat_map(|pos| { let o = arb_mixed_orders(&pos); o.prop_map(move |orders| (pos.clone(), orders)) })) {
+        let map = Map::standard();
+        let r = resolve_movement(map, &pos, Rulebook::default(), &orders);
+        for order in orders {
+            let i = r.orders.iter().position(|o| o.unit == order.unit).unwrap();
+            match cabal_engine::order::normalise(map, &pos, order) {
+                Ok(canonical) => {
+                    prop_assert!(!matches!(r.outcomes[i], OrderOutcome::Illegal { .. }), "{order:?} => {:?}", r.outcomes[i]);
+                    prop_assert_eq!(r.orders[i], canonical);
+                }
+                Err(reason) => {
+                    let judged = match &r.outcomes[i] {
+                        OrderOutcome::Illegal { reason, .. } => Some(*reason),
+                        _ => None,
+                    };
+                    prop_assert_eq!(judged, Some(reason), "{:?}", order);
+                    prop_assert_eq!(r.orders[i].command, Command::Hold);
+                }
+            }
+        }
+    }
+
+    /// The lists a movement result carries follow from its outcomes: the
+    /// dislodged units are exactly those that stayed where another arrived,
+    /// every unit is where its outcome puts it, and a vacant province where two
+    /// units bounced is a standoff, whatever happened to those units elsewhere.
+    #[test]
+    fn prop_dislodgements_and_standoffs_follow_from_outcomes((pos, orders) in arb_crowded_position().prop_flat_map(|pos| { let o = arb_mixed_orders(&pos); o.prop_map(move |orders| (pos.clone(), orders)) })) {
+        let map = Map::standard();
+        for rulebook in [Rulebook::default(), Rulebook::edition_1971(), Rulebook::dptg()] {
+            let r = resolve_movement(map, &pos, rulebook, &orders);
+            let problems = datc_harness::check_movement_invariants(map, &pos, &r);
+            prop_assert!(problems.is_empty(), "{:?}\n{:#?}", problems, r.orders.iter().zip(&r.outcomes).collect::<Vec<_>>());
+        }
     }
 }

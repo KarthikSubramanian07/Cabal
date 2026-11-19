@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use crate::adjudicate::adjustment::{AdjustmentResult, allowance, resolve_adjustment};
 use crate::adjudicate::movement::{MovementResult, resolve_movement};
 use crate::adjudicate::retreat::{RetreatResult, resolve_retreat};
+use std::collections::BTreeMap;
+
 use crate::geo::{Map, Power, SupplyCenter};
+use crate::json::{MilaMessage, MilaPhase, SavedPledge, SavedRejection};
 use crate::order::{AdjustOrder, AnyOrder, Order, RetreatOrder};
 use crate::rulebook::Rulebook;
 use crate::state::{GameState, Phase, PhaseKind, Season};
@@ -53,29 +56,60 @@ pub struct Game {
     map: &'static Map,
     pub rulebook: Rulebook,
     pub state: GameState,
+    /// Phases adjudicated by this instance, oldest first.
     pub history: Vec<PhaseRecord>,
     pub status: Status,
+    /// Phases that came before `history`, kept exactly as they were recorded.
+    /// A game restored from a snapshot trusts these instead of adjudicating them
+    /// again, so an engine upgrade can never invalidate a game in flight.
+    pub archive: Vec<MilaPhase>,
+    /// Press, keyed by the phase it was sent in (`S1901M`).
+    pub press: BTreeMap<String, Vec<MilaMessage>>,
+    /// Pledges made during the game, with their receipts once issued.
+    pub pledges: Vec<SavedPledge>,
+    /// Orders a host set aside before adjudication, keyed by the phase they
+    /// were sent for (`S1901M`). They never reach the resolver; they are kept
+    /// so a saved game shows everything that was asked for.
+    pub rejected: BTreeMap<String, Vec<SavedRejection>>,
+    /// The powers sharing a draw. Empty unless `status` is [`Status::Draw`].
+    pub draw_members: Vec<Power>,
+    /// Version of the engine that started the record.
+    pub recorded_by: String,
 }
 
 impl Game {
     pub fn new(map: &'static Map, rulebook: Rulebook) -> Game {
+        let rulebook = map.rulebook_overrides.apply(rulebook);
         Game {
             map,
             rulebook,
             state: GameState::initial(map),
             history: Vec::new(),
             status: Status::Active,
+            archive: Vec::new(),
+            press: BTreeMap::new(),
+            pledges: Vec::new(),
+            rejected: BTreeMap::new(),
+            draw_members: Vec::new(),
+            recorded_by: crate::VERSION.to_string(),
         }
     }
 
     /// Start from an arbitrary state (for replays, sandboxes and tests).
     pub fn from_state(map: &'static Map, rulebook: Rulebook, state: GameState) -> Game {
+        let rulebook = map.rulebook_overrides.apply(rulebook);
         Game {
             map,
             rulebook,
             state,
             history: Vec::new(),
             status: Status::Active,
+            archive: Vec::new(),
+            press: BTreeMap::new(),
+            pledges: Vec::new(),
+            rejected: BTreeMap::new(),
+            draw_members: Vec::new(),
+            recorded_by: crate::VERSION.to_string(),
         }
     }
 
@@ -85,6 +119,17 @@ impl Game {
 
     pub fn phase(&self) -> Phase {
         self.state.phase
+    }
+
+    /// The current state as `power` may see it: filtered by
+    /// [`GameState::visible_to`] when the rulebook enables fog of war,
+    /// otherwise the full board.
+    pub fn view_for(&self, power: Power) -> GameState {
+        if self.rulebook.fog_of_war {
+            self.state.visible_to(self.map, power)
+        } else {
+            self.state.clone()
+        }
     }
 
     pub fn is_finished(&self) -> bool {
@@ -149,12 +194,14 @@ impl Game {
         let before = self.state.clone();
         let result = resolve_movement(self.map, &self.state.position, self.rulebook, orders);
         let mut next = GameState::from_position(self.state.phase, result.position.clone());
-        next.dislodged = result.dislodged.clone();
-        next.standoffs = result.standoffs.clone();
-        if next.dislodged.is_empty() {
+        if result.dislodged.is_empty() {
+            // Standoffs only matter to retreats; with nobody dislodged the next
+            // state carries none, which keeps a state a pure function of the board.
             self.state = next;
             self.after_retreats();
         } else {
+            next.dislodged = result.dislodged.clone();
+            next.standoffs = result.standoffs.clone();
             next.phase = Phase::new(
                 self.state.phase.year,
                 self.state.phase.season,
@@ -258,16 +305,83 @@ impl Game {
         }
     }
 
-    fn solo_winner(&self) -> Option<Power> {
-        self.map.power_ids().find(|&p| {
-            self.state.position.count_centers(p) >= self.rulebook.victory_centers as usize
-        })
+    /// The power holding the most centres, when that reaches the victory threshold.
+    /// Lower power ids win ties, which only small variant maps can produce.
+    pub(crate) fn solo_winner(&self) -> Option<Power> {
+        self.map
+            .power_ids()
+            .map(|p| (self.state.position.count_centers(p), p))
+            .filter(|&(n, _)| n >= self.rulebook.victory_centers as usize)
+            .max_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
+            .map(|(_, p)| p)
     }
 
-    /// End the game by agreement.
+    /// End the game by agreement, shared by every power still on the board.
     pub fn declare_draw(&mut self) {
+        let survivors: Vec<Power> = {
+            let out = self.eliminated();
+            self.map.power_ids().filter(|p| !out.contains(p)).collect()
+        };
+        self.declare_draw_among(&survivors);
+    }
+
+    /// End the game by agreement among `members`. No effect on a finished game.
+    pub fn declare_draw_among(&mut self, members: &[Power]) {
         if self.status == Status::Active {
             self.status = Status::Draw;
+            let mut members = members.to_vec();
+            members.sort();
+            members.dedup();
+            self.draw_members = members;
+        }
+    }
+
+    /// Number of adjudicated phases, archived ones included.
+    pub fn phase_count(&self) -> usize {
+        self.archive.len() + self.history.len()
+    }
+
+    /// Attach a press message to the current phase. An empty `phase` is filled in.
+    pub fn record_message(&mut self, mut message: MilaMessage) {
+        let phase = self.state.phase.to_string();
+        if message.phase.is_empty() {
+            message.phase = phase.clone();
+        }
+        self.press.entry(phase).or_default().push(message);
+    }
+
+    /// Keep the orders that were set aside for `phase` before it was
+    /// adjudicated. Replaces what was kept for that phase; an empty list
+    /// removes the entry.
+    pub fn record_rejected(&mut self, phase: Phase, rejected: Vec<SavedRejection>) {
+        if rejected.is_empty() {
+            self.rejected.remove(&phase.to_string());
+        } else {
+            self.rejected.insert(phase.to_string(), rejected);
+        }
+    }
+
+    /// The orders set aside for adjudicated phase `index`, archived phases
+    /// counted first. Empty when there were none or the index is out of range.
+    pub fn rejected_at(&self, index: usize) -> &[SavedRejection] {
+        let name = match index.checked_sub(self.archive.len()) {
+            None => Some(self.archive[index].state.name.clone()),
+            Some(i) => self.history.get(i).map(|r| r.state.phase.to_string()),
+        };
+        name.and_then(|n| self.rejected.get(&n))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// Record a pledge, or replace the one with the same non-empty id (for
+    /// example to add its receipt once the phase is adjudicated).
+    pub fn record_pledge(&mut self, pledge: SavedPledge) {
+        match self
+            .pledges
+            .iter_mut()
+            .find(|p| !pledge.id.is_empty() && p.id == pledge.id)
+        {
+            Some(existing) => *existing = pledge,
+            None => self.pledges.push(pledge),
         }
     }
 
@@ -284,6 +398,25 @@ impl Game {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn view_for_hides_the_board_only_under_fog_of_war() {
+        let map = Map::standard();
+        let france = map.find_power("FRA").unwrap();
+        let open = Game::new(map, Rulebook::default());
+        assert_eq!(open.view_for(france), open.state);
+
+        let fog = Game::new(
+            map,
+            Rulebook {
+                fog_of_war: true,
+                ..Rulebook::default()
+            },
+        );
+        let view = fog.view_for(france);
+        assert!(view.position.units.len() < fog.state.position.units.len());
+        assert!(view.position.units.iter().any(|u| u.power == france));
+    }
+
     use super::*;
     use crate::parse::parse;
 

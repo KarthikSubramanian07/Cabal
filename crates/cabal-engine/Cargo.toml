@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+build = "build.rs"
 
 [lib]
 crate-type = ["rlib"]
@@ -18,10 +19,14 @@ thiserror.workspace = true
 blake3.workspace = true
 hex.workspace = true
 
+[build-dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
 [dev-dependencies]
 indexmap = { version = "2", features = ["serde"] }
 proptest = "1.11"
-insta = { version = "1.48", features = ["yaml"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]

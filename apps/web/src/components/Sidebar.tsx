@@ -1,6 +1,9 @@
 import type { CSSProperties } from "react";
 import type { PhaseRecord, PowerSummary } from "../game/useSandbox.js";
 import { type PhaseKind, describePhase, parseOrder, titleCase } from "../game/notation.js";
+import { receiptFor } from "../game/receipts.js";
+import { SPEEDS, type Speed, speedLabel } from "../game/replay.js";
+import { phaseLine } from "../game/describe.js";
 import { POWER_COLOR } from "../map/Board.jsx";
 
 export function PhaseHeader({ phase, status, viewing }: { phase: string; status: string; viewing: boolean }) {
@@ -8,9 +11,10 @@ export function PhaseHeader({ phase, status, viewing }: { phase: string; status:
   const ended = status !== "active";
   return (
     <div className="phase-header">
-      <div className="phase-title">
+      <h2 className="phase-title">
         <span className="season">{season}</span> <span className="year">{year}</span>
-      </div>
+        {kind ? <span className="sr-only"> {kind}</span> : null}
+      </h2>
       <div className="phase-meta">
         {viewing ? <span className="tag">Results</span> : null}
         {kind ? <span>{kind}</span> : null}
@@ -94,6 +98,8 @@ export function OrderList({
   orders,
   allowance,
   onRemove,
+  alternative,
+  onReplace,
 }: {
   power: string;
   kind: PhaseKind;
@@ -102,16 +108,19 @@ export function OrderList({
   orders: Record<string, string>;
   allowance: number;
   onRemove: (key: string) => void;
+  /** The same move by the other route (`... VIA`), when the unit could walk or be convoyed. */
+  alternative?: (text: string) => string | null;
+  onReplace?: (key: string, text: string) => void;
 }) {
   if (kind === "A") {
     const entries = Object.entries(orders);
     return (
-      <div className="orders" aria-label={`${titleCase(power)} orders`}>
+      <div className="orders" role="group" aria-label={`${titleCase(power)} orders`}>
         {allowance === 0 ? <p className="hint">{titleCase(power)} has nothing to build or disband.</p> : null}
         {allowance > 0 ? (
           <p className="hint">
             {titleCase(power)} may build {allowance} {allowance === 1 ? "unit" : "units"}. Click an empty home supply
-            centre.
+            centre, or waive.
           </p>
         ) : null}
         {allowance < 0 ? (
@@ -122,7 +131,7 @@ export function OrderList({
         {entries.map(([key, text]) => (
           <div className="row given" key={key}>
             <code>{text}</code>
-            <button type="button" aria-label={`Remove ${text}`} onClick={() => onRemove(key)}>
+            <button type="button" className="remove" aria-label={`Remove ${text}`} onClick={() => onRemove(key)}>
               ×
             </button>
           </div>
@@ -138,14 +147,25 @@ export function OrderList({
     );
   }
   return (
-    <div className="orders" aria-label={`${titleCase(power)} orders`}>
+    <div className="orders" role="group" aria-label={`${titleCase(power)} orders`}>
       {units.map((unit) => {
         const text = orders[unit];
         return (
           <div className={`row ${text ? "given" : "missing"}`} key={unit}>
             <code>{text ?? unit}</code>
+            {text && alternative?.(text) ? (
+              <button
+                type="button"
+                className="via"
+                aria-pressed={text.endsWith(" VIA")}
+                aria-label={`${text}: go by convoy`}
+                onClick={() => onReplace?.(unit, alternative(text)!)}
+              >
+                By convoy
+              </button>
+            ) : null}
             {text ? (
-              <button type="button" aria-label={`Remove ${text}`} onClick={() => onRemove(unit)}>
+              <button type="button" className="remove" aria-label={`Remove ${text}`} onClick={() => onRemove(unit)}>
                 ×
               </button>
             ) : (
@@ -158,7 +178,10 @@ export function OrderList({
   );
 }
 
-export function Results({ record }: { record: PhaseRecord }) {
+type Names = Record<string, { name: string } | undefined>;
+
+export function Results({ record, names }: { record: PhaseRecord; names?: Names }) {
+  const place = (code: string) => names?.[code]?.name ?? code;
   const given = new Set(Object.values(record.orders).flatMap((o) => Object.values(o)));
   const byPower = new Map<string, typeof record.outcome.results>();
   for (const r of record.outcome.results) {
@@ -171,22 +194,30 @@ export function Results({ record }: { record: PhaseRecord }) {
   }
   const { dislodged, standoffs, civil_disorder: removed } = record.outcome;
   return (
-    <div className="results" aria-label="Adjudication results">
-      {[...byPower.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([power, list]) => (
+    <div className="results" role="group" aria-label="Adjudication results">
+      {[...byPower.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([power, list]) => (
         <section key={power} style={{ "--power": POWER_COLOR[power] } as CSSProperties}>
           <h3>
             <span className="swatch" aria-hidden />
             {titleCase(power)}
           </h3>
-          {list.map((r, i) => (
-            <div className={`receipt ${r.ok ? "ok" : "fail"}`} key={`${r.order}-${i}`}>
-              <span className="mark" aria-label={r.ok ? "succeeded" : "failed"}>
-                {r.ok ? "✓" : "✕"}
-              </span>
-              <code>{r.order}</code>
-              {r.ok ? null : <span className="why">{r.reason}</span>}
-            </div>
-          ))}
+          {list.map((r, i) => {
+            const receipt = receiptFor(r, record.phase, names, record.outcome.results);
+            return (
+              <div className={`receipt ${receipt.tone}`} key={`${r.order}-${i}`} data-code={r.code}>
+                <span className="mark" aria-hidden="true">
+                  {receipt.tone === "ok" ? "✓" : receipt.tone === "fail" ? "✕" : "–"}
+                </span>
+                <code>
+                  {r.order}
+                  <span className="sr-only">
+                    {receipt.tone === "ok" ? ": succeeded" : receipt.tone === "fail" ? ": failed" : ": done"}
+                  </span>
+                </code>
+                {receipt.detail ? <span className="why">{receipt.detail}</span> : null}
+              </div>
+            );
+          })}
         </section>
       ))}
       {byPower.size === 0 ? <p className="hint">Every unit held.</p> : null}
@@ -194,11 +225,13 @@ export function Results({ record }: { record: PhaseRecord }) {
         <section className="aftermath">
           {dislodged.map((d) => (
             <p key={d.unit}>
-              <code>{d.unit}</code> was dislodged by the attack from {d.attacker_from}.{" "}
-              {d.retreat_options.length ? `It may retreat to ${d.retreat_options.join(", ")}.` : "It has nowhere to go."}
+              <code>{d.unit}</code> was dislodged by the attack from {place(d.attacker_from)}.{" "}
+              {d.retreat_options.length
+                ? `It may retreat to ${d.retreat_options.map((o) => place(o.slice(0, 3)) + (o.length > 3 ? ` (${o.slice(4)})` : "")).join(", ")}.`
+                : "It has nowhere to go and will be disbanded."}
             </p>
           ))}
-          {standoffs.length ? <p>Standoff in {standoffs.join(", ")}. Nobody may retreat there.</p> : null}
+          {standoffs.length ? <p>Standoff in {standoffs.map(place).join(", ")}. Nobody may retreat there.</p> : null}
           {removed.length ? <p>Removed in civil disorder: {removed.join(", ")}.</p> : null}
         </section>
       ) : null}
@@ -211,35 +244,90 @@ export function PhaseStepper({
   viewing,
   livePhase,
   onView,
+  playing,
+  speed,
+  onPlay,
+  onPause,
+  onSpeed,
 }: {
   history: PhaseRecord[];
   viewing: number | null;
   livePhase: string;
+  /** A step, a jump or a scrub by the player. Playback pauses for it. */
   onView: (index: number | null) => void;
+  playing: boolean;
+  speed: Speed;
+  onPlay: () => void;
+  onPause: () => void;
+  onSpeed: (speed: Speed) => void;
 }) {
   if (history.length === 0) return null;
   const index = viewing ?? history.length;
   const go = (i: number) => onView(i >= history.length ? null : Math.max(0, i));
+  const name = (i: number) => (i >= history.length ? `${phaseLine(livePhase)}, now` : `${phaseLine(history[i]!.phase)} results`);
   return (
     <nav className="stepper" aria-label="Phase history">
-      <button type="button" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Previous phase">
-        ‹
-      </button>
-      <select
-        value={index}
-        onChange={(e) => go(Number(e.target.value))}
-        aria-label="Jump to phase"
-      >
-        {history.map((h, i) => (
-          <option key={h.phase + i} value={i}>
-            {h.phase} results
-          </option>
-        ))}
-        <option value={history.length}>{livePhase} (now)</option>
-      </select>
-      <button type="button" onClick={() => go(index + 1)} disabled={viewing === null} aria-label="Next phase">
-        ›
-      </button>
+      <div className="stepper-row">
+        <button
+          type="button"
+          className="replay"
+          onClick={playing ? onPause : onPlay}
+          aria-label={playing ? "Pause the replay" : viewing === null ? "Replay the game from the start" : "Replay from here"}
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            {playing ? (
+              <>
+                <rect x="3" y="2.5" width="3.4" height="11" />
+                <rect x="9.6" y="2.5" width="3.4" height="11" />
+              </>
+            ) : (
+              <path d="M4 2.2v11.6L13.6 8z" />
+            )}
+          </svg>
+          <span className="replay-label">{playing ? "Pause" : "Replay"}</span>
+        </button>
+        <button type="button" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Previous phase">
+          ‹
+        </button>
+        <select value={index} onChange={(e) => go(Number(e.target.value))} aria-label="Jump to phase">
+          {history.map((h, i) => (
+            <option key={h.phase + i} value={i}>
+              {h.phase} results
+            </option>
+          ))}
+          <option value={history.length}>{livePhase} (now)</option>
+        </select>
+        <button type="button" onClick={() => go(index + 1)} disabled={viewing === null} aria-label="Next phase">
+          ›
+        </button>
+      </div>
+      <div className="stepper-row scrub">
+        <input
+          type="range"
+          className="scrubber"
+          min={0}
+          max={history.length}
+          step={1}
+          value={index}
+          onChange={(e) => go(Number(e.target.value))}
+          aria-label="Scrub through the game"
+          aria-valuetext={name(index)}
+          style={{ "--at": `${(index / history.length) * 100}%` } as CSSProperties}
+        />
+        <div className="speeds" role="group" aria-label="Replay speed">
+          {SPEEDS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              aria-pressed={s === speed}
+              aria-label={`${speedLabel(s).short} ${speedLabel(s).long.toLowerCase()}`}
+              onClick={() => onSpeed(s)}
+            >
+              {speedLabel(s).short}
+            </button>
+          ))}
+        </div>
+      </div>
     </nav>
   );
 }

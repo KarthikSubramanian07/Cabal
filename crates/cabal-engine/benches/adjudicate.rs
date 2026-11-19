@@ -1,8 +1,11 @@
-//! Criterion benches: full-board adjudication, legal order enumeration, a convoy paradox.
+//! Criterion benches: full-board adjudication, legal order enumeration (opening and a
+//! fleet-heavy midgame), a convoy paradox.
 
-use cabal_engine::adjudicate::movement::resolve_movement;
+use cabal_engine::adjudicate::movement::{explain_movement, resolve_movement};
 use cabal_engine::geo::Map;
-use cabal_engine::legal::legal_movement;
+use cabal_engine::legal::{
+    legal_movement, legal_movement_all, legal_movement_for, movement_options,
+};
 use cabal_engine::order::Order;
 use cabal_engine::parse::parse;
 use cabal_engine::rulebook::Rulebook;
@@ -104,5 +107,152 @@ fn bench_legal(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_opening, bench_paradox, bench_legal);
+/// A crowded midgame: 34 units, 18 of them fleets at sea, most armies on the coast.
+/// Every sea fleet can convoy and almost every army can be convoyed somewhere, which is
+/// the worst case for legal order enumeration (the 1901 bench has no fleet at sea).
+fn midgame_position(map: &Map) -> Position {
+    let units = [
+        "ENG: F NAO",
+        "ENG: F NWG",
+        "ENG: F NTH",
+        "ENG: F IRI",
+        "ENG: A NWY",
+        "ENG: A LON",
+        "FRA: F ENG",
+        "FRA: F MAO",
+        "FRA: F WES",
+        "FRA: A BRE",
+        "FRA: A SPA",
+        "GER: F HEL",
+        "GER: F SKA",
+        "GER: F BAL",
+        "GER: A DEN",
+        "GER: A KIE",
+        "RUS: F BOT",
+        "RUS: F BLA",
+        "RUS: A STP",
+        "RUS: A SEV",
+        "ITA: F LYO",
+        "ITA: F TYS",
+        "ITA: F ION",
+        "ITA: A NAP",
+        "ITA: A TUN",
+        "TUR: F AEG",
+        "TUR: F EAS",
+        "TUR: A SMY",
+        "TUR: A BUL",
+        "TUR: A GRE",
+        "AUS: F ADR",
+        "AUS: A TRI",
+        "AUS: A ALB",
+        "AUS: A SER",
+    ];
+    let mut pos = Position::default();
+    for line in units {
+        let p = parse(map, &format!("{line} H")).unwrap();
+        let region = p.region.unwrap();
+        let kind = p.kind.unwrap();
+        pos.add_unit(cabal_engine::Unit {
+            power: p.power.unwrap(),
+            kind,
+            region: if kind == cabal_engine::UnitKind::Army {
+                cabal_engine::Region::land(region.province)
+            } else {
+                region
+            },
+        });
+    }
+    assert_eq!(pos.units.len(), 34);
+    pos
+}
+
+fn bench_legal_midgame(c: &mut Criterion) {
+    let map = Map::standard();
+    let pos = midgame_position(map);
+    let mut group = c.benchmark_group("midgame");
+    group.sample_size(10);
+    group.bench_function("legal orders, all powers, midgame", |b| {
+        b.iter(|| {
+            for p in map.power_ids() {
+                black_box(legal_movement(map, black_box(&pos), p));
+            }
+        })
+    });
+    group.finish();
+}
+
+/// Start-up: the standard map from the tables generated at build time, against
+/// parsing and validating the JSON document as every start did before.
+fn bench_map(c: &mut Criterion) {
+    let json = include_str!("../data/maps/standard.json");
+    let mut group = c.benchmark_group("map");
+    group.bench_function("standard map from generated tables", |b| {
+        b.iter(|| black_box(Map::standard_uncached()))
+    });
+    group.bench_function("standard map parsed from JSON", |b| {
+        b.iter(|| black_box(Map::from_json(black_box(json)).unwrap()))
+    });
+    group.finish();
+}
+
+/// The whole board at once: one shared convoy search against one per power.
+fn bench_legal_shared(c: &mut Criterion) {
+    let map = Map::standard();
+    let pos = midgame_position(map);
+    let mut group = c.benchmark_group("midgame");
+    group.sample_size(10);
+    group.bench_function("legal orders, all powers, shared search", |b| {
+        b.iter(|| black_box(legal_movement_all(map, black_box(&pos))))
+    });
+    group.bench_function("legal options, all powers, structured", |b| {
+        b.iter(|| black_box(movement_options(map, black_box(&pos))))
+    });
+    // the cost of turning those orders into text, one at a time and in a batch
+    let all = legal_movement_all(map, &pos);
+    group.bench_function("order text, every legal order, one by one", |b| {
+        b.iter(|| {
+            for orders in all.values() {
+                for o in orders {
+                    black_box(cabal_engine::text::order_text(map, &pos, o));
+                }
+            }
+        })
+    });
+    group.bench_function("order text, every legal order, batch", |b| {
+        b.iter(|| {
+            let texts = cabal_engine::text::OrderTexts::new(map, &pos);
+            for orders in all.values() {
+                for o in orders {
+                    black_box(texts.order(o));
+                }
+            }
+        })
+    });
+    group.bench_function("legal orders, one unit", |b| {
+        let unit = pos.units[0].province();
+        b.iter(|| black_box(legal_movement_for(map, black_box(&pos), unit)))
+    });
+    group.finish();
+}
+
+/// Adjudication with the full explanation: strengths, supports, cycles.
+fn bench_explain(c: &mut Criterion) {
+    let map = Map::standard();
+    let pos = Position::initial(map);
+    let o = opening_orders(map);
+    c.bench_function("explain spring 1901 (22 units)", |b| {
+        b.iter(|| explain_movement(map, black_box(&pos), Rulebook::default(), black_box(&o)))
+    });
+}
+
+criterion_group!(
+    benches,
+    bench_map,
+    bench_legal_shared,
+    bench_explain,
+    bench_opening,
+    bench_paradox,
+    bench_legal,
+    bench_legal_midgame
+);
 criterion_main!(benches);

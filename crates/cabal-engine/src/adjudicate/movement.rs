@@ -14,7 +14,7 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::geo::{Map, Power, ProvinceId, Region, UnitKind};
-use crate::order::{Command, Order, Unit};
+use crate::order::{Command, Order, Unit, check, fleet_seas};
 use crate::outcome::{
     ConvoyOutcome, HoldOutcome, Illegal, MoveOutcome, OrderOutcome, SupportOutcome,
 };
@@ -61,6 +61,202 @@ pub fn resolve_movement(
     // ownership only changes after Fall retreats; carry it through untouched
     result.position.owners = position.owners.clone();
     result
+}
+
+/// Dependencies actually queried while resolving orders, including cached and cyclic queries.
+/// An edge `(a, b)` means order `a` asked for the result of order `b`.
+/// Nodes follow the same stable region order as `MovementResult::orders`.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct MovementDependencies {
+    pub orders: Vec<Order>,
+    pub outcomes: Vec<OrderOutcome>,
+    pub edges: BTreeSet<(usize, usize)>,
+}
+
+impl MovementDependencies {
+    /// Render a standalone Graphviz graph. Labels are escaped as DOT quoted strings.
+    pub fn to_dot(&self, map: &Map, position: &Position) -> String {
+        let mut dot = String::from("digraph movement {\n");
+        for (i, (order, outcome)) in self.orders.iter().zip(&self.outcomes).enumerate() {
+            let label = format!(
+                "{}: {}",
+                crate::text::order_text(map, position, order),
+                crate::text::describe_outcome(map, outcome)
+            );
+            let label = serde_json::to_string(&label).expect("string serialization");
+            dot.push_str(&format!("  n{i} [label={label}];\n"));
+        }
+        for (from, to) in &self.edges {
+            dot.push_str(&format!("  n{from} -> n{to};\n"));
+        }
+        dot.push_str("}\n");
+        dot
+    }
+}
+
+/// Resolve with an execution dependency trace, without changing the adjudication rules.
+/// Final explanation queries are excluded from the trace.
+pub fn resolve_movement_with_dependencies(
+    map: &Map,
+    position: &Position,
+    rulebook: Rulebook,
+    orders: &[Order],
+) -> (MovementResult, MovementDependencies) {
+    let mut resolver = Resolver::new(map, position, rulebook, orders);
+    resolver.tracking = true;
+    for i in 0..resolver.entries.len() {
+        resolver.resolve(i, true);
+    }
+    resolver.tracking = false;
+    let edges = std::mem::take(&mut resolver.dependencies);
+    let mut result = resolver.finish();
+    result.position.owners = position.owners.clone();
+    let graph = MovementDependencies {
+        orders: result.orders.clone(),
+        outcomes: result.outcomes.clone(),
+        edges,
+    };
+    (result, graph)
+}
+
+/// How a dependency cycle was settled (the backup rules of DATC 5.E).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CycleKind {
+    /// Every member is a move: they all succeed.
+    CircularMovement,
+    /// A convoy is part of the cycle: the convoys fail (Szykman rule).
+    ConvoyParadox,
+    /// Any other cycle: every member fails.
+    Unresolved,
+}
+
+/// Orders that depended on one another in a circle, and how that was settled.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Cycle {
+    pub kind: CycleKind,
+    /// Indices into `MovementResult::orders`, ascending.
+    pub members: Vec<usize>,
+}
+
+/// What a move had to overcome in its destination.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Opposition {
+    /// Nobody there, or the occupant moved away.
+    Empty,
+    /// The occupant stayed: the move had to beat its hold strength (DATC 5.B.5).
+    Hold {
+        occupant: ProvinceId,
+        strength: u32,
+        /// The occupant belongs to the mover's own power and cannot be dislodged.
+        own_unit: bool,
+    },
+    /// The occupant moved the opposite way: its defend strength counts (DATC 5.B.7).
+    HeadToHead { opponent: ProvinceId, strength: u32 },
+}
+
+/// Another move into the same province.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Rival {
+    pub unit: ProvinceId,
+    /// Prevent strength (DATC 5.B.6): zero when it had no path or lost a head-to-head.
+    pub prevent: u32,
+}
+
+/// A support order aimed at this order, and whether it added strength.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct SupportUse {
+    pub supporter: ProvinceId,
+    pub outcome: SupportOutcome,
+    /// False when the support failed, or was given against the supporter's own unit.
+    pub counted: bool,
+    /// Units whose attack cut this support.
+    pub cut_by: Vec<ProvinceId>,
+}
+
+/// A move against this unit's province.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Attack {
+    pub from: ProvinceId,
+    pub strength: u32,
+    pub succeeded: bool,
+}
+
+/// A fleet ordered to convoy this army.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct ConvoyUse {
+    pub fleet: ProvinceId,
+    pub outcome: ConvoyOutcome,
+}
+
+/// The numbers and the units behind one order's result.
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub struct OrderWhy {
+    /// Moves: attack strength (DATC 5.B.8). Zero without a path, or against an own unit.
+    pub attack: Option<u32>,
+    /// Moves: what stood in the destination.
+    pub opposition: Option<Opposition>,
+    /// Moves: every other move into the same province.
+    pub rivals: Vec<Rival>,
+    /// Units that stayed put: the strength an attacker had to beat.
+    pub hold: Option<u32>,
+    /// Moves against this unit's province.
+    pub attacks: Vec<Attack>,
+    /// Supports for this order, counted or not.
+    pub supports: Vec<SupportUse>,
+    /// Support orders: units whose attack cut it.
+    pub cut_by: Vec<ProvinceId>,
+    /// Moves: the army travels by convoy.
+    pub by_convoy: bool,
+    /// Convoyed moves: the fleets ordered to carry the army.
+    pub convoys: Vec<ConvoyUse>,
+    /// Convoyed moves: did an unbroken chain of convoys exist in the end?
+    pub convoy_path: Option<bool>,
+    /// Index into `MovementExplanation::cycles` when a backup rule settled this order.
+    pub cycle: Option<usize>,
+}
+
+/// Everything behind a movement phase: the dependency trace, the strengths of
+/// DATC 5.B for every order, and the cycles settled by backup rules.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct MovementExplanation {
+    pub orders: Vec<Order>,
+    pub outcomes: Vec<OrderOutcome>,
+    /// `(a, b)`: resolving order `a` asked for the result of order `b`.
+    pub edges: BTreeSet<(usize, usize)>,
+    /// One entry per order.
+    pub why: Vec<OrderWhy>,
+    pub cycles: Vec<Cycle>,
+}
+
+/// Resolve and explain: the result plus, for every order, the strengths it was
+/// judged on, the supports that counted, who cut what, and any paradox cycle.
+/// The adjudication is the same as [`resolve_movement`].
+pub fn explain_movement(
+    map: &Map,
+    position: &Position,
+    rulebook: Rulebook,
+    orders: &[Order],
+) -> (MovementResult, MovementExplanation) {
+    let mut resolver = Resolver::new(map, position, rulebook, orders);
+    resolver.tracking = true;
+    for i in 0..resolver.entries.len() {
+        resolver.resolve(i, true);
+    }
+    resolver.tracking = false;
+    let edges = std::mem::take(&mut resolver.dependencies);
+    let mut result = resolver.finish();
+    result.position.owners = position.owners.clone();
+    let why = resolver.why(&result);
+    let explanation = MovementExplanation {
+        orders: result.orders.clone(),
+        outcomes: result.outcomes.clone(),
+        edges,
+        why,
+        cycles: std::mem::take(&mut resolver.cycles),
+    };
+    (result, explanation)
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +313,11 @@ struct Resolver<'a> {
     recursion_hits: usize,
     uncertain: bool,
     paradox: Vec<bool>,
+    tracking: bool,
+    stack: Vec<usize>,
+    dependencies: BTreeSet<(usize, usize)>,
+    /// dependency cycles settled by a backup rule, in the order they were met
+    cycles: Vec<Cycle>,
 }
 
 impl<'a> Resolver<'a> {
@@ -152,113 +353,33 @@ impl<'a> Resolver<'a> {
                 continue;
             }; // NoUnit: nothing to attach it to
             let e = &mut entries[i];
-            if list.len() > 1 {
+            // DATC 6.A.6: an order for another power's unit is ignored. It must
+            // never count against the owner, or any power could void a rival's
+            // order by submitting a second one for the same unit.
+            let owner = e.unit.power;
+            let mut own = list.iter().filter(|o| o.power == owner);
+            match (own.next(), own.next()) {
+                (None, _) => e.illegal = Some(Illegal::ForeignUnit),
+                (Some(o), None) => e.command = o.command,
                 // DATC 4.D.3: all orders illegal, unit holds
-                e.illegal = Some(Illegal::DuplicateOrder);
-                continue;
+                (Some(_), Some(_)) => e.illegal = Some(Illegal::DuplicateOrder),
             }
-            let o = list[0];
-            if o.power != e.unit.power {
-                e.illegal = Some(Illegal::ForeignUnit);
-                continue;
-            }
-            e.command = o.command;
         }
 
-        let fleet_seas: BTreeSet<ProvinceId> = units
-            .iter()
-            .filter(|u| u.kind == UnitKind::Fleet && map.is_sea(u.province()))
-            .map(|u| u.province())
-            .collect();
-
-        // validate each command (DATC section 3 / 4.E.1)
-        for i in 0..entries.len() {
-            let e = &entries[i];
-            if e.illegal.is_some() {
-                continue;
-            }
-            let unit = e.unit;
-            let verdict: Result<(Option<Region>, bool), Illegal> = match e.command {
-                Command::Hold => Ok((None, false)),
-                Command::Move {
-                    dest,
-                    coast,
-                    via_convoy,
-                } => {
-                    if dest == unit.province() {
-                        Err(Illegal::MoveToSelf)
-                    } else {
-                        match unit.kind {
-                            UnitKind::Army => {
-                                if map.adjacent_province(unit.region, UnitKind::Army, dest) {
-                                    Ok((Some(Region::land(dest)), via_convoy))
-                                } else if convoy_possible(map, &fleet_seas, unit.province(), dest) {
-                                    Ok((Some(Region::land(dest)), true))
-                                } else {
-                                    Err(Illegal::Unreachable)
-                                }
-                            }
-                            UnitKind::Fleet => {
-                                match map.fleet_destination(unit.region, dest, coast) {
-                                    Ok(r) => Ok((Some(r), false)),
-                                    Err(crate::geo::CoastError::Ambiguous) => {
-                                        Err(Illegal::AmbiguousCoast)
-                                    }
-                                    Err(crate::geo::CoastError::Unreachable) => {
-                                        Err(Illegal::Unreachable)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Command::SupportHold { target } => {
-                    if target == unit.province() {
-                        Err(Illegal::SupportSelf)
-                    } else if !at.contains_key(&target) {
-                        Err(Illegal::SupportNoUnit)
-                    } else if !map.adjacent_province(unit.region, unit.kind, target) {
-                        Err(Illegal::SupportUnreachable)
-                    } else {
-                        Ok((None, false))
-                    }
-                }
-                Command::SupportMove { target, dest, .. } => {
-                    if target == unit.province() {
-                        Err(Illegal::SupportSelf)
-                    } else if dest == unit.province() {
-                        Err(Illegal::Unreachable)
-                    } else if !at.contains_key(&target) {
-                        Err(Illegal::SupportNoUnit)
-                    } else if !map.adjacent_province(unit.region, unit.kind, dest) {
-                        Err(Illegal::SupportUnreachable)
-                    } else {
-                        Ok((None, false))
-                    }
-                }
-                Command::Convoy { army, dest } => {
-                    if unit.kind != UnitKind::Fleet || !map.is_sea(unit.province()) {
-                        Err(Illegal::ConvoyNotAtSea)
-                    } else if !at
-                        .get(&army)
-                        .map(|&j| entries[j].unit.kind == UnitKind::Army)
-                        .unwrap_or(false)
-                    {
-                        Err(Illegal::ConvoyNotArmy)
-                    } else if !map.is_coastal(army) || !map.is_coastal(dest) || army == dest {
-                        Err(Illegal::Unreachable)
-                    } else if !on_convoy_route(map, &fleet_seas, army, dest, unit.province()) {
-                        Err(Illegal::ConvoyNoRoute)
-                    } else {
-                        Ok((None, false))
-                    }
-                }
+        // validate each command (DATC section 3 / 4.E.1); `check` is `normalise`, so the
+        // resolver adjudicates exactly the canonical order a host would have submitted
+        let fleet_seas = fleet_seas(map, position);
+        for e in entries.iter_mut().filter(|e| e.illegal.is_none()) {
+            let order = Order {
+                power: e.unit.power,
+                unit: e.province(),
+                command: e.command,
             };
-            let e = &mut entries[i];
-            match verdict {
-                Ok((dest_region, by_convoy)) => {
-                    e.dest_region = dest_region;
-                    e.by_convoy = by_convoy;
+            match check(map, position, &fleet_seas, order) {
+                Ok(checked) => {
+                    e.command = checked.order.command;
+                    e.dest_region = checked.dest_region;
+                    e.by_convoy = checked.by_convoy;
                 }
                 Err(reason) => {
                     e.illegal = Some(reason);
@@ -335,9 +456,14 @@ impl<'a> Resolver<'a> {
                 } => {
                     let m = at.get(&target).copied().filter(|&m| {
                         entries[m].dest() == Some(dest)
-                            && coast.is_none_or(|c| {
-                                entries[m].dest_region.and_then(|r| r.coast) == Some(c)
-                            })
+                            && coast
+                                .filter(|c| {
+                                    entries[m].unit.kind == UnitKind::Fleet
+                                        && map.province(dest).coasts.contains(c)
+                                })
+                                .is_none_or(|c| {
+                                    entries[m].dest_region.and_then(|r| r.coast) == Some(c)
+                                })
                     });
                     match m {
                         Some(m) => move_supports[m].push(s),
@@ -381,12 +507,29 @@ impl<'a> Resolver<'a> {
             recursion_hits: 0,
             uncertain: false,
             paradox: vec![false; n],
+            tracking: false,
+            stack: Vec::new(),
+            dependencies: BTreeSet::new(),
+            cycles: Vec::new(),
         }
     }
 
     // ---- resolve (DATC 5.E, final form) ----
 
     fn resolve(&mut self, i: usize, optimistic: bool) -> bool {
+        if !self.tracking {
+            return self.resolve_inner(i, optimistic);
+        }
+        if let Some(&parent) = self.stack.last() {
+            self.dependencies.insert((parent, i));
+        }
+        self.stack.push(i);
+        let result = self.resolve_inner(i, optimistic);
+        self.stack.pop();
+        result
+    }
+
+    fn resolve_inner(&mut self, i: usize, optimistic: bool) -> bool {
         if let Some(r) = self.resolved[i] {
             return r;
         }
@@ -428,7 +571,9 @@ impl<'a> Resolver<'a> {
             self.backup_rule(&members);
             self.cycle.truncate(old_cycle_len);
             self.uncertain = old_uncertain;
-            return self.resolve(i, optimistic);
+            // This restarts the same equation after the backup rule; it is not
+            // a dependency query from the equation to itself.
+            return self.resolve_inner(i, optimistic);
         }
         if !self.cycle.contains(&i) {
             self.cycle.push(i);
@@ -437,11 +582,18 @@ impl<'a> Resolver<'a> {
     }
 
     fn backup_rule(&mut self, members: &[usize]) {
+        let mut sorted = members.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
         if members.iter().all(|&m| self.entries[m].is_move()) {
             // circular movement: every move succeeds
             for &m in members {
                 self.resolved[m] = Some(true);
             }
+            self.cycles.push(Cycle {
+                kind: CycleKind::CircularMovement,
+                members: sorted,
+            });
             return;
         }
         let convoys: Vec<usize> = members
@@ -455,11 +607,19 @@ impl<'a> Resolver<'a> {
                 self.paradox[c] = true;
                 self.resolved[c] = Some(false);
             }
+            self.cycles.push(Cycle {
+                kind: CycleKind::ConvoyParadox,
+                members: sorted,
+            });
             return;
         }
         for &m in members {
             self.resolved[m] = Some(false);
         }
+        self.cycles.push(Cycle {
+            kind: CycleKind::Unresolved,
+            members: sorted,
+        });
     }
 
     // ---- adjudicate: the equations of DATC 5.B ----
@@ -682,7 +842,7 @@ impl<'a> Resolver<'a> {
     // ---- explanation and bookkeeping ----
 
     #[allow(clippy::needless_range_loop)] // indices are shared across several parallel tables
-    fn finish(mut self) -> MovementResult {
+    fn finish(&mut self) -> MovementResult {
         let n = self.entries.len();
         let ok: Vec<bool> = (0..n).map(|i| self.resolved[i].unwrap_or(false)).collect();
         let moved_v: Vec<bool> = (0..n).map(|i| self.entries[i].is_move() && ok[i]).collect();
@@ -702,7 +862,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // standoffs: no move in, at least one failed move in by a unit that was not itself dislodged
+        // standoffs: no move in, at least one failed move in that still contested the province
         // every PATH is now a function of resolved orders
         let path_ok: Vec<bool> = (0..n)
             .map(|i| self.entries[i].is_move() && self.path_final(i))
@@ -717,9 +877,17 @@ impl<'a> Resolver<'a> {
             if list.iter().any(|&m| ok[m]) {
                 continue;
             }
-            let contested = list
-                .iter()
-                .any(|&m| dislodged_by[m].is_none() && path_ok[m]);
+            // A move contests its destination when it has prevent strength (DATC 5.B.6).
+            // That is zero only without a path or for the loser of a head-to-head
+            // battle, which has no effect on the province its attacker came from.
+            // A unit dislodged from a third province still bounces what it meets.
+            let mut contested = false;
+            for &m in &list {
+                if path_ok[m] && self.prevent_strength(m, true) > 0 {
+                    contested = true;
+                    break;
+                }
+            }
             if !contested {
                 continue;
             }
@@ -758,17 +926,11 @@ impl<'a> Resolver<'a> {
                         } else if ok[i] {
                             SupportOutcome::Succeeds
                         } else {
-                            let p = e.province();
                             let cutter = self
-                                .attackers
-                                .get(&p)
-                                .and_then(|l| {
-                                    l.iter().copied().find(|&m| {
-                                        self.entries[m].unit.power != e.unit.power && path_ok[m]
-                                    })
-                                })
-                                .map(|m| self.entries[m].province())
-                                .unwrap_or(p);
+                                .cutters(i)
+                                .first()
+                                .map(|&m| self.entries[m].province())
+                                .unwrap_or(e.province());
                             SupportOutcome::Cut { by: cutter }
                         })
                     }
@@ -830,6 +992,145 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// Moves that cut support order `s`: attacks with a path from another power,
+    /// other than from the province the support is aimed at (DATC 5.B.2).
+    fn cutters(&mut self, s: usize) -> Vec<usize> {
+        let me = self.entries[s].unit;
+        let aimed_at = match self.entries[s].command {
+            Command::SupportHold { target } => target,
+            Command::SupportMove { dest, .. } => dest,
+            _ => return Vec::new(),
+        };
+        let list = self
+            .attackers
+            .get(&me.province())
+            .cloned()
+            .unwrap_or_default();
+        let mut out = Vec::new();
+        for m in list {
+            if self.entries[m].unit.power != me.power
+                && self.entries[m].province() != aimed_at
+                && self.path_final(m)
+            {
+                out.push(m);
+            }
+        }
+        out
+    }
+
+    /// The strengths and actors behind every order. Call after `finish`: every
+    /// order is resolved, so each strength is its final value.
+    fn why(&mut self, result: &MovementResult) -> Vec<OrderWhy> {
+        let n = self.entries.len();
+        let mut out = Vec::with_capacity(n);
+        for i in 0..n {
+            let e = self.entries[i].clone();
+            let mut why = OrderWhy {
+                cycle: self.cycles.iter().position(|c| c.members.contains(&i)),
+                ..OrderWhy::default()
+            };
+            let moved = e.is_move() && self.resolved[i] == Some(true);
+            let support_use = |r: &mut Self, s: usize, counted: bool| {
+                let cut_by = match result.outcomes[s] {
+                    OrderOutcome::Support(SupportOutcome::Cut { .. }) => r
+                        .cutters(s)
+                        .into_iter()
+                        .map(|m| r.entries[m].province())
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                SupportUse {
+                    supporter: r.entries[s].province(),
+                    outcome: match &result.outcomes[s] {
+                        OrderOutcome::Support(o) => o.clone(),
+                        _ => SupportOutcome::Void,
+                    },
+                    counted,
+                    cut_by,
+                }
+            };
+            if let Command::Move { dest, .. } = e.command {
+                why.by_convoy = e.by_convoy;
+                why.attack = Some(self.attack_strength(i, true));
+                let occupant = self.at.get(&dest).copied();
+                let mut excluded = None;
+                why.opposition = Some(if let Some(j) = self.h2h(i, true) {
+                    excluded = Some(self.entries[j].unit.power);
+                    Opposition::HeadToHead {
+                        opponent: self.entries[j].province(),
+                        strength: self.defend_strength(j, true),
+                    }
+                } else {
+                    match occupant {
+                        Some(d)
+                            if !(self.entries[d].is_move() && self.resolved[d] == Some(true)) =>
+                        {
+                            excluded = Some(self.entries[d].unit.power);
+                            Opposition::Hold {
+                                occupant: dest,
+                                strength: self.hold_strength(dest, true),
+                                own_unit: self.entries[d].unit.power == e.unit.power,
+                            }
+                        }
+                        _ => Opposition::Empty,
+                    }
+                });
+                for k in self.attackers.get(&dest).cloned().unwrap_or_default() {
+                    if k != i {
+                        why.rivals.push(Rival {
+                            unit: self.entries[k].province(),
+                            prevent: self.prevent_strength(k, true),
+                        });
+                    }
+                }
+                for s in self.move_supports[i].clone() {
+                    let counted = self.resolved[s] == Some(true)
+                        && excluded != Some(self.entries[s].unit.power);
+                    why.supports.push(support_use(self, s, counted));
+                }
+                if e.by_convoy {
+                    for f in self.convoys_for[i].clone() {
+                        why.convoys.push(ConvoyUse {
+                            fleet: self.entries[f].province(),
+                            outcome: match &result.outcomes[f] {
+                                OrderOutcome::Convoy(o) => o.clone(),
+                                _ => ConvoyOutcome::Void,
+                            },
+                        });
+                    }
+                    why.convoy_path = Some(self.convoy_path_final(i));
+                }
+            }
+            if !moved {
+                let p = e.province();
+                why.hold = Some(self.hold_strength(p, true));
+                for s in self.hold_supports.get(&p).cloned().unwrap_or_default() {
+                    let counted = self.resolved[s] == Some(true);
+                    why.supports.push(support_use(self, s, counted));
+                }
+                for m in self.attackers.get(&p).cloned().unwrap_or_default() {
+                    why.attacks.push(Attack {
+                        from: self.entries[m].province(),
+                        strength: self.attack_strength(m, true),
+                        succeeded: self.resolved[m] == Some(true),
+                    });
+                }
+            }
+            if matches!(
+                result.outcomes[i],
+                OrderOutcome::Support(SupportOutcome::Cut { .. })
+            ) {
+                why.cut_by = self
+                    .cutters(i)
+                    .into_iter()
+                    .map(|m| self.entries[m].province())
+                    .collect();
+            }
+            out.push(why);
+        }
+        out
+    }
+
     /// PATH with every order resolved.
     fn path_final(&mut self, i: usize) -> bool {
         self.path(i, true)
@@ -872,13 +1173,6 @@ impl<'a> Resolver<'a> {
     }
 }
 
-/// Fleet adjacency between two provinces, considering every coast region of `a`.
-fn fleet_adjacent(map: &Map, a: ProvinceId, b: ProvinceId) -> bool {
-    map.regions_of(a)
-        .into_iter()
-        .any(|r| map.adjacent_province(r, UnitKind::Fleet, b))
-}
-
 /// Is there any chain of fleet-occupied sea provinces from `origin` to `dest`?
 pub(crate) fn convoy_possible(
     map: &Map,
@@ -910,7 +1204,7 @@ pub(crate) fn on_convoy_route(
     fleet: ProvinceId,
 ) -> bool {
     let seas: Vec<ProvinceId> = fleet_seas.iter().copied().collect();
-    let adj = |a: ProvinceId, b: ProvinceId| fleet_adjacent(map, a, b);
+    let adj = |a: ProvinceId, b: ProvinceId| map.fleet_adjacent(a, b);
     let mut chain = Vec::new();
     chordless_dfs(&seas, &mut chain, origin, dest, fleet, &adj)
 }
@@ -961,7 +1255,7 @@ fn reachable_seas(map: &Map, seas: &[ProvinceId], start: ProvinceId) -> BTreeSet
     let mut queue: VecDeque<ProvinceId> = seas
         .iter()
         .copied()
-        .filter(|&s| fleet_adjacent(map, s, start))
+        .filter(|&s| map.fleet_adjacent(s, start))
         .collect();
     while let Some(s) = queue.pop_front() {
         if !seen.insert(s) {
@@ -983,5 +1277,80 @@ fn sea_path_exists(map: &Map, seas: &[ProvinceId], origin: ProvinceId, dest: Pro
     }
     reachable_seas(map, seas, origin)
         .iter()
-        .any(|&s| fleet_adjacent(map, s, dest))
+        .any(|&s| map.fleet_adjacent(s, dest))
+}
+
+/// [`convoy_possible`] from `origin` to every province at once, indexed by province id.
+/// The sea search runs once and is shared by every destination.
+pub(crate) fn convoy_destinations(
+    map: &Map,
+    fleet_seas: &BTreeSet<ProvinceId>,
+    origin: ProvinceId,
+) -> Vec<bool> {
+    let mut out = vec![false; map.provinces().len()];
+    if !map.is_coastal(origin) || fleet_seas.is_empty() {
+        return out;
+    }
+    let seas: Vec<ProvinceId> = fleet_seas.iter().copied().collect();
+    let reach = reachable_seas(map, &seas, origin);
+    for p in map.province_ids() {
+        out[p.0 as usize] =
+            p != origin && map.is_coastal(p) && reach.iter().any(|&s| map.fleet_adjacent(s, p));
+    }
+    out
+}
+
+/// [`on_convoy_route`] from `origin` for every destination and fleet at once, row-major
+/// `[dest * len + fleet]`. The chordless chains leaving `origin` do not depend on the
+/// destination or the fleet asked about, so one walk over them answers every query.
+pub(crate) fn convoy_route_fleets(
+    map: &Map,
+    fleet_seas: &BTreeSet<ProvinceId>,
+    origin: ProvinceId,
+) -> Vec<bool> {
+    let n = map.provinces().len();
+    let mut out = vec![false; n * n];
+    let seas: Vec<ProvinceId> = fleet_seas.iter().copied().collect();
+    let mut chain = Vec::new();
+    route_walk(map, &seas, &mut chain, origin, &mut out);
+    out
+}
+
+/// The walk of [`chordless_dfs`] without a target: at every chain, record each destination
+/// it is a non-detour route to, against every fleet on it.
+fn route_walk(
+    map: &Map,
+    seas: &[ProvinceId],
+    chain: &mut Vec<ProvinceId>,
+    origin: ProvinceId,
+    out: &mut [bool],
+) {
+    let n = map.provinces().len();
+    let last = *chain.last().unwrap_or(&origin);
+    if let Some((_, before)) = chain.split_last() {
+        for dest in map.province_ids() {
+            if map.fleet_adjacent(last, dest)
+                && !before.iter().any(|&e| map.fleet_adjacent(e, dest))
+            {
+                let row = dest.0 as usize * n;
+                for &f in chain.iter() {
+                    out[row + f.0 as usize] = true;
+                }
+            }
+        }
+    }
+    for &s in seas {
+        if chain.contains(&s)
+            || !map.fleet_adjacent(last, s)
+            || (!chain.is_empty()
+                && std::iter::once(&origin)
+                    .chain(&chain[..chain.len() - 1])
+                    .any(|&e| map.fleet_adjacent(e, s)))
+        {
+            continue;
+        }
+        chain.push(s);
+        route_walk(map, seas, chain, origin, out);
+        chain.pop();
+    }
 }

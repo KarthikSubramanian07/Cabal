@@ -10,7 +10,8 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src test",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
+    "load:sockets": "node scripts/load-sockets.mjs",
     "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types",
     "engine:sync": "node scripts/sync-wasm.mjs",
@@ -20,15 +21,16 @@
     "predeploy": "node scripts/sync-wasm.mjs"
   },
   "dependencies": {
+    "@cabal/agents": "workspace:*",
     "@cabal/engine": "workspace:*",
     "@cabal/protocol": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.22.0",
-    "@cloudflare/workers-types": "^5.20260915.1",
-    "oxlint": "^1.83.0",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.0",
-    "wrangler": "^4.132.0"
+    "@cloudflare/vitest-plugin": "^1.6.0",
+    "@cloudflare/workers-types": "^5.20261108.1",
+    "oxlint": "^1.92.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0",
+    "wrangler": "^4.158.0"
   }
 }

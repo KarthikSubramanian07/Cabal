@@ -14,37 +14,35 @@ flowchart TB
   end
 
   subgraph Edge["Cloudflare"]
-    Pages[(Pages\nplaycabal.pages.dev)]
-    API[Worker: cabal-api\nrouting, auth, lobby]
+    Pages[(Pages: playcabal\nstatic site + /api proxy)]
+    API[Worker: cabal-server\nrouting, lobby, rate limits]
     subgraph DO["Durable Object: GameRoom (one per game)"]
       WS[Hibernating WebSockets]
       SM[Phase state machine]
-      EngineS[cabal-engine.wasm]
-      SQL[(SQLite: phases, orders,\nmessages, pledges)]
+      EngineS[cabal-engine.wasm\nadjudication + heuristic bot]
+      SQL[(SQLite: seats, orders,\npress, pledges, phases, events)]
       Alarm[Alarm: deadline]
       WS --> SM --> EngineS --> SQL
       Alarm --> SM
     end
-    D1[(D1: users, ratings,\ngames index)]
-    Queue[[Queue: after-phase events]]
-    AgentsW[Worker: cabal-agents]
-    Gateway[AI Gateway]
+    Registry[(Durable Object: Registry\none instance, SQLite\ngames, players, ratings, trust)]
+    Queue[[Queue: cabal-agent-turns\nopt-in Claude seats]]
   end
 
-  Client <-->|WSS| WS
-  Client -->|HTTPS| API
+  Client -->|same-origin HTTPS and WSS /api| Pages
+  Pages -->|service binding SERVER| API
   API --> DO
-  API --> D1
-  SM --> Queue --> AgentsW --> Gateway --> Anthropic[(Anthropic API)]
-  AgentsW <-->|WSS as a player| WS
-  DO -->|game over summary| D1
+  API --> Registry
+  DO -->|game over| Registry
+  SM --> Queue --> Anthropic[(Anthropic API)]
 ```
 
-Three principles:
+Four principles:
 
 1. **One engine, two hosts.** The Rust crate is compiled once to WebAssembly. The browser uses it for instant feedback; the Durable Object uses it as the authority. They cannot disagree because they are the same bytes.
 2. **One object owns one game.** All state for a game (positions, orders, press, pledges, deadlines, sockets) lives in one Durable Object with SQLite storage. Adjudication, persistence and broadcast are one transaction. No cross-service hop on the hot path.
 3. **Layers above the line never touch the resolver.** Pledges, cabals, vendettas and ratings consume adjudication results. They cannot change them.
+4. **One origin.** The browser only ever talks to `playcabal.pages.dev`. The Pages project proxies `/api/*`, including WebSocket upgrades, to the `cabal-server` Worker through a service binding named `SERVER`, so the content security policy can stay `connect-src 'self'`. In `vite dev` the same path is proxied to `http://localhost:8787`. Status: being built in phase 1; on `main` today the web app is a local sandbox that does not call the API.
 
 ## 2. Repository layout
 
@@ -53,7 +51,8 @@ cabal/
   crates/
     cabal-engine/    pure Rust: geo, orders, parser, resolver, phases, legality, json, pledges
     cabal-wasm/      wasm-bindgen + tsify bindings, generates TypeScript types
-    cabal-cli/       `cabal` CLI: adjudicate, datc, bench, explain, replay
+    cabal-bot/       the heuristic player: value maps, greedy planner, search over the real adjudicator
+    cabal-cli/       `cabal` CLI: datc, explain, legal, replay, arena, version
   packages/
     engine/          @cabal/engine  npm wrapper around the wasm-pack output
     protocol/        @cabal/protocol  zod schemas for WebSocket and HTTP messages
@@ -100,24 +99,44 @@ flowchart LR
 
 ### 3.3 Resolution
 
-The movement resolver implements the partial information algorithm from DATC v3.0 chapter 5.E (Kruijswijk). Every order has a Boolean result that never changes once decided. `adjudicate(order, optimistic)` evaluates the rule equations (attack, hold, defend, prevent strength, path, support cut, convoy) using optimistic or pessimistic values for anything undecided; `resolve(order, optimistic)` memoises, detects dependency cycles with a `recursion_hits` counter, and applies the backup rule (circular movement succeeds; convoy paradox fails the convoys per Szykman). Illegal orders are stripped before resolution and never influence it. After resolution a final explanation pass turns Booleans into `Outcome` values and a dependency graph for the UI.
+The movement resolver implements the partial information algorithm from DATC v3.0 chapter 5.E (Kruijswijk). Every order has a Boolean result that never changes once decided. `adjudicate(order, optimistic)` evaluates the rule equations (attack, hold, defend, prevent strength, path, support cut, convoy) using optimistic or pessimistic values for anything undecided; `resolve(order, optimistic)` memoises, detects dependency cycles with a `recursion_hits` counter, and applies the backup rule (circular movement succeeds; convoy paradox fails the convoys per Szykman). Illegal orders are stripped before resolution and never influence it. After resolution a final explanation pass turns Booleans into `Outcome` values.
+
+`resolve_movement_with_dependencies` additionally returns `MovementDependencies`:
+order and outcome nodes in stable region order, with sorted, deduplicated edges
+`(a, b)` when resolving order `a` queries order `b`. Cached queries and cycle
+edges are included; final explanation queries are excluded. This is an execution
+trace of the equations queried, so short-circuited branches need not appear.
+`MovementDependencies::to_dot(map, position)` renders labelled Graphviz DOT.
+`cabal explain --graph "FRA: A PAR - BUR" "FRA: A MAR S A PAR - BUR"`
+prints a standalone graph suitable for piping to `dot -Tsvg`. The original
+`resolve_movement` API and result schema are unchanged. Over WASM the trace is
+computed only on demand: `Game.explain(index)` re-runs the movement phase at
+that history index with tracing and returns `{ edges, dot }`, where edges index
+the phase outcome's `results`. Phase outcomes themselves carry no trace, so
+processing, previews and history lookups never pay for it.
+
+`order::normalise(map, position, order)` validates against the actual board unit
+and canonicalises destination coasts. The additive WASM `Game.normaliseOrders`
+method is shared by server adjudication and browser sandbox adjudication/replay
+before `Game.process`. Invalid and duplicate orders are retained for diagnostics;
+typed WASM processing also normalises movement orders.
 
 Pre-processing decides statically whether an adjacent move uses a convoy (edition policy), matches supports and convoys to moves, and identifies head-to-head pairs (never when either side is convoyed).
 
 ### 3.4 Determinism and testing
 
 - No I/O, no randomness in adjudication. Civil disorder tie breaks are alphabetical by province name.
-- DATC v3.0 corpus (171 cases, Main, Retreat, Build, editions) drives `tests/datc.rs`. A second corpus asserts full post-state positions. Both are JSON under `crates/cabal-engine/tests/data`.
+- DATC v3.0 corpus (171 cases, Main, Retreat, Build, editions) drives `tests/datc.rs`. The independent `oracle_godip.json` corpus asserts full units, dislodgements, and owners for 18 godip production cases plus two official DATC cases. Provenance, phase-boundary adapters and the DATC 6.K note are in [ENGINE_VERIFICATION.md](ENGINE_VERIFICATION.md).
 - Property tests (`proptest`): random legal order sets never panic, resolution is independent of order submission sequence, relabelling powers relabels outcomes.
-- Snapshot tests (`insta`) on explanations for the DipMath figures.
-- `criterion` benches: full board adjudication, legal order enumeration.
-- `cargo fuzz` target on the text parser.
+- Explanation tests (`tests/dependencies.rs`) assert the dependency edges traced for supported attacks, cycles, convoys and illegal orders; the DATC corpus run also checks that tracing never changes a result and that the trace and its DOT are identical when orders are submitted in reverse.
+- `criterion` benches: full board adjudication and explanation, legal order enumeration, map start-up. The CI `bench` job runs opening adjudication and the two fleet-heavy midgame legal-order benches on the base commit and on the change, back to back on one runner, and `tools/check-bench-regression.py` fails the build on a slowdown over 30 percent (`benches/baseline.json` is the fallback for local runs). Measured numbers, and what was tried and rejected, are in [PERFORMANCE.md](PERFORMANCE.md).
+- `cargo fuzz` targets on the text parser and legal movement order sets live in `fuzz/`; the nightly Stress workflow runs each for 600 seconds and retains crash artifacts. See `fuzz/README.md`.
 
 ## 4. WebAssembly boundary (`crates/cabal-wasm`, `packages/engine`)
 
-- Built with `wasm-pack build --target web`. The `.wasm` is imported by Vite via `?url` and by Wrangler through a `CompiledWasm` rule; both call the generated `init` once.
-- `tsify` derives TypeScript types for every struct crossing the boundary, so `adjudicate(state, orders)` is typed end to end. Data crosses as structured clone via `serde-wasm-bindgen`, never JSON strings.
-- Exposed API: `standardMap()`, `initialState()`, `parseOrder(text)`, `legalOrders(state, power)`, `adjudicate(state, orders, rulebook)`, `applyRetreats`, `applyAdjustments`, `toSavedGame`, `fromSavedGame`, `pledgeCommit`, `pledgeVerify`.
+- Built with `wasm-pack build --target web --profile wasm-release` (`pnpm engine:build`). The bundled maps are compiled in as static tables by the engine's `build.rs`, so nothing is parsed when the module starts. The `.wasm` is imported by Vite via `?url` and by Wrangler through a `CompiledWasm` rule; both call the generated `init` once.
+- `tsify` derives TypeScript types for every struct crossing the boundary, so `adjudicate(state, orders)` is typed end to end. Inputs cross via `serde-wasm-bindgen`; large results (legal orders, phase outcomes, explanations) are serialised once and parsed by the host, which is measurably faster than building them object by object.
+- Exposed API (`packages/engine/src/index.ts`): `ready(source)` to instantiate once, a stateful `Game` class (`new Game(rulebook, map)`, `mapName`, `Game.fromState`, `Game.fromSaved`, `Game.resume`, `Game.fromSnapshot`, `phase`, `status`, `rulebook`, `state`, `legal(power)`, `legalAll`, `legalMoves(power?)`, `validateOrders(power, orders)`, `normaliseOrders`, `process(orders)`, `preview(orders)`, `outcome(index)`, `explain(index)`, `explainPreview(orders)`, `historyLength`, `toSaved`, `snapshot`, `declareDraw(members)`, `drawMembers`, `recordMessage`, `recordPledge`, `pledgeCheck`, `pledgeReceipt`), and the free functions `version`, `buildInfo`, `mapInfo`, `preview(state, orders, rulebook)`, `explainPreview(state, orders, rulebook)`, `validateOrders(state, power, orders, rulebook)`, `canonicalOrder`, `verifySaved`, `pledgeCommit`, `pledgeOpens`, `pledgeReceipt` and `randomNonce`. Retreats and adjustments go through the same `process` call as movement. `process` never rejects a phase over one order: what cannot be adjudicated comes back in `rejected` with a code and a sentence, and is kept in the saved game. `new Game`, `Game.fromState`, `mapInfo` and the stateless helpers take an optional map name (`standard` or `duel`); a saved game names its own map. `validateOrders` judges orders against the board before they are sent; `explain` returns, per result, a sentence, the units responsible, the strengths, cut supports, broken convoys and paradox cycles. `fromSaved` adjudicates a file again and is for imports; `resume` and `fromSnapshot` trust the record and are for restoring your own storage (see [ENGINE_VERIFICATION.md](ENGINE_VERIFICATION.md)).
 
 ## 5. Server (`apps/server`)
 
@@ -138,26 +157,33 @@ stateDiagram-v2
   Finished --> [*]
 ```
 
-- Connections use the WebSocket Hibernation API via `partyserver`. Each socket is tagged with `userId` and `seat`.
+- Connections use the Durable Object WebSocket Hibernation API directly (`ctx.acceptWebSocket`, no framework). Each socket carries the seat it authenticated as in a serialised attachment, so it survives hibernation.
 - One alarm per object holds the phase deadline. On alarm: apply sealed defaults or holds for missing orders, adjudicate with the WASM engine, persist, broadcast, schedule the next alarm. The transaction is atomic inside the object.
 - "Ready to advance": when all seated players mark ready, the deadline collapses to now.
-- Every phase is an append-only row: `phases(id, name, state_json, orders_json, results_json, adjudicated_at)`. Replays are reads.
+- Every adjudicated phase is an append-only row in `phases`, and every broadcast is an append-only row in `events` with a sequence number, so a reconnecting client asks for everything `since` its last `seq`. Replays are reads.
 
 ### 5.2 SQLite schema (per game)
 
+The schema is the `SCHEMA` constant in `apps/server/src/room.ts`, which is the source of truth; this is its outline. The game's own metadata and engine state are kept in the object's key value storage.
+
 ```
-game(id, variant, rulebook, settings_json, status, created_at)
-seats(seat, power, user_id, kind human|ai, joined_at, eliminated_at)
-phases(seq, name, deadline_at, state_json, orders_json, results_json, adjudicated_at)
-orders(phase_seq, power, order_text, submitted_at, is_default)
-messages(id, phase_seq, sender, recipient, body, sent_at)
-pledges(id, message_id, pledger, audience, commitment, revealed_orders, verdict, verified_at)
-votes(kind, power, value, phase_seq)
+seats(power, kind human|ai|open|civil_disorder, name, token_hash, ready, missed, eliminated)
+orders(phase, power, orders_json, submitted_at)
+defaults(power, orders_json)
+press(id, phase, sender, recipient, body, sent_at, pledge_id)
+pledges(id, pledger, audience, phase, sealed, commitment, nonce, orders_json, receipt)
+votes(power, kind, value)
+phases(seq, name, results_json, adjudicated_at)
+events(seq, audience, payload_json)
 ```
 
-### 5.3 Cross-game (D1)
+### 5.3 Cross-game data: the `Registry` Durable Object
 
-`users`, `credentials` (passkeys), `sessions`, `games_index`, `ratings(user_id, cluster, rating, rd, volatility)`, `trust(user_id, kept, broken, updated_at)`.
+There is no D1 database (the account is at its D1 limit, see [ADR 0009](adr/0009-registry-durable-object-instead-of-d1.md)). Data that spans games lives in one SQLite-backed Durable Object class, `Registry`, bound as `env.REGISTRY` and always addressed as `idFromName("global")`. Callers use its RPC methods, never raw SQL, and its schema changes through versioned migrations that run inside the object. It holds the finished-games index, players, ratings (weighted pairwise Glicko, with diplicity-style `2/(N-1)` weighting), a reliability score, the trust ledger (pledges kept, broken and void per player) and push subscriptions. A `GameRoom` reports a finished game to it once. Status: designed, being built on issue #12; `main` does not have the class yet.
+
+### 5.4 Identity
+
+Identity is guest first. A device gets a guest account (a random id, a chosen handle, and a secret kept on the device, of which the server stores only a hash) plus an exportable recovery code. There are no passkeys or email sign-in on `pages.dev`. Seats bind to a user id. Seat tokens never appear in URLs; a socket authenticates with its first `hello` frame. Status: designed, being built on issue #12; today a seat is held by a bearer token returned from create or join.
 
 ## 6. Protocol
 
@@ -165,7 +191,9 @@ The WebSocket protocol is specified in [PROTOCOL.md](PROTOCOL.md) and enforced w
 
 ## 7. Agents (`packages/agents`)
 
-An agent is just another client. It receives the same state and message stream, builds a narrative prompt (board story, legal orders, diary, relationships), asks Claude for reasoning plus structured output, validates orders against the legal list with a repair pass, and submits through the protocol. Pledges are first class: the agent can seal commitments and reads the trust ledger of opponents.
+AI seats always play and never block a phase. The default brain is a deterministic heuristic bot written in Rust (`crates/cabal-bot`, exposed through `@cabal/engine`) that runs inside the `GameRoom`: no cost, no latency, no network. A game can opt in to Claude brains (`settings.aiBrain: 'claude'`) when `ANTHROPIC_API_KEY` is set; their turns go through the `cabal-agent-turns` queue (dead letters to `cabal-agent-turns-dlq`) under a hard per-game spend cap and a deployment-wide daily budget kept by the `Registry` (which admits a game to Claude before it starts), and any failure falls back to the bot. A game with no active human seats ends instead of playing itself forever. Status: the bot plays every AI seat and covers every seat in civil disorder inside the `GameRoom` (`apps/server/src/bot.ts`), and is described in [BOT.md](BOT.md). The Claude path is built and tested with a scripted model; it stays off in production until `ANTHROPIC_API_KEY` is set.
+
+A Claude agent (`@cabal/agents`) is just another client. It receives the same state and message stream, builds a narrative prompt (board story, legal orders, diary, relationships), asks Claude for reasoning plus structured output, validates orders against the legal list with a repair pass, and submits through the protocol. Pledges are first class: the agent can seal commitments and reads the trust ledger of opponents.
 
 ## 8. Web (`apps/web`)
 
@@ -177,15 +205,17 @@ An agent is just another client. It receives the same state and message stream, 
 
 ## 9. Deployment
 
-- `apps/web` deploys to Cloudflare Pages as `playcabal.pages.dev` on every merge to `main`.
-- `apps/server` deploys with `wrangler deploy` from CI using `CLOUDFLARE_API_TOKEN`. Durable Object migrations are declared in `wrangler.jsonc`.
-- CI (`.github/workflows/ci.yml`): Rust fmt, clippy, tests, DATC, wasm build with a size gate; Node typecheck, unit, workerd tests, Playwright; deploy jobs on `main`.
-- Nightly (`stress.yml`): fuzzing, property tests with a larger case budget, and an AI arena game.
+- Deploys are run by a maintainer from a machine logged in with `npx wrangler login`; CI holds no Cloudflare credentials.
+- `pnpm deploy:web` builds the engine and site and publishes `apps/web/dist` to Cloudflare Pages as `playcabal.pages.dev`.
+- `pnpm deploy:server` builds the engine and runs `wrangler deploy` for `apps/server`. Durable Object migrations are declared in `wrangler.jsonc`.
+- `pnpm deploy:all` does both (a bare `pnpm deploy` is a built-in pnpm command, not this script). Run it from an up to date `main` after CI is green.
+- CI (`.github/workflows/ci.yml`): Rust fmt, clippy, docs, tests and the DATC report; an adjudication benchmark gate; the wasm build with a gzip size budget; Node typecheck, lint, unit and workerd tests; Playwright; dependency and workflow audits; and a deploy dry run that bundles `cabal-server` with `wrangler deploy --dry-run` (no credentials) under a gzip size budget. The full deploy runbook is in [CONTRIBUTING.md](../CONTRIBUTING.md#deploying) and the decision in [ADR 0008](adr/0008-manual-wrangler-deploys.md).
+- Nightly (`stress.yml`): fuzzing, property tests with a larger case budget, and a bot arena: 300 seeded games between the three levels of the heuristic bot (`cabal arena`), failing on any illegal order, incomplete decision, self-contradicting order (a void support or convoy), panic, replay divergence or strength-order regression, with the summary and every saved game uploaded as an artifact. No model is called and no secret is needed.
 
 ## 10. Security and fairness
 
 - Clients never assert who they are. The socket tag from the authenticated join is the identity.
 - Orders are only accepted for the seat bound to the socket.
 - Pledge commitments are BLAKE3 hashes over canonical order text plus a 128 bit nonce; sealed pledges reveal after adjudication.
-- Rate limits on room creation and message send via Workers rate limiting bindings.
-- Multi-account heuristics and moderation hooks are phase 1 issue 7.
+- Per-IP rate limits on game creation and seat joins through Workers rate limiting bindings (`CREATE_LIMITER`, `JOIN_LIMITER`).
+- Multi-account heuristics and moderation hooks are not built and are not yet scheduled to an issue.

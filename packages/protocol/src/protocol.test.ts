@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   ClientMessage,
+  GameRecord,
   GameSettings,
+  PACING_PRESETS,
   ServerMessage,
+  drawScores,
   drawSize,
   parseClientMessage,
   ratingCluster,
+  resolveSettings,
   sumOfSquares,
 } from "./index.js";
 
@@ -14,8 +18,36 @@ describe("settings", () => {
     const s = GameSettings.parse({});
     expect(s.rulebook).toBe("2023");
     expect(s.press).toBe("full");
-    expect(s.movementSeconds).toBe(86400);
+    expect(s.movementSeconds).toBe(172800);
+    expect(s.shortPhaseSeconds).toBe(86400);
+    expect(s.graceSeconds).toBe(900);
+    expect(s.whisperBudget).toBeNull();
+    expect(s.rulebookPress).toBe(false);
+    expect(s.aiBrain).toBe("bot");
+    expect(s).toMatchObject({ scoring: "sos", visibility: "unlisted", publicVotes: true });
     expect(ratingCluster(s)).toBe("standard:full:async");
+  });
+
+  it("fills the clock from the pacing preset", () => {
+    for (const pacing of ["live", "daily", "async"] as const) {
+      const s = resolveSettings({ pacing });
+      expect(s).toMatchObject(PACING_PRESETS[pacing]);
+    }
+    expect(resolveSettings({ pacing: "live" }).movementSeconds).toBe(600);
+    expect(resolveSettings({ pacing: "daily" }).shortPhaseSeconds).toBe(43_200);
+    expect(resolveSettings({}).pacing).toBe("async");
+  });
+
+  it("lets explicit seconds override the preset", () => {
+    const s = resolveSettings({ pacing: "live", movementSeconds: 120, graceSeconds: 0 });
+    expect(s.movementSeconds).toBe(120);
+    expect(s.graceSeconds).toBe(0);
+    expect(s.shortPhaseSeconds).toBe(300);
+  });
+
+  it("rejects settings that do not validate", () => {
+    expect(() => resolveSettings({ pacing: "hourly" as never })).toThrow();
+    expect(() => resolveSettings({ movementSeconds: 5 })).toThrow();
   });
 });
 
@@ -62,6 +94,60 @@ describe("server frames", () => {
     });
     expect(r.success).toBe(true);
   });
+
+  it("validates a paused status update with its bounded timeout", () => {
+    const r = ServerMessage.safeParse({
+      t: "status",
+      p: { status: "paused", reason: "humans_absent", until: 1_800_000_000_000 },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("validates an abandoned game, a votes frame and a pending extension", () => {
+    expect(
+      ServerMessage.safeParse({ t: "finished", p: { result: "abandoned", winners: [], scores: {}, reason: "no_orders" } }).success,
+    ).toBe(true);
+    expect(
+      ServerMessage.safeParse({
+        t: "votes",
+        p: { phase: "S1901M", draw: [{ power: "FRANCE", value: true, include: null }], required: ["FRANCE", "ITALY"], hidden: false, cast: 1, yes: 1 },
+      }).success,
+    ).toBe(true);
+    expect(
+      ServerMessage.safeParse({
+        t: "extend",
+        p: { phase: "S1901M", requestedBy: ["FRANCE"], needed: 2, granted: false, deadlineAt: 1 },
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("draw votes", () => {
+  it("accepts a named subset and rejects an empty one", () => {
+    expect(parseClientMessage({ t: "vote", p: { kind: "draw", value: true, include: ["FRANCE", "ITALY"] } })?.t).toBe("vote");
+    expect(parseClientMessage({ t: "vote", p: { kind: "draw", value: true, include: [] } })).toBeNull();
+    expect(parseClientMessage({ t: "vote", p: { kind: "draw", value: true } })?.t).toBe("vote");
+  });
+});
+
+describe("registry records", () => {
+  it("validates an abandoned game record", () => {
+    const record = GameRecord.safeParse({
+      gameId: "ABC234",
+      result: "abandoned",
+      reason: "no_orders",
+      winners: [],
+      scores: {},
+      settings: GameSettings.parse({}),
+      cluster: "standard:full:async",
+      phaseCount: 3,
+      createdAt: 1,
+      finishedAt: 2,
+      ledger: { FRANCE: { kept: 1, broken: 0, void: 0 } },
+      seats: [{ power: "FRANCE", kind: "human", name: "Ann", centers: 3, eliminated: false }],
+    });
+    expect(record.success).toBe(true);
+  });
 });
 
 describe("scoring", () => {
@@ -75,5 +161,39 @@ describe("scoring", () => {
     const s = drawSize({ FRANCE: 12, GERMANY: 12, ITALY: 6, TURKEY: 0 });
     expect(s["FRANCE"]).toBeCloseTo(1 / 3);
     expect(s["TURKEY"]).toBe(0);
+  });
+});
+
+describe("scoring rule", () => {
+  it("shares a draw by the game's scoring: squares, or equal parts among the sharers", () => {
+    const centers = { FRANCE: 12, GERMANY: 6, ITALY: 0 };
+    expect(drawScores("sos", centers)).toEqual(sumOfSquares(centers));
+    expect(drawScores("dss", centers)).toEqual({ FRANCE: 0.5, GERMANY: 0.5, ITALY: 0 });
+  });
+});
+
+describe("envelope", () => {
+  it("carries an optional seq on every server frame and refuses a seq below one", () => {
+    expect(ServerMessage.safeParse({ t: "status", seq: 12, p: { status: "active", reason: null } }).success).toBe(true);
+    expect(ServerMessage.safeParse({ t: "status", p: { status: "active", reason: null } }).success).toBe(true);
+    expect(ServerMessage.safeParse({ t: "status", seq: 0, p: { status: "active", reason: null } }).success).toBe(false);
+    expect(ServerMessage.safeParse({ t: "synced", p: { seq: 0, more: false, gap: true } }).success).toBe(true);
+  });
+
+  it("validates table talk, a read marker, a verdict and a receipt that opens its seal", () => {
+    expect(
+      ServerMessage.safeParse({ t: "press", seq: 3, p: { id: "a", phase: "LOBBY", from: "FRANCE", to: "ALL", body: "hello", sentAt: 1, pledge: null } }).success,
+    ).toBe(true);
+    expect(parseClientMessage({ t: "press.read", p: { with: "ALL", upTo: 10 } })?.t).toBe("press.read");
+    expect(parseClientMessage({ t: "press.read", p: { with: "NOBODY", upTo: 10 } })).toBeNull();
+    expect(
+      ServerMessage.safeParse({
+        t: "orders.ack",
+        p: { phase: "S1901M", accepted: [], rejected: [{ text: "A PAR - MOS", reason: "no" }], verdicts: [{ text: "A PAR - MOS", order: "A PAR - MOS", ok: false, code: "illegal", reason: "no" }] },
+      }).success,
+    ).toBe(true);
+    expect(ServerMessage.safeParse({ t: "pledge.receipt", p: { pledgeId: "x", receipt: "kept", revealed: ["A PAR H"] } }).success).toBe(false);
+    expect(ServerMessage.safeParse({ t: "pledge.receipt", p: { pledgeId: "x", receipt: "kept", revealed: ["A PAR H"], nonce: "00".repeat(16) } }).success).toBe(true);
+    expect(ClientMessage.safeParse({ t: "press.send", p: { to: "ALL", body: "x", pledge: { orders: ["A PAR H"], commitment: "nope" } } }).success).toBe(false);
   });
 });
