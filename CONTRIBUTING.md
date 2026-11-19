@@ -67,7 +67,7 @@ If your login can see more than one account, wrangler asks which to use. Answer 
 4. Deploy:
 
    ```sh
-   pnpm deploy:all       # web, then server; each builds the wasm engine first
+   pnpm deploy:all       # server, then web (the site binds to the Worker); each builds the wasm engine first
    pnpm deploy:web       # only the site: builds apps/web and publishes dist to Pages, branch main
    pnpm deploy:server    # only the Worker: wrangler deploy in apps/server
    ```

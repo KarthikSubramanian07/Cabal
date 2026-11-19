@@ -45,6 +45,14 @@ describe("keyboard choices", () => {
     expect(choicePrompt("M", draft, "FRANCE")).toBe("A PAR: choose where it goes");
   });
 
+  it("says the move goes by convoy once By convoy is chosen", () => {
+    const draft: Draft = { step: "unit", power: "ENGLAND", unit: "A LON", via: true };
+    expect(choicesFor(ctx, draft, "ENGLAND", ["A LON"], new Set(["BRE"]), names)).toEqual([
+      { code: "BRE", label: "By convoy to Brest (BRE)" },
+    ]);
+    expect(choicePrompt("M", draft, "ENGLAND")).toBe("A LON by convoy: choose where it lands");
+  });
+
   it("names the unit to support, then whether it holds or moves", () => {
     const pick: Draft = { step: "support", power: "FRANCE", unit: "A PAR" };
     expect(choicesFor(ctx, pick, "FRANCE", [], new Set(["BRE"]), names)).toEqual([
