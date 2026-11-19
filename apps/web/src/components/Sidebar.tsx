@@ -8,7 +8,7 @@ import { SPEEDS, type Speed, speedLabel } from "../game/replay.js";
 import { phaseLine } from "../game/describe.js";
 import { POWER_COLOR } from "../map/Board.jsx";
 import type { OrderResult } from "../engine.js";
-import type { Why } from "../game/explain/explain.js";
+import { type Why, hasWhy } from "../game/explain/explain.js";
 import { WhyPanel } from "../game/explain/WhyPanel.jsx";
 
 export function PhaseHeader({ phase, status, viewing }: { phase: string; status: string; viewing: boolean }) {
@@ -185,8 +185,11 @@ export function OrderList({
 
 type Names = Record<string, { name: string } | undefined>;
 
-/** The key a receipt's "why" is opened by. */
-export const whyKey = (r: { power: string; unit: string }) => `${r.power}|${r.unit}`;
+/**
+ * The key a receipt's "why" is opened by: its place in the phase's results, with its power and
+ * order. Not the unit alone, which is empty for every build and so is shared by two of them.
+ */
+export const whyKey = (r: { power: string; order: string }, index: number) => `${index}|${r.power}|${r.order}`;
 
 export function Results({
   record,
@@ -228,8 +231,9 @@ export function Results({
           </h3>
           {list.map((r, i) => {
             const receipt = receiptFor(r, record.phase, names, record.outcome.results);
-            const why = explain && !r.ok ? explain(r) : null;
-            const key = whyKey(r);
+            // A disband or a waived build is neutral on the receipt: nothing failed to explain.
+            const why = explain && hasWhy(r) ? explain(r) : null;
+            const key = whyKey(r, record.outcome.results.indexOf(r));
             const isOpen = why !== null && open === key;
             const panelId = `why-${key.replace(/[^A-Za-z0-9]/g, "-")}`;
             return (

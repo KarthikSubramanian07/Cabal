@@ -582,7 +582,7 @@ function Table({ sb }: { sb: Sandbox }) {
   const openWhy = useMemo(() => {
     if (!whyOpen) return null;
     const results = record ? record.outcome.results : prediction?.outcome.results;
-    const r = results?.find((x) => whyKey(x) === whyOpen);
+    const r = results?.find((x, i) => whyKey(x, i) === whyOpen);
     const fn = record ? explainShown : explainSketch;
     return r && fn ? fn(r) : null;
   }, [whyOpen, record, prediction, explainShown, explainSketch]);
