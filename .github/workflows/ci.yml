@@ -93,7 +93,7 @@ jobs:
         with:
           tool: wasm-pack
       - run: wasm-pack test --node crates/cabal-wasm
-      - run: wasm-pack build crates/cabal-wasm --target web --release --out-dir ../../packages/engine/pkg --out-name cabal_engine
+      - run: wasm-pack build crates/cabal-wasm --target web --profile wasm-release --out-dir ../../packages/engine/pkg --out-name cabal_engine
       - name: Size gate
         run: |
           size=$(gzip -c packages/engine/pkg/cabal_engine_bg.wasm | wc -c | tr -d ' ')

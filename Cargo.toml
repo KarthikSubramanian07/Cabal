@@ -23,3 +23,8 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# The WebAssembly build (`pnpm engine:build`). Same as release unless the
+# measurements in docs/PERFORMANCE.md say otherwise.
+[profile.wasm-release]
+inherits = "release"
