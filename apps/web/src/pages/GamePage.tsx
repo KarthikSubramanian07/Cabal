@@ -195,9 +195,11 @@ function HostPanel({ view, onStart }: { view: RoomView; onStart: Room["start"] }
   );
 }
 
-function Header({ view, now, connection }: { view: RoomView; now: number; connection: Room["connection"] }) {
+function Header({ view, connection }: { view: RoomView; connection: Room["connection"] }) {
   const seated = humanSeats(view).length;
-  const serverNow = now + view.clockOffsetMs;
+  // Read the clock at every draw: a new deadline must not be measured from a minute-old "now".
+  // The page redraws at least every 15 seconds (useNow in Table), so the countdown keeps moving.
+  const serverNow = Date.now() + view.clockOffsetMs;
   const stamp =
     view.status === "lobby" ? "Lobby" : view.status === "active" ? "In play" : view.status === "paused" ? "Paused" : view.status === "abandoned" ? "Abandoned" : "Finished";
   let line: string;
@@ -226,7 +228,8 @@ function Header({ view, now, connection }: { view: RoomView; now: number; connec
 }
 
 function Table({ room, view }: { room: Room; view: RoomView }) {
-  const now = useNow();
+  // Redraw every 15 seconds so the countdown in the header keeps moving.
+  useNow();
   const [selected, setSelected] = useState<PowerName | null>(null);
   const heading = useRef(false);
   const me = room.seat?.power ?? view.power;
@@ -248,7 +251,7 @@ function Table({ room, view }: { room: Room; view: RoomView }) {
 
   return (
     <main className="table-page" id="main" tabIndex={-1}>
-      <Header view={view} now={now} connection={room.connection} />
+      <Header view={view} connection={room.connection} />
       {room.notice ? (
         <p className="notice" role="status">
           {room.notice}
