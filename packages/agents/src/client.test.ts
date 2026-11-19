@@ -7,8 +7,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Game, ready } from "@cabal/engine";
 import { beforeAll, describe, expect, it } from "vitest";
-import { AgentClient, type DecisionInfo } from "./client.js";
+import { AgentClient } from "./client.js";
 import { type Brain, type Decision, Player } from "./player.js";
+import type { DecisionRecord } from "./record.js";
 
 beforeAll(async () => {
   const wasm = fileURLToPath(new URL("../../engine/pkg/cabal_engine_bg.wasm", import.meta.url));
@@ -138,14 +139,14 @@ function gate() {
 }
 
 async function seat(hub: Hub, power: string, brain: Brain, options: Partial<ConstructorParameters<typeof AgentClient>[0]> = {}) {
-  const decisions: DecisionInfo[] = [];
+  const decisions: DecisionRecord[] = [];
   const client = new AgentClient({
     serverUrl: "http://hub",
     gameId: "TEST01",
     token: `TEST01.${power}.secret`,
     player: new Player(power, "x", brain),
     WebSocketImpl: hub.socketClass(),
-    onDecision: (_phase, info) => decisions.push(info),
+    onDecision: (record) => decisions.push(record),
     ...options,
   });
   await client.connect();
@@ -182,11 +183,12 @@ describe("AgentClient", () => {
     // Orders and ready go out once, after the order step.
     expect(hub.of("FRANCE", "orders.set")).toEqual([{ phase: "S1901M", orders: ["A PAR H"] }]);
     expect(hub.of("FRANCE", "ready")).toEqual([{ phase: "S1901M", ready: true }]);
-    // Every decision reports its step, tokens and cost.
-    expect(f.decisions.map((i) => [i.step, i.fallback, i.costMicros, i.usage?.outputTokens])).toEqual([
-      ["negotiate", false, 140, 5],
-      ["order", false, 140, 5],
+    // Every decision is logged with its phase, power, step, tokens and cost.
+    expect(f.decisions.map((r) => [r.phase, r.power, r.step, r.fallback, r.costMicros, r.usage?.outputTokens])).toEqual([
+      ["S1901M", "FRANCE", "negotiate", false, 140, 5],
+      ["S1901M", "FRANCE", "order", false, 140, 5],
     ]);
+    expect(f.decisions[1]!.orders).toEqual(["A PAR H"]);
     expect(f.decisions[0]!.prompt).toContain("You are FRANCE");
   });
 
