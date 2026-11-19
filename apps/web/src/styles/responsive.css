@@ -482,6 +482,7 @@
   .stepper .speeds button {
     width: auto;
     min-width: var(--hit);
+    min-height: var(--hit);
   }
 
   .scrubber {

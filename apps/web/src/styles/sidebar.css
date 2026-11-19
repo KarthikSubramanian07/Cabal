@@ -149,7 +149,7 @@
 .scrubber {
   flex: 1;
   min-width: 0;
-  height: 22px;
+  height: 26px;
   margin: 0;
   background: transparent;
   cursor: pointer;
@@ -201,6 +201,8 @@
 
 .stepper .speeds button {
   width: auto;
+  min-width: 30px;
+  min-height: 26px;
   padding: 3px 7px;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -430,6 +432,13 @@ table.powers td.done {
 }
 
 .results section {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* A quiet phase ("Every unit held") sits in the same margin as the receipts. */
+.results > .hint {
+  margin: 0;
   padding: 12px 18px;
   border-bottom: 1px solid var(--rule);
 }
