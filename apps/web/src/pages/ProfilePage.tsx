@@ -15,7 +15,7 @@ import { useIdentity } from "../profile/Identity.jsx";
 import { PlayerSeal } from "../profile/ProfileMenu.jsx";
 import { RatingChart } from "../profile/RatingChart.jsx";
 import { readPlayer } from "../net/player.js";
-import { percent, ratingPath, reliabilityLine, resultWord, signed, trustLine, withOwnCodes } from "../profile/record.js";
+import { friendlyGames, percent, ratingPath, reliabilityLine, resultWord, signed, tableState, trustLine, withOwnCodes } from "../profile/record.js";
 
 type Load = { kind: "loading" } | { kind: "missing" } | { kind: "failed"; message: string } | { kind: "ready"; profile: PlayerProfile; own: MyGame[] | null };
 
@@ -77,8 +77,9 @@ function Reliability({ profile }: { profile: PlayerProfile }) {
   );
 }
 
-function Trust({ profile }: { profile: PlayerProfile }) {
+function Trust({ profile, mine }: { profile: PlayerProfile; mine: boolean }) {
   const t = profile.trust;
+  const none = t.kept + t.broken + t.void === 0;
   return (
     <section className="file-trust" aria-labelledby="trust-title">
       <h2 id="trust-title">The Ledger</h2>
@@ -97,6 +98,12 @@ function Trust({ profile }: { profile: PlayerProfile }) {
           <span className="stamp-count">{t.void}</span> void
         </li>
       </ul>
+      <p className="fine file-rule">
+        {none && mine && profile.games.played > 0
+          ? "Your games so far were at friendly tables, so their seals stay on each table's own Ledger. "
+          : ""}
+        Seals count here from rated games only, and only promises made to other people.
+      </p>
     </section>
   );
 }
@@ -126,9 +133,7 @@ function OwnTables({ games }: { games: MyGame[] }) {
               <td data-label="Power">
                 <span className="power-mark" style={{ background: `var(--p-${g.power.toLowerCase()})` } as CSSProperties} aria-hidden="true" /> {powerLabel(g.power)}
               </td>
-              <td data-label="State">
-                {g.status === "playing" ? "In play" : g.status === "left" ? "Seat handed on" : g.status === "abandoned" ? "Abandoned" : g.result === "solo" ? (g.score ? "Won" : "Lost") : "Drawn"}
-              </td>
+              <td data-label="State">{tableState(g)}</td>
               <td className="action-cell">
                 {g.status === "playing" ? (
                   <Link className="btn small" href={`/g/${g.gameId}`} aria-label={`Return to table ${spacedCode(g.gameId)}`}>
@@ -148,20 +153,30 @@ function OwnTables({ games }: { games: MyGame[] }) {
   );
 }
 
-function Recent({ profile }: { profile: PlayerProfile }) {
+function Recent({ profile, mine }: { profile: PlayerProfile; mine: boolean }) {
+  // A player sees their own friendly games here; anyone else sees how many are left out.
+  const hidden = mine ? 0 : friendlyGames(profile.games.played, profile.recent.length);
+  const hiddenLine = hidden ? (
+    <p className="fine file-rule">
+      {hidden === 1 ? "One more game" : `${hidden} more games`} at friendly tables {hidden === 1 ? "is" : "are"} kept off the public record.
+    </p>
+  ) : null;
   if (profile.recent.length === 0) {
     return (
       <section className="file-recent" aria-labelledby="recent-title">
         <h2 id="recent-title">Recent games</h2>
-        <p className="file-empty">
-          No finished games yet. <Link href="/games">Find a table</Link>, or play against six bots from the <Link href="/">front door</Link>.
-        </p>
+        {hiddenLine ?? (
+          <p className="file-empty">
+            No finished games yet. <Link href="/games">Find a table</Link>, or play against six bots from the <Link href="/">front door</Link>.
+          </p>
+        )}
       </section>
     );
   }
   return (
     <section className="file-recent" aria-labelledby="recent-title">
       <h2 id="recent-title">Recent games</h2>
+      {mine ? <p className="fine">Your games at friendly tables are listed for you alone; anyone else sees only your public ones.</p> : null}
       <table className="ledger-table">
         <caption className="sr-only">{profile.player.handle}&apos;s recent games, newest first</caption>
         <thead>
@@ -202,6 +217,7 @@ function Recent({ profile }: { profile: PlayerProfile }) {
           ))}
         </tbody>
       </table>
+      {hiddenLine}
     </section>
   );
 }
@@ -220,8 +236,9 @@ export default function ProfilePage({ handle }: { handle: string }) {
       // On their own record a player also sees every table they sit at, listed or not.
       const me = readPlayer();
       if (me && me.id === profile.player.id) {
-        const own = await api.myGames(me.secret).catch(() => [] as MyGame[]);
-        return { profile: { ...profile, recent: withOwnCodes(profile.recent, own) }, own };
+        // Their own file from the account, which lists their friendly games as well.
+        const [own, file] = await Promise.all([api.myGames(me.secret).catch(() => [] as MyGame[]), api.me(me.secret).catch(() => null)]);
+        return { profile: { ...profile, recent: withOwnCodes(file?.recent ?? profile.recent, own) }, own };
       }
       return { profile, own: null };
     })().then(
@@ -308,13 +325,13 @@ export default function ProfilePage({ handle }: { handle: string }) {
           </button>
         ) : null}
       </header>
-      <div className="file-grid">
+      <div className={`file-grid${p.rating ? "" : " unrated"}`}>
         <Rating profile={p} />
         <Reliability profile={p} />
-        <Trust profile={p} />
+        <Trust profile={p} mine={mine} />
       </div>
       {load.own ? <OwnTables games={load.own} /> : null}
-      <Recent profile={p} />
+      <Recent profile={p} mine={mine} />
     </main>
   );
 }

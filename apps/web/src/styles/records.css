@@ -84,6 +84,22 @@
   grid-area: trust;
 }
 
+/* No rating yet: three equal columns, so the rating's few lines do not leave a tall empty box. */
+.file-grid.unrated {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-areas: "rating reliability trust";
+}
+
+.file-grid.unrated .file-reliability {
+  border-right: 1px solid var(--ink);
+  border-bottom: 0;
+}
+
+.file-rule {
+  margin: var(--space-3) 0 0;
+  max-width: 52ch;
+}
+
 .file-grid h2,
 .file-recent h2 {
   margin: 0 0 var(--space-3);
@@ -481,12 +497,18 @@
 /* ---------------------------------------------------------------- small screens */
 
 @media (max-width: 900px) {
-  .file-grid {
+  .file-grid,
+  .file-grid.unrated {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       "rating"
       "reliability"
       "trust";
+  }
+
+  .file-grid.unrated .file-reliability {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
   }
 
   .file-rating {
