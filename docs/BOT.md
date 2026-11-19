@@ -191,9 +191,9 @@ The corner powers do well and the central ones suffer, as in human no-press play
 | Decision in WebAssembly, standard, Node 24 on the same class of runner | 1.20 ms median, 2.54 ms slowest of 42 on a 1905 board |
 | WebAssembly module, gzip | 270,613 bytes (it was 223,076 before the bot; the CI budget is 409,600) |
 
-The native times are means over every decision of the 300 games, measured while four games ran at once. The WebAssembly figure is printed by `packages/engine/src/engine.test.ts` on every CI run ([this one](https://github.com/KarthikSubramanian07/Cabal/actions/runs/44451474397)); that test also asserts that the default level never spends more than 200 adjudications and that the median stays under 30 ms.
+The native times are means over every decision of the 300 games, measured while four games ran at once. The WebAssembly figure is printed by `packages/engine/src/engine.test.ts` on every CI run ([this one](https://github.com/KarthikSubramanian07/Cabal/actions/runs/44451474397)); that test also asserts that the default level never spends more than 200 adjudications, which is exact on every machine, and that its fastest decision stays under 30 ms, which catches a gross slowdown without failing on a busy runner.
 
-So the default level decides in about a millisecond, natively or in WebAssembly, against a budget of 30. Seven AI seats cost the Durable Object under ten milliseconds a phase. The hard level spends up to 3,000 adjudications, about fifteen times as much, and should be reserved for games that ask for it. The headroom at the default level is deliberate: it leaves room to raise the standard budget later without touching the 30 ms promise, and the arena is the instrument for deciding whether that is worth it.
+So the default level decides in about a millisecond, natively or in WebAssembly, against a budget of 30. Seven AI seats cost the Durable Object roughly ten milliseconds a phase. The hard level spends up to 3,000 adjudications, about fifteen times as much, and should be reserved for games that ask for it. The headroom at the default level is deliberate: it leaves room to raise the standard budget later without touching the 30 ms promise, and the arena is the instrument for deciding whether that is worth it.
 
 ## 6. Reproducing it
 
