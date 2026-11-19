@@ -35,7 +35,7 @@ change. Cold start figures are the median of seven fresh Node processes.
 | Legal orders, all powers, fleet-heavy midgame, one power at a time | `bench` job | same |
 | Legal orders, all powers, fleet-heavy midgame, shared convoy search | `bench` job | same |
 | Engine wasm, gzip | `wasm` job, `WASM_SIZE_BUDGET_BYTES` | 409,000 bytes, about 10 percent above the build |
-| Worker bundle, gzip | `deploy-dry-run` job | 655,360 bytes |
+| Worker bundle, gzip | `deploy-dry-run` job | 786,432 bytes (measured 742,344) |
 
 The base commit and the change are benchmarked back to back on one runner,
 because shared runners differ from one another by far more than 30 percent. A
@@ -130,6 +130,16 @@ The new API (verdicts, explanations, structured moves, build info) costs
 32 KB gzip, and the bot (`cabal-bot`, merged separately) another 50 KB;
 baking the maps and dropping the map JSON parser from the binary paid back
 part of what the API added.
+
+The engine is most of the Worker's upload, so its growth moved the Worker
+bundle from 642,074 to 742,344 bytes gzip and past the 655,360 budget that job
+had; the budget is now 786,432. No optimisation level brings the bundle back
+under the old figure (`"z"` saves about 72 KB of the 87 KB needed and costs the
+most speed), so this is a real cost of the new API, paid in isolate start-up,
+and the first thing to revisit if issue #61's workerd measurements say start-up
+matters. Replay verification (`verify_saved`) is code the Worker never calls
+and the first candidate for a feature gate; its share of the binary was not
+measured.
 
 The size-oriented settings were measured and **not adopted**, because the rule
 was to switch only if nothing got meaningfully slower:
