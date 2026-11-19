@@ -21,7 +21,7 @@ export interface Room {
   /** Something the player should know that is not an error in what they just did. */
   notice: string | null;
   /** Sit down as the signed-in player: at `power`, or any open seat. */
-  join: (player: { handle: string; secret: string }, power?: PowerName) => Promise<void>;
+  join: (player: { id: string; handle: string; secret: string }, power?: PowerName) => Promise<void>;
   start: () => Promise<void>;
   say: (body: string) => Promise<void>;
   retry: () => void;
@@ -39,6 +39,11 @@ export interface Room {
   serverNow: () => number;
   /** Drop the connection and dial again now, without waiting for the backoff. */
   reconnect: () => void;
+  /**
+   * The server turned this seat's socket away because the seat is already open on too many
+   * tabs and devices. The seat is still this device's: `reconnect` tries again.
+   */
+  crowded: boolean;
   /** True once the socket has delivered a welcome at least once this visit. */
   everOpen: boolean;
 }
@@ -50,7 +55,16 @@ export function useRoom(code: string): Room {
   const [notice, setNotice] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [everOpen, setEverOpen] = useState(false);
+  const [crowded, setCrowded] = useState(false);
+  /** Bumped to dial a socket afresh after the server turned the last one away. */
+  const [dial, setDial] = useState(0);
   const socket = useRef<CabalSocket | null>(null);
+  /**
+   * Tables this visit has already asked the server for a seat token. A claim happens at most
+   * once per table per visit: a socket refused after a claim must never mint another token in a
+   * loop, since every new token pushes the oldest of the seat's tokens (another device's) out.
+   */
+  const claimed = useRef(new Set<string>());
 
   // The summary: does this table exist, and what does it look like right now?
   useEffect(() => {
@@ -79,14 +93,15 @@ export function useRoom(code: string): Room {
   const mine = load.kind === "ready" && !seat ? load.view.seats.find((s) => s.handle && s.handle.toLowerCase() === readPlayer()?.handle.toLowerCase()) : undefined;
   const claim = mine?.power;
   useEffect(() => {
-    if (!claim) return;
+    if (!claim || claimed.current.has(code)) return;
     const player = readPlayer();
     if (!player) return;
+    claimed.current.add(code);
     let live = true;
     api.seatToken(code, player.secret).then(
       (res) => {
         if (!live) return;
-        const held = { gameId: res.gameId, power: res.power, token: res.token, name: player.handle };
+        const held = { gameId: res.gameId, power: res.power, token: res.token, name: player.handle, userId: player.id };
         saveSeat(held);
         setSeat({ ...held, savedAt: Date.now() });
       },
@@ -118,7 +133,15 @@ export function useRoom(code: string): Room {
       });
     });
     const offFatal = ws.on("fatal", (error) => {
-      // The seat this device remembered is no longer its own: say so, and keep watching.
+      if (error.code === "too_many_sockets") {
+        // The seat is still this device's; it is open in too many places at once. Keep it.
+        setCrowded(true);
+        setNotice("This seat is open in too many tabs and devices at once. Close one, then press Reconnect.");
+        return;
+      }
+      // The seat this device remembered is no longer its own: say so, and keep watching. A seat
+      // handed to a substitute is not claimed back.
+      if (error.code === "seat_reassigned") claimed.current.add(code);
       forgetSeat(code);
       setSeat(null);
       setNotice(
@@ -135,13 +158,20 @@ export function useRoom(code: string): Room {
       ws.close();
       if (socket.current === ws) socket.current = null;
     };
-  }, [code, token, ready]);
+  }, [code, token, ready, dial]);
+
+  // The network is back: dial at once rather than wait out a grown backoff.
+  useEffect(() => {
+    const up = () => socket.current?.reconnect();
+    window.addEventListener("online", up);
+    return () => window.removeEventListener("online", up);
+  }, []);
 
   const join = useCallback(
-    async (player: { handle: string; secret: string }, power?: PowerName) => {
+    async (player: { id: string; handle: string; secret: string }, power?: PowerName) => {
       const res = await api.joinGame(code, power ? { power } : {}, player.secret);
       const name = player.handle;
-      const held = { gameId: res.gameId, power: res.power, token: res.token, name };
+      const held = { gameId: res.gameId, power: res.power, token: res.token, name, userId: player.id };
       saveName(name);
       if (!saveSeat(held)) setNotice("This browser will not store your seat, so it lasts until you close this tab.");
       setSeat({ ...held, savedAt: Date.now() });
@@ -184,9 +214,17 @@ export function useRoom(code: string): Room {
   const vote = useCallback((value: boolean, include?: PowerName[]) => socket.current?.vote(value, include) ?? false, []);
   const extend = useCallback((phase: string) => live().extend(phase), []);
   const serverNow = useCallback(() => socket.current?.serverNow() ?? Date.now(), []);
-  const reconnect = useCallback(() => socket.current?.reconnect(), []);
+  const reconnect = useCallback(() => {
+    if (crowded) {
+      setCrowded(false);
+      setNotice(null);
+      setDial((n) => n + 1);
+      return;
+    }
+    socket.current?.reconnect();
+  }, [crowded]);
 
-  return { load, seat, connection, notice, join, start, say, retry, setOrders, setReady, send, markRead, vote, extend, serverNow, reconnect, everOpen };
+  return { load, seat, connection, notice, join, start, say, retry, setOrders, setReady, send, markRead, vote, extend, serverNow, reconnect, everOpen, crowded };
 }
 
 /** Remember a seat this device was just dealt by creating a game. */

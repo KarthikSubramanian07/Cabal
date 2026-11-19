@@ -20,7 +20,7 @@ export const QUICK_SETTINGS: GameSettingsInput = {
 export async function startQuickGame(player: StoredPlayer): Promise<string> {
   const [{ api }, { keepCreatedSeat }] = await Promise.all([loadApi(), import("./useRoom.js")]);
   const res = await api.createGame({ settings: QUICK_SETTINGS }, player.secret);
-  keepCreatedSeat({ gameId: res.gameId, power: res.power, token: res.token, name: player.handle });
+  keepCreatedSeat({ gameId: res.gameId, power: res.power, token: res.token, name: player.handle, userId: player.id });
   await api.startGame(res.gameId, res.token);
   return res.gameId;
 }

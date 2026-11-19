@@ -18,6 +18,11 @@ export interface HeldSeat {
   token: string;
   /** The name this device sat down under. */
   name: string;
+  /**
+   * The account that took the seat, when one did. Signing that account out of this device
+   * forgets the seat with it, so the next person at the device cannot play as them.
+   */
+  userId?: string | null;
   /** When the seat was taken, ms since the epoch. */
   savedAt: number;
 }
@@ -43,6 +48,7 @@ function parse(gameId: string, raw: string | null): HeldSeat | null {
       power: power.data,
       token: value.token,
       name: typeof value.name === "string" ? value.name : "",
+      userId: typeof value.userId === "string" ? value.userId : null,
       savedAt: typeof value.savedAt === "number" ? value.savedAt : 0,
     };
   } catch {
