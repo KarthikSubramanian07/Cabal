@@ -1,3 +1,4 @@
+import { metaFor, writeHead } from "../app/meta.js";
 import { matchRoute } from "../app/routes.js";
 import {
   appendVaryAccept,
@@ -36,16 +37,32 @@ export function isApiPath(pathname: string): boolean {
 
 /**
  * Client routes that are not authored content: the edge answers them with the app shell and
- * the browser router draws the page. `/sandbox` is the board, the same document as `/`.
+ * the browser router draws the page.
  */
 export function isAppRoute(pathname: string): boolean {
   return !CONTENT_ROUTES.has(pathname) && matchRoute(pathname) !== null;
 }
 
+/**
+ * The front door has its own copy of the shell, with the landing page already drawn in it
+ * (scripts/emit-agent-site.mjs), so its headline paints before any script has run.
+ */
+export const LANDING_SHELL = "/landing/index.html";
+
 function htmlAssetPath(pathname: string): string {
   const path = normalizePath(pathname);
-  if (path === "/" || isAppRoute(path)) return "/index.html";
+  if (path === "/") return LANDING_SHELL;
+  if (isAppRoute(path)) return "/index.html";
   return `${path}/index.html`;
+}
+
+/** The shell with this address's own title, description, canonical link and share card. */
+async function withPageHead(res: Response, path: string): Promise<Response> {
+  const html = writeHead(await res.text(), metaFor(path));
+  const headers = new Headers(res.headers);
+  headers.delete("Content-Length");
+  headers.set("Content-Type", "text/html; charset=utf-8");
+  return new Response(html, { status: res.status, headers });
 }
 
 async function fetchAsset(env: AssetEnv, url: URL, pathname: string, request: Request): Promise<Response> {
@@ -199,9 +216,9 @@ async function route(request: Request, env: AssetEnv): Promise<Response> {
     if (chosen !== "text/markdown") {
       const shell = await fetchAsset(env, url, "/index.html", request);
       if (shell.status !== 200) return notFound(env, url, request, false);
-      const res = withNegotiationHeaders(shell);
-      // Only the home page is canonical; keep the shell's other addresses out of indexes.
-      if (path !== "/sandbox") res.headers.set("X-Robots-Tag", "noindex");
+      const res = withNegotiationHeaders(await withPageHead(shell, path));
+      // Tables and replays are for the people sent the code: keep them out of search indexes.
+      if (!metaFor(path).index) res.headers.set("X-Robots-Tag", "noindex");
       return res;
     }
   }
@@ -231,12 +248,14 @@ async function route(request: Request, env: AssetEnv): Promise<Response> {
     return notFound(env, url, request, false);
   }
 
-  const htmlRes = await fetchAsset(env, url, htmlAssetPath(path), request);
+  let htmlRes = await fetchAsset(env, url, htmlAssetPath(path), request);
+  // A build without the prerendered front door still has the plain shell, which draws it too.
+  if (path === "/" && htmlRes.status !== 200) htmlRes = await fetchAsset(env, url, "/index.html", request);
   if (htmlRes.status !== 200) {
     return notFound(env, url, request, false);
   }
 
-  const res = withNegotiationHeaders(htmlRes);
+  const res = withNegotiationHeaders(path === "/" ? await withPageHead(htmlRes, path) : htmlRes);
   const linkMd = `<${markdownPath(contentPath)}>; rel="alternate"; type="text/markdown"`;
   const linkLlms = `</llms.txt>; rel="describedby"`;
   const existing = res.headers.get("link");
