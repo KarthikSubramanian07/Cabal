@@ -20,7 +20,7 @@ const seat = (over: Partial<SeatView> = {}): SeatView => ({
 describe("what a seat is doing", () => {
   it("says each state in a word and in a sentence", () => {
     expect(seatState(seat(), true)).toMatchObject({ word: "Writing", tone: "waiting" });
-    expect(seatState(seat({ submitted: true }), true)).toMatchObject({ word: "In", sentence: "France, Ada: orders in, not ready yet." });
+    expect(seatState(seat({ submitted: true }), true)).toMatchObject({ word: "Filed", sentence: "France, Ada: orders in, not ready yet." });
     expect(seatState(seat({ submitted: true, ready: true }), true)).toMatchObject({ word: "Ready", tone: "ready" });
     expect(seatState(seat({ present: false }), true)).toMatchObject({ word: "Away", tone: "away" });
     expect(seatState(seat({ canAct: false }), true).word).toBe("Rests");

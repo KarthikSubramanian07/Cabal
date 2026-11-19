@@ -82,7 +82,7 @@ export function phaseLabel(phase: string): string {
   if (phase === "COMPLETED") return "Game over";
   const m = /^([SFW])(\d{4})([MRA])$/.exec(phase);
   if (!m) return phase;
-  const season = m[1] === "S" ? "Spring" : m[1] === "F" ? "Autumn" : "Winter";
+  const season = m[1] === "S" ? "Spring" : m[1] === "F" ? "Fall" : "Winter";
   const kind = m[3] === "M" ? "movement" : m[3] === "R" ? "retreats" : "adjustments";
   return `${season} ${m[2]}, ${kind}`;
 }
