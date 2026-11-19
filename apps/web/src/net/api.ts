@@ -24,24 +24,6 @@ export function openSocket(gameId: string, token?: string): CabalSocket {
   });
 }
 
-/**
- * What to tell a person when a call fails. The server's own messages are written for people
- * ("no open seats", "game already started"); a network failure is said plainly.
- */
-export function failureText(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.status === 429) return "Too many tries in a minute. Wait a moment and try again.";
-    if (error.status >= 500) return "The game server could not answer. Try again in a moment.";
-    return sentence(error.message);
-  }
-  return "The game server cannot be reached. Check your connection and try again.";
-}
-
-function sentence(text: string): string {
-  const t = text.trim();
-  if (t === "") return "Something went wrong.";
-  const s = t[0]!.toUpperCase() + t.slice(1);
-  return /[.!?]$/.test(s) ? s : `${s}.`;
-}
+export { failureText } from "./failure.js";
 
 export { ApiError };
