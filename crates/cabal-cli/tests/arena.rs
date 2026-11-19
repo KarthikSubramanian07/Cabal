@@ -46,6 +46,10 @@ fn arena_writes_a_summary_and_fixtures_that_replay() {
     let text = String::from_utf8(run.stdout).unwrap();
     assert!(text.starts_with("# Cabal arena"));
     assert!(text.contains("| Illegal orders | 0 |"));
+    assert!(text.contains("| Orders refused by the validator | 0 |"));
+    assert!(text.contains("| Self-contradicting orders | 0 |"));
+    assert!(text.contains("| Void supports | 0 of "));
+    assert!(text.contains("| Void convoys | 0 of "));
     assert!(text.contains("| Replay divergences | 0 |"));
     assert!(text.trim_end().ends_with("PASS"));
     assert_eq!(
@@ -57,6 +61,10 @@ fn arena_writes_a_summary_and_fixtures_that_replay() {
     assert_eq!(summary["games"], 6);
     assert_eq!(summary["illegal_orders"], 0);
     assert_eq!(summary["incomplete_decisions"], 0);
+    assert_eq!(summary["rejected_orders"], 0);
+    assert_eq!(summary["contradictions"], 0);
+    assert_eq!(summary["void_supports"], 0);
+    assert!(summary["supports"].as_u64().unwrap() > 50);
     assert_eq!(summary["game_reports"].as_array().unwrap().len(), 6);
     assert!(summary["orders"].as_u64().unwrap() > 500);
     let centres: u64 = summary["game_reports"][0]["centres"]

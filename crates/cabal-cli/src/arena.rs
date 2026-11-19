@@ -15,7 +15,9 @@
 //! level-against-level strength table.
 //!
 //! The exit code is non-zero when any order was judged illegal, any decision was
-//! incomplete, any saved game failed to replay to the same position, or (with
+//! incomplete, the validator had to refuse anything the planner proposed, a power
+//! contradicted its own orders (a support or convoy adjudicated void, for one),
+//! any saved game failed to replay to the same position, or (with
 //! `--check-strength`) a stronger level failed to beat a weaker one by the margin.
 //! Everything except the timing fields is a pure function of the arguments.
 
@@ -25,11 +27,14 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use cabal_bot::{Level, decide};
+use cabal_bot::{Level, contradictions, decide};
 use cabal_engine::adjudicate::adjustment::allowance;
 use cabal_engine::geo::{Map, Power};
 use cabal_engine::json::SavedGame;
-use cabal_engine::outcome::{AdjustOutcome, OrderOutcome, RetreatOutcome};
+use cabal_engine::order::{AnyOrder, Order};
+use cabal_engine::outcome::{
+    AdjustOutcome, ConvoyOutcome, OrderOutcome, RetreatOutcome, SupportOutcome,
+};
 use cabal_engine::rulebook::Rulebook;
 use cabal_engine::state::PhaseKind;
 use cabal_engine::{Game, PhaseResult, Status};
@@ -167,6 +172,16 @@ pub struct GameReport {
     pub orders: u64,
     pub illegal: u64,
     pub incomplete: u64,
+    /// Orders the bot's planner proposed and the validator refused (then held).
+    pub rejected: u64,
+    /// Orders that contradict another order of the same power.
+    pub contradictions: u64,
+    /// Support orders given, and how many the adjudicator found void.
+    pub supports: u64,
+    pub void_supports: u64,
+    /// Convoy orders given, and how many the adjudicator found void.
+    pub convoys: u64,
+    pub void_convoys: u64,
     pub replay_ok: bool,
     #[serde(skip)]
     seat_levels: Vec<Level>,
@@ -211,6 +226,8 @@ pub fn play_game(config: &Config, index: u64) -> Result<GameReport, String> {
     let mut game = Game::new(map, Rulebook::default());
     let mut think: BTreeMap<Level, (u64, u128, u128)> = BTreeMap::new();
     let (mut orders_seen, mut illegal, mut incomplete) = (0u64, 0u64, 0u64);
+    let (mut rejected, mut contradicting) = (0u64, 0u64);
+    let (mut supports, mut void_supports, mut convoys, mut void_convoys) = (0u64, 0u64, 0u64, 0u64);
 
     while game.status == Status::Active {
         if game.phase().year > config.max_year {
@@ -243,16 +260,42 @@ pub fn play_game(config: &Config, index: u64) -> Result<GameReport, String> {
             if decision.orders.len() != expected {
                 incomplete += 1;
             }
+            rejected += u64::from(decision.intent.rejected);
+            if kind == PhaseKind::Movement {
+                let mine: Vec<Order> = decision
+                    .orders
+                    .iter()
+                    .filter_map(|o| match o {
+                        AnyOrder::Movement(o) => Some(*o),
+                        _ => None,
+                    })
+                    .collect();
+                contradicting += contradictions(&mine) as u64;
+            }
             orders.extend(decision.orders);
         }
         orders_seen += orders.len() as u64;
         let result = game.process(&orders).map_err(|e| e.to_string())?;
         illegal += match result {
-            PhaseResult::Movement(r) => r
-                .outcomes
-                .iter()
-                .filter(|o| matches!(o, OrderOutcome::Illegal { .. }))
-                .count(),
+            PhaseResult::Movement(r) => {
+                for o in &r.outcomes {
+                    match o {
+                        OrderOutcome::Support(s) => {
+                            supports += 1;
+                            void_supports += u64::from(*s == SupportOutcome::Void);
+                        }
+                        OrderOutcome::Convoy(c) => {
+                            convoys += 1;
+                            void_convoys += u64::from(*c == ConvoyOutcome::Void);
+                        }
+                        _ => {}
+                    }
+                }
+                r.outcomes
+                    .iter()
+                    .filter(|o| matches!(o, OrderOutcome::Illegal { .. }))
+                    .count()
+            }
             PhaseResult::Retreat(r) => r
                 .outcomes
                 .iter()
@@ -296,6 +339,12 @@ pub fn play_game(config: &Config, index: u64) -> Result<GameReport, String> {
         orders: orders_seen,
         illegal,
         incomplete,
+        rejected,
+        contradictions: contradicting,
+        supports,
+        void_supports,
+        convoys,
+        void_convoys,
         replay_ok,
         seat_levels: levels,
         think,
@@ -371,6 +420,14 @@ pub struct Summary {
     pub orders: u64,
     pub illegal_orders: u64,
     pub incomplete_decisions: u64,
+    /// Orders the planner proposed and the engine's validator refused.
+    pub rejected_orders: u64,
+    /// Orders that contradicted another order of the same power.
+    pub contradictions: u64,
+    pub supports: u64,
+    pub void_supports: u64,
+    pub convoys: u64,
+    pub void_convoys: u64,
     pub replay_divergences: u64,
     pub powers: Vec<PowerRow>,
     pub by_level: Vec<LevelRow>,
@@ -524,6 +581,12 @@ pub fn summarise(config: &Config, reports: Vec<GameReport>, seconds: f64, jobs: 
     let illegal_orders: u64 = reports.iter().map(|r| r.illegal).sum();
     let incomplete_decisions: u64 = reports.iter().map(|r| r.incomplete).sum();
     let replay_divergences = reports.iter().filter(|r| !r.replay_ok).count() as u64;
+    let rejected_orders: u64 = reports.iter().map(|r| r.rejected).sum();
+    let contradicting: u64 = reports.iter().map(|r| r.contradictions).sum();
+    let supports: u64 = reports.iter().map(|r| r.supports).sum();
+    let void_supports: u64 = reports.iter().map(|r| r.void_supports).sum();
+    let convoys: u64 = reports.iter().map(|r| r.convoys).sum();
+    let void_convoys: u64 = reports.iter().map(|r| r.void_convoys).sum();
 
     let mut failures = Vec::new();
     if illegal_orders > 0 {
@@ -532,6 +595,22 @@ pub fn summarise(config: &Config, reports: Vec<GameReport>, seconds: f64, jobs: 
     if incomplete_decisions > 0 {
         failures.push(format!(
             "{incomplete_decisions} decisions did not cover every unit or the full allowance"
+        ));
+    }
+    if rejected_orders > 0 {
+        failures.push(format!(
+            "{rejected_orders} orders proposed by the planner were refused by the validator"
+        ));
+    }
+    if contradicting > 0 {
+        failures.push(format!(
+            "{contradicting} orders contradicted another order of the same power"
+        ));
+    }
+    if void_supports + void_convoys > 0 {
+        failures.push(format!(
+            "{void_supports} supports and {void_convoys} convoys were adjudicated void: \
+             a bot ordered help for something its own power did not order"
         ));
     }
     if replay_divergences > 0 {
@@ -582,6 +661,12 @@ pub fn summarise(config: &Config, reports: Vec<GameReport>, seconds: f64, jobs: 
         orders: reports.iter().map(|r| r.orders).sum(),
         illegal_orders,
         incomplete_decisions,
+        rejected_orders,
+        contradictions: contradicting,
+        supports,
+        void_supports,
+        convoys,
+        void_convoys,
         replay_divergences,
         powers,
         by_level,
@@ -642,6 +727,22 @@ impl Summary {
             s,
             "| Incomplete decisions | {} |",
             self.incomplete_decisions
+        );
+        let _ = writeln!(
+            s,
+            "| Orders refused by the validator | {} |",
+            self.rejected_orders
+        );
+        let _ = writeln!(s, "| Self-contradicting orders | {} |", self.contradictions);
+        let _ = writeln!(
+            s,
+            "| Void supports | {} of {} |",
+            self.void_supports, self.supports
+        );
+        let _ = writeln!(
+            s,
+            "| Void convoys | {} of {} |",
+            self.void_convoys, self.convoys
         );
         let _ = writeln!(s, "| Replay divergences | {} |", self.replay_divergences);
 
