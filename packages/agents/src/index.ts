@@ -48,3 +48,4 @@ export {
   systemPrompt,
   userPrompt,
 } from "./prompt.js";
+export { type DecisionRecord, decisionRecord } from "./record.js";
