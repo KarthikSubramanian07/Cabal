@@ -585,6 +585,7 @@ function Table({ sb }: { sb: Sandbox }) {
             targets={record ? undefined : targets}
             hot={playing ? hot : undefined}
             standoffs={record?.outcome.standoffs}
+            results={record ? `${viewing}-${record.phase}` : undefined}
             ids={record ? sb.units.phases[viewing!] : sb.units.live}
             focus={focus}
             focusKey={refocus}
