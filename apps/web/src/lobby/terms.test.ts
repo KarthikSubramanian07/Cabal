@@ -26,6 +26,7 @@ describe("terms of a table", () => {
       { name: "Empty seats", value: "Played by the bot when the game starts" },
       { name: "Listing", value: "Listed in the games room" },
     ]);
+    expect(describeTerms(resolveSettings({ aiBrain: "claude" }), true).find((t) => t.name === "Empty seats")?.value).toBe("Played by Claude");
     expect(describeTerms(resolveSettings({ aiFill: false })).find((t) => t.name === "Empty seats")?.value).toBe("Wait for players");
     expect(shortTerms(resolveSettings({ pacing: "daily", rulebook: "1982" }))).toBe("Daily, full press, 1982 rules");
   });

@@ -59,14 +59,15 @@ export interface Term {
 }
 
 /** The terms of a table, in the order a player reads them. */
-export function describeTerms(s: GameSettings): Term[] {
+export function describeTerms(s: GameSettings, started = false): Term[] {
+  const brain = s.aiBrain === "claude" ? "Claude" : "the bot";
   return [
     { name: "Pacing", value: `${PACING[s.pacing].label}, ${duration(s.movementSeconds)} to move` },
     { name: "Press", value: PRESS[s.press].label },
     { name: "Rules", value: RULEBOOK[s.rulebook].label },
     { name: "Draws", value: s.dias ? "Include all survivors" : "May name who shares" },
     { name: "Scoring", value: SCORING[s.scoring].label },
-    { name: "Empty seats", value: s.aiFill ? (s.aiBrain === "claude" ? "Played by Claude when the game starts" : "Played by the bot when the game starts") : "Wait for players" },
+    { name: "Empty seats", value: s.aiFill ? (started ? `Played by ${brain}` : `Played by ${brain} when the game starts`) : "Wait for players" },
     { name: "Listing", value: s.visibility === "public" ? "Listed in the games room" : "Only by code or link" },
   ];
 }
