@@ -172,12 +172,16 @@ const OrderMark = memo(function OrderMark({
    * Results are inked in: a solid copy of the stroke, drawn along its length, masks the real one,
    * so dashed supports and dotted convoys keep their rhythm while they draw.
    */
-  const ink = (d: string) =>
-    timing ? (
-      <mask id={maskId} maskUnits="userSpaceOnUse" x={0} y={0} width={board.width} height={board.height}>
+  const ink = (d: string) => {
+    if (!timing) return null;
+    // The mask covers only the mark, not the whole board: each one is an offscreen surface.
+    const b = pathBounds(d, 16);
+    return (
+      <mask id={maskId} maskUnits="userSpaceOnUse" x={b.x} y={b.y} width={b.w} height={b.h}>
         <path className="reveal" pathLength={1} d={d} />
       </mask>
-    ) : null;
+    );
+  };
   const masked = timing ? `url(#${maskId})` : undefined;
   const failMark = (at: Point) =>
     order.ok === false ? (
@@ -262,6 +266,23 @@ function UnitShape({ kind, r, ghost = false }: { kind: "A" | "F"; r: number; gho
       <polygon className="body" points={pts(0, 0)} />
     </g>
   );
+}
+
+/** The box round a path's points, padded: plenty for a mask over a stroke. */
+export function pathBounds(d: string, pad: number): { x: number; y: number; w: number; h: number } {
+  const n = (d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (let i = 0; i + 1 < n.length; i += 2) {
+    x0 = Math.min(x0, n[i]!);
+    x1 = Math.max(x1, n[i]!);
+    y0 = Math.min(y0, n[i + 1]!);
+    y1 = Math.max(y1, n[i + 1]!);
+  }
+  if (!Number.isFinite(x0)) return { x: 0, y: 0, w: 0, h: 0 };
+  return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + pad * 2, h: y1 - y0 + pad * 2 };
 }
 
 /** Web Animation keyframes for a piece's frames, as shares of the whole phase. */
