@@ -1,18 +1,50 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "cabal-server",
+  "account_id": "e5e342f3ca2f33158f6f1dd40c039be0",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-20",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "observability": { "enabled": true },
+  // The Worker version id: what /health and error logs report as the build when BUILD_ID is unset.
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "durable_objects": {
-    "bindings": [{ "name": "GAME_ROOM", "class_name": "GameRoom" }]
+    "bindings": [
+      { "name": "GAME_ROOM", "class_name": "GameRoom" },
+      // The global games index: one instance, addressed as idFromName("global").
+      { "name": "REGISTRY", "class_name": "Registry" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }],
-  // Per-IP abuse limits on the two unauthenticated write routes (period must be 10 or 60 seconds).
+  // Durable Object class migrations. Append a tag; never edit one that has been deployed.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["GameRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["Registry"] }
+  ],
+  // Abuse limits (period must be 10 or 60 seconds). Create, join and read are keyed by client
+  // address; press is keyed by game and seat inside the room.
   "ratelimits": [
     { "name": "CREATE_LIMITER", "namespace_id": "4801", "simple": { "limit": 10, "period": 60 } },
-    { "name": "JOIN_LIMITER", "namespace_id": "4802", "simple": { "limit": 30, "period": 60 } }
-  ]
+    { "name": "JOIN_LIMITER", "namespace_id": "4802", "simple": { "limit": 30, "period": 60 } },
+    { "name": "PRESS_LIMITER", "namespace_id": "4803", "simple": { "limit": 60, "period": 60 } },
+    { "name": "READ_LIMITER", "namespace_id": "4804", "simple": { "limit": 300, "period": 60 } }
+  ],
+  // Claude turns for games that opt into `aiBrain: "claude"`. The built-in bot never uses the queue.
+  // One message is one model call: small batches, bounded concurrency (two full tables of six seats
+  // can think at once; spend is bounded per game by the room and for the whole deployment by the
+  // Registry's daily budget, not here), and a dead-letter queue so
+  // a turn that cannot be delivered is visible instead of silently dropped.
+  "queues": {
+    "producers": [{ "binding": "AGENT_QUEUE", "queue": "cabal-agent-turns" }],
+    "consumers": [
+      {
+        "queue": "cabal-agent-turns",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 12,
+        "dead_letter_queue": "cabal-agent-turns-dlq"
+      }
+    ]
+  }
 }
