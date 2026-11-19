@@ -24,7 +24,7 @@ this page is the map of what to reach for.
   orders={drawn}             // DrawnOrder[]: { power, text, ok? }
   resolution={resolution}    // optional: a resolved phase to play, see below
   rate={1}                   // playback speed (a replay at 2x passes 2)
-  onSettled={(key) => {}}    // the phase finished playing, or the player pressed Skip
+  onSettled={(key) => {}}    // every animation of the phase has run out (at any mix of speeds), or Skip
   highlight={why?.highlight} // optional BoardHighlight: focus, allies, against, units
   sketch={false}             // the orders are a what-if: stamped "What if"
   ghosts={[]}                // dashed pieces where a sketch would leave units
@@ -42,7 +42,18 @@ is everything needed: ids can come from `trackUnits([{ state, outcome }], next)`
 
 The board draws the map once and puts pieces and order marks on a second, composited layer
 (`svg.board-live`), so a moving piece never repaints the map. It owns a small tool group over
-the map: the sound switch, and **Skip** while a phase is playing.
+the map: the sound switch, and **Skip** while a phase is playing. Escape skips too (unless focus
+is in a text field, a select, an open dialog or a menu). When Skip goes, pressed or because the
+phase ended, focus that was on it moves to the sound switch beside it, never to the page.
+A change of `rate` mid-phase retimes the running animations and reschedules the sounds still
+to come; the phase settles when its animations have finished, not on a timer. Once settled, the
+land is tinted from `resolution.after`. Stepping through phases faster than they play gives a
+telegraph tick per phase instead of each phase's whole set of sounds.
+
+A highlight names provinces. Before a retreat phase a province can hold two units, the one that
+took it and the one dislodged from it; every result of that phase is the dislodged unit's, so
+the board rings that one (where it stood, if it was disbanded). `trackAt(plan, province)` in
+`motion/choreography.ts` makes that choice.
 
 Order marks are laid out by `map/marks.ts` with the geometry in `map/geometry.ts`: moves are
 bowed strokes with a barbed head, supports dashed with a round knot on the middle of the move
@@ -94,8 +105,10 @@ under each spring. The spoken value names the phase and what happened in it.
 
 ## Sound
 
-`deck.play(name)` and `deck.schedule(cues)` (`sound/deck.ts`). Five voices synthesised with
+`deck.play(name)` and `deck.schedule(cues, { rate, from })` (`sound/deck.ts`; `from` starts part
+way into a run, for a speed changed mid-phase). Five voices synthesised with
 the Web Audio API (`sound/voices.ts`): stamp thud, quill scratch, march, seal crack, telegraph
 tick. Off by default and kept per device; no audio context exists until the player turns sound
-on; the page asks to be ambient audio so the phone's silent switch silences it; nothing plays in
-a hidden tab. `<Board>` plays its own phase's cues; pass `sound={false}` to keep a board quiet.
+on, and for a player who left it on, it is made on their first tap or key press (Safari only
+starts audio from a gesture); the page asks to be ambient audio so the phone's silent switch
+silences it; nothing plays in a hidden tab. `<Board>` plays its own phase's cues; pass `sound={false}` to keep a board quiet.
