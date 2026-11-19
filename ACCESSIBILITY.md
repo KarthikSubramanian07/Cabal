@@ -66,6 +66,36 @@ part of `pnpm test:e2e` (`apps/web/e2e`):
   word; the phase clock is said out loud at five minutes and at one; a private dispatch that
   arrives while the press is closed is announced; and a seal's receipt is stamped as an image
   with a text name ("Receipt: Kept") with the device's own check written out beneath it.
+- The front door, the account, the records and the replay (`e2e/landing.spec.ts`,
+  `account.spec.ts`, `records.spec.ts`, `notifications.spec.ts`): axe over the front door at rest
+  and with the handle dialog open, the account card with a recovery code on show, a player's
+  record, the Ledger (full and empty) and a finished game's replay at its end; and, against the
+  real server (`e2e-live/front.spec.ts`), a player's own record and a replay.
+
+## The front door, the account and the records (2026-11-19)
+
+- The front door's one moment of motion (the dispatch, the seal, the order drawn across the
+  Channel and the BROKEN stamp) runs only without `prefers-reduced-motion`; with it the story is
+  drawn at once, finished, and no animation is created at all (tested). The dispatch has a
+  written caption that tells the whole story for a screen reader.
+- The headline is in the HTML the edge sends, before any script runs, and the browser takes the
+  same markup over in place; nothing redraws or moves when it does.
+- The player button's accessible name contains its visible text ("Your account", or the handle,
+  read as "Your account, ada"), as WCAG 2.5.3 asks. Its menu closes on Escape and returns focus
+  to the button.
+- The handle and restore dialogs say what a handle may be before anyone types, and every refusal
+  (taken, reserved, too short, a bad recovery code) is an alert tied to its field, with focus
+  returned to it. A recovery code is shown in a labelled, focusable slip and can be copied or
+  saved as a file.
+- The rating chart is a group of points, each a keyboard stop with a spoken label (what the game
+  did, and the rating after it); the same figures are in a table under "The figures". Results
+  read as words (Won, Drew, Left), never only a colour; the reliability strip is a picture of
+  the sentence beside it.
+- The Ledger's standings are tables with captions; the two orders are tabs; the viewer's own row
+  is marked in words ("you") as well as colour.
+- A replay is the sandbox's phase player: the slider, the stepper and Space to play and pause,
+  with each phase announced as it is shown.
+- The browser's notification prompt is only ever raised by a button that says what it turns on.
 
 ## Motion, sound and explanations (2026-11-19)
 

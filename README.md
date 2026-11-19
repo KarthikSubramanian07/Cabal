@@ -19,7 +19,7 @@
 
 `diplomacy` `negotiation` `strategy-game` `rust` `webassembly` `cloudflare-workers` `durable-objects` `react` `llm-agents` `datc` `game-theory`
 
-[Play the sandbox](https://playcabal.pages.dev) · [The plan](docs/PLAN.md) · [Architecture](docs/ARCHITECTURE.md) · [Rules decisions](docs/RULES.md) · [Protocol](docs/PROTOCOL.md) · [ADRs](docs/adr/)
+[Play](https://playcabal.pages.dev) · [The sandbox](https://playcabal.pages.dev/sandbox) · [The plan](docs/PLAN.md) · [Architecture](docs/ARCHITECTURE.md) · [Rules decisions](docs/RULES.md) · [Protocol](docs/PROTOCOL.md) · [ADRs](docs/adr/)
 
 </div>
 
@@ -131,7 +131,7 @@ cargo run --release -p cabal-cli -- arena --games 100   # bot against bot on eve
 | `cabal-bot`, `cabal arena` | a deterministic heuristic player at three levels, exported as `botOrders`, and a native arena that plays 6 games a second and checks every order; see [docs/BOT.md](docs/BOT.md) |
 | `@cabal/protocol` | zod schemas for every frame, settings, pledges and scoring |
 | `apps/server` | GameRoom Durable Object: seats, deadlines, orders, press, sealed pledges with receipts, replay export |
-| `apps/web` | the classic board sandbox: click-to-order from the legal list, coast picker, receipts with reasons, phase replay, undo, MILA import and export, phone and desktop |
+| `apps/web` | the front door (prerendered, with Play now against six bots), guest accounts with recovery codes, live game rooms, player records with rating history, the Ledger, replays of finished games, push notifications, and the classic board sandbox at `/sandbox`: click-to-order, receipts with reasons, phase replay, MILA import and export, phone and desktop |
 | `tools/mapgen` | the board itself, generated from Natural Earth and checked against the engine's borders |
 | `@cabal/agents` | Claude players with narrative prompts, structured decisions and legal order validation |
 
