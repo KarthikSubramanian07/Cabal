@@ -59,6 +59,40 @@ test.describe("map legibility", () => {
     expect(after.piece).toBeLessThan(before.piece * 2.6);
   });
 
+  test("no province code is written over another, at the default zoom or closer", async ({ page }) => {
+    await ready(page);
+    // The letters themselves, not the line box round them: a line box is nearly twice as tall
+    // as a capital, so two codes on neighbouring lines have boxes that touch though the ink
+    // does not (Edinburgh over Liverpool is the tightest pair on the board).
+    const collisions = () =>
+      page.evaluate(() => {
+        const svg = document.querySelector<SVGSVGElement>("svg.board")!;
+        const scale = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
+        const ink = [...svg.querySelectorAll("text.label")].map((t) => {
+          const b = t.getBoundingClientRect();
+          const cap = Number.parseFloat(getComputedStyle(t).fontSize) * scale * 0.72;
+          const mid = b.top + b.height / 2;
+          return { code: t.textContent!, left: b.left, right: b.right, top: mid - cap / 2, bottom: mid + cap / 2 };
+        });
+        const out: string[] = [];
+        for (let i = 0; i < ink.length; i++) {
+          for (let j = i + 1; j < ink.length; j++) {
+            const a = ink[i]!;
+            const b = ink[j]!;
+            const across = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+            const down = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+            if (across > 0.5 && down > 0.5) out.push(`${a.code} over ${b.code}`);
+          }
+        }
+        return out;
+      });
+    expect(await collisions()).toEqual([]);
+    for (let i = 0; i < 2; i++) {
+      await page.getByRole("button", { name: "Zoom in" }).click();
+      expect(await collisions(), `zoom step ${i + 1}`).toEqual([]);
+    }
+  });
+
   test("every code sits inside the province it names", async ({ page }) => {
     await ready(page);
     await page.getByRole("button", { name: "Zoom in" }).click();
