@@ -13,7 +13,8 @@ import { ApiError, api, failureText } from "../net/api.js";
 import { useIdentity } from "../profile/Identity.jsx";
 import { PlayerSeal } from "../profile/ProfileMenu.jsx";
 import { RatingChart } from "../profile/RatingChart.jsx";
-import { percent, ratingPath, reliabilityLine, resultWord, signed, trustLine } from "../profile/record.js";
+import { readPlayer } from "../net/player.js";
+import { percent, ratingPath, reliabilityLine, resultWord, signed, trustLine, withOwnCodes } from "../profile/record.js";
 
 type Load = { kind: "loading" } | { kind: "missing" } | { kind: "failed"; message: string } | { kind: "ready"; profile: PlayerProfile };
 
@@ -164,7 +165,16 @@ export default function ProfilePage({ handle }: { handle: string }) {
   useEffect(() => {
     let live = true;
     setLoad({ kind: "loading" });
-    api.profile(handle).then(
+    (async () => {
+      const profile = await api.profile(handle);
+      // On their own record a player sees their unlisted games' codes too.
+      const me = readPlayer();
+      if (me && me.id === profile.player.id) {
+        const mine = await api.myGames(me.secret).catch(() => []);
+        return { ...profile, recent: withOwnCodes(profile.recent, mine) };
+      }
+      return profile;
+    })().then(
       (profile) => live && setLoad({ kind: "ready", profile }),
       (error: unknown) => {
         if (!live) return;
