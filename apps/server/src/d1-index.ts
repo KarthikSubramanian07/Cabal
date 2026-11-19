@@ -41,6 +41,7 @@ import {
   RELIABILITY_SQL,
   TRUST_SQL,
   conservative,
+  countsForTrust,
   decayed,
   rateGame,
   ratedGame,
@@ -246,6 +247,8 @@ export class D1Index implements GameIndex, PlayerStore {
       this.db.prepare("DELETE FROM games_live WHERE game_id = ?").bind(record.gameId),
     ];
     const status = record.phaseCount === 0 ? "void" : record.result === "abandoned" ? "abandoned" : "finished";
+    // Pledges count towards a player's trust ledger only from a game that meets the rated bar.
+    const trusted = countsForTrust(record);
     const seats = new Map(record.seats.map((s) => [s.power, s]));
     for (const p of record.players ?? []) {
       const seat = seats.get(p.power);
@@ -284,9 +287,9 @@ export class D1Index implements GameIndex, PlayerStore {
             p.phasesDue,
             p.phasesOnTime,
             p.phasesLate,
-            p.ledger.kept,
-            p.ledger.broken,
-            p.ledger.void,
+            trusted ? p.ledger.kept : 0,
+            trusted ? p.ledger.broken : 0,
+            trusted ? p.ledger.void : 0,
             record.finishedAt,
           ),
       );

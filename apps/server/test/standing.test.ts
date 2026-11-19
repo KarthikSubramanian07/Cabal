@@ -1,8 +1,9 @@
 /** Ratings, reliability and the trust ledger, folded from finished games into D1 and read back. */
 import { describe, expect, it } from "vitest";
 import { type GamePlayerRecord, type GameRecord, GameSettings, LeaderboardResponse, PlayerProfile, TrustLeaderboardResponse } from "@cabal/protocol";
+import { Game } from "@cabal/engine";
 import { RATING_RULES } from "../src/ratings.js";
-import { call, index, newPlayer, serverEnv } from "./helpers.js";
+import { Client, call, createAs, index, inRoom, joinAs, newPlayer, serverEnv, sleep, start, untilIndexed } from "./helpers.js";
 
 
 const db = () => serverEnv.DB!;
@@ -167,7 +168,6 @@ describe("rating finished games", () => {
           { playerId: liar.player.id, score: 0.5, over: pledges(1, 5) },
           { playerId: other.player.id, score: 0 },
         ],
-        { settings: GameSettings.parse({}) },
       ),
     );
     await index().recordGame(finished([{ playerId: honest.player.id, score: 1, over: pledges(2, 1) }, { playerId: liar.player.id, score: 0 }, { playerId: other.player.id, score: 0 }]));
@@ -181,6 +181,79 @@ describe("rating finished games", () => {
     // Too few pledges to be ranked.
     expect(board.entries.some((e) => e.player.id === other.player.id)).toBe(false);
   });
+
+  it("keeps pledges from games below the rated bar out of the trust ledger", async () => {
+    const [a, b, c] = await Promise.all([newPlayer(), newPlayer(), newPlayer()]);
+    const many = { over: { ledger: { kept: 60, broken: 0, void: 0 } } };
+    const table = [
+      { playerId: a.player.id, score: 0.5, ...many },
+      { playerId: b.player.id, score: 0.5, ...many },
+      { playerId: c.player.id, score: 0, ...many },
+    ];
+    // Unlisted, abandoned, one phase long, and two signed-in players: none of them count.
+    await index().recordGame(finished(table, { settings: GameSettings.parse({}) }));
+    await index().recordGame(finished(table, { result: "abandoned", reason: "inactive", winners: [], scores: {} }));
+    await index().recordGame(finished(table, { movementPhases: 1, phaseCount: 1 }));
+    await index().recordGame(finished(table.slice(0, 2)));
+    for (const p of [a, b, c]) {
+      const profile = PlayerProfile.parse(await (await call(`/api/players/${p.player.handle}`, null)).json());
+      expect(profile.trust, p.player.handle).toMatchObject({ kept: 0, broken: 0, void: 0 });
+    }
+    // The same table in a game that meets the bar counts.
+    await index().recordGame(finished(table));
+    const profile = PlayerProfile.parse(await (await call(`/api/players/${a.player.handle}`, null)).json());
+    expect(profile.trust).toMatchObject({ kept: 60, broken: 0 });
+  });
+
+  it("does not let two accounts farm the ledger with self-kept pledges in an unlisted game", async () => {
+    const a = await newPlayer();
+    const b = await newPlayer();
+    const ann = await createAs(a.secret, { aiFill: true }); // unlisted, the default
+    const bobRes = await joinAs(b.secret, ann.gameId, {});
+    expect(bobRes.status).toBe(200);
+    const bob = (await bobRes.json()) as { token: string; power: string };
+    expect((await start({ gameId: ann.gameId, token: ann.token, power: ann.power })).status).toBe(200);
+    // One unit each and nobody else on the board, so every hold is trivially kept.
+    const state = new Game().state();
+    state.units = { [ann.power]: ["A PAR"], [bob.power]: ["A MUN"] };
+    await inRoom(ann.gameId, async (room, storage) => {
+      const game = Game.fromState(state);
+      (room as unknown as { game: Game }).game = game;
+      await storage.storage.put("saved", game.toSaved(ann.gameId));
+    });
+    const ca = await Client.connect(ann.gameId, ann.token);
+    const cb = await Client.connect(ann.gameId, bob.token);
+    await ca.next("welcome");
+    await cb.next("welcome");
+    for (let i = 0; i < 12; i++) {
+      ca.send({ t: "press.send", id: `a${i}`, p: { to: bob.power, body: `promise ${i}`, pledge: { orders: ["A PAR H"] } } });
+      cb.send({ t: "press.send", id: `b${i}`, p: { to: ann.power, body: `promise ${i}`, pledge: { orders: ["A MUN H"] } } });
+      await ca.next("press", (m) => m.id === `a${i}`);
+      await cb.next("press", (m) => m.id === `b${i}`);
+      await sleep(110); // under the socket's token bucket
+    }
+    ca.send({ t: "orders.set", p: { phase: "S1901M", orders: ["A PAR H"] } });
+    cb.send({ t: "orders.set", p: { phase: "S1901M", orders: ["A MUN H"] } });
+    await ca.next("orders.ack");
+    await cb.next("orders.ack");
+    ca.send({ t: "ready", p: { phase: "S1901M", ready: true } });
+    cb.send({ t: "ready", p: { phase: "S1901M", ready: true } });
+    await ca.next("state", (m) => m.p.phase !== "S1901M");
+    // Twelve kept promises to one power in one phase are one receipt for the player...
+    const players = await inRoom(ann.gameId, (room) => (room as unknown as { playersRecord(): GamePlayerRecord[] }).playersRecord());
+    expect(players.find((p) => p.playerId === a.player.id)!.ledger).toEqual({ kept: 1, broken: 0, void: 0 });
+    // ...and the game, agreed to a draw after one phase of an unlisted table, counts for nothing.
+    ca.send({ t: "vote", p: { kind: "draw", value: true } });
+    cb.send({ t: "vote", p: { kind: "draw", value: true } });
+    const record = await untilIndexed(ann.gameId);
+    expect(record.settings.visibility).toBe("unlisted");
+    const board = TrustLeaderboardResponse.parse(await (await call("/api/ledger?limit=100", null)).json());
+    expect(board.entries.some((e) => e.player.id === a.player.id)).toBe(false);
+    const profile = PlayerProfile.parse(await (await call(`/api/players/${a.player.handle}`, null)).json());
+    expect(profile.trust).toMatchObject({ kept: 0, broken: 0, void: 0 });
+    ca.close();
+    cb.close();
+  }, 60_000);
 
   it("answers a page, never a 500, for an offset D1 cannot bind", async () => {
     for (const q of ["offset=Infinity", "offset=1e300", "offset=-5", "offset=NaN", "offset=2.5", "offset=99999999999"]) {

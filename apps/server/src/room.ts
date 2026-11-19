@@ -84,7 +84,7 @@ import { gameIndex } from "./game-index.js";
 import { REQUEST_ID_HEADER, log, requestIdFrom, withLogContext } from "./log.js";
 import { type Notice, deliver, notices, pushEnabled, reminderMinutes } from "./notify.js";
 import { hashToken, mintToken, parseToken, randomId, sameHash } from "./tokens.js";
-import { countsForLedger } from "./ratings.js";
+import { ledgerTally } from "./ratings.js";
 import { checkPledge, judgeOrders } from "./validate.js";
 
 type Status = "lobby" | "active" | "paused" | "finished" | "abandoned";
@@ -2964,8 +2964,8 @@ export class GameRoom extends DurableObject<Env> {
     const stints = this.sql.exec<StintRow>("SELECT * FROM stints ORDER BY power, stint").toArray();
     const distinct = new Set(stints.map((s) => s.player_id).filter((id) => id !== null)).size;
     const pledges = this.sql
-      .exec<{ pledger: string; audience: string; receipt: Receipt; pledger_player: string | null; audience_player: string | null }>(
-        "SELECT pledger, audience, receipt, pledger_player, audience_player FROM pledges WHERE receipt IS NOT NULL",
+      .exec<{ pledger: string; audience: string; phase: string; receipt: Receipt; pledger_player: string | null; audience_player: string | null }>(
+        "SELECT pledger, audience, phase, receipt, pledger_player, audience_player FROM pledges WHERE receipt IS NOT NULL",
       )
       .toArray();
     const out: GamePlayerRecord[] = [];
@@ -2983,13 +2983,15 @@ export class GameRoom extends DurableObject<Env> {
         ? held
         : [{ power: seat.power, stint: 0, player_id: seat.player_id, name: seat.name, joined_at: this.meta!.createdAt, substitute: 0, left_reason: null, due: 0, on_time: 0, late: 0 }];
       for (const row of rows) {
-        const ledger = { kept: 0, broken: 0, void: 0 };
-        if (row.player_id !== null) {
-          for (const p of pledges) {
-            if (p.pledger !== seat.power || p.pledger_player !== row.player_id) continue;
-            if (countsForLedger({ pledgerPlayer: p.pledger_player, audience: p.audience, audiencePlayer: p.audience_player }, distinct)) ledger[p.receipt] += 1;
-          }
-        }
+        const ledger =
+          row.player_id === null
+            ? { kept: 0, broken: 0, void: 0 }
+            : ledgerTally(
+                pledges
+                  .filter((p) => p.pledger === seat.power && p.pledger_player === row.player_id)
+                  .map((p) => ({ phase: p.phase, audience: p.audience, receipt: p.receipt, pledgerPlayer: p.pledger_player, audiencePlayer: p.audience_player })),
+                distinct,
+              );
         const current = row.left_reason === null;
         out.push({
           power: seat.power,

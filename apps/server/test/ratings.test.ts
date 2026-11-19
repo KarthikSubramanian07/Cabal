@@ -8,9 +8,11 @@ import {
   RATING_RULES,
   conservative,
   countsForLedger,
+  countsForTrust,
   decayed,
   established,
   glicko2,
+  ledgerTally,
   pairWeight,
   pairings,
   rateGame,
@@ -221,5 +223,26 @@ describe("reliability and trust", () => {
     expect(countsForLedger({ pledgerPlayer: null, audience: "ENGLAND", audiencePlayer: "pb" }, 2)).toBe(false);
     expect(countsForLedger({ pledgerPlayer: "pa", audience: "ALL", audiencePlayer: null }, 2)).toBe(true);
     expect(countsForLedger({ pledgerPlayer: "pa", audience: "ALL", audiencePlayer: null }, 1)).toBe(false);
+  });
+
+  it("counts at most one receipt per audience per phase, broken over kept over void", () => {
+    const p = (phase: string, audience: string, receipt: "kept" | "broken" | "void") => ({ phase, audience, receipt, pledgerPlayer: "pa", audiencePlayer: audience === "ALL" ? null : "pb" });
+    // Sixty promises to one power in one phase are one promise.
+    expect(ledgerTally(Array.from({ length: 60 }, () => p("S1901M", "ENGLAND", "kept")), 2)).toEqual({ kept: 1, broken: 0, void: 0 });
+    // One broken among them breaks it.
+    expect(ledgerTally([p("S1901M", "ENGLAND", "kept"), p("S1901M", "ENGLAND", "broken"), p("S1901M", "ENGLAND", "kept")], 2)).toEqual({ kept: 0, broken: 1, void: 0 });
+    expect(ledgerTally([p("S1901M", "ENGLAND", "void"), p("S1901M", "ENGLAND", "kept")], 2)).toEqual({ kept: 1, broken: 0, void: 0 });
+    // Other phases and other audiences are other promises; ones that do not count are left out.
+    const mixed = [p("S1901M", "ENGLAND", "kept"), p("F1901M", "ENGLAND", "kept"), p("S1901M", "ALL", "broken"), p("S1901M", "GERMANY", "void"), { ...p("S1901M", "ITALY", "kept"), audiencePlayer: null }];
+    expect(ledgerTally(mixed, 2)).toEqual({ kept: 2, broken: 1, void: 1 });
+    expect(ledgerTally([], 2)).toEqual({ kept: 0, broken: 0, void: 0 });
+  });
+
+  it("counts a game towards trust only when it meets the rated bar", () => {
+    expect(countsForTrust(record())).toBe(true);
+    expect(countsForTrust(record({ settings: GameSettings.parse({}) }))).toBe(false);
+    expect(countsForTrust(record({ result: "abandoned", winners: [], scores: {} }))).toBe(false);
+    expect(countsForTrust(record({ result: "draw", movementPhases: 1 }))).toBe(false);
+    expect(countsForTrust(record({ players: [stint("FRANCE", "pa"), stint("ENGLAND", "pb"), stint("ITALY", null)] }))).toBe(false);
   });
 });

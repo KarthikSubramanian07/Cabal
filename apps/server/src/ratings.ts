@@ -300,6 +300,15 @@ export const RELIABILITY_SQL = (onTime: string, late: string, due: string, walke
 export const TRUST_SQL = (kept: string, broken: string) => `((${kept} + ${TRUST_PRIOR.kept}.0) / (${kept} + ${broken} + ${TRUST_PRIOR.total}.0))`;
 
 /**
+ * Does a finished game count towards its players' trust ledgers? The same bar as a rated game
+ * (`ratedGame`): public, decided by a solo or a draw, two full game years, three distinct signed-in
+ * players. One rule decides what a real game is, so two free accounts in an unlisted game, a game
+ * voted to a draw after one phase or an abandoned one cannot fill a ledger with promises they
+ * arranged to keep. The game's own ledger of receipts is kept whatever this says.
+ */
+export const countsForTrust = (record: GameRecord): boolean => ratedGame(record).rated;
+
+/**
  * Does a pledge count towards the pledger's trust ledger? Only a promise made to another person
  * can be kept or broken in a way that says something: to a power a different signed-in player held
  * when it was made, or to the whole table when at least two signed-in players sat at it. Pledges to
@@ -309,4 +318,31 @@ export function countsForLedger(pledge: { pledgerPlayer: string | null; audience
   if (pledge.pledgerPlayer === null) return false;
   if (pledge.audience === "ALL") return distinctPlayers >= 2;
   return pledge.audiencePlayer !== null && pledge.audiencePlayer !== pledge.pledgerPlayer;
+}
+
+export interface LedgerPledge {
+  phase: string;
+  audience: string;
+  receipt: "kept" | "broken" | "void";
+  pledgerPlayer: string | null;
+  audiencePlayer: string | null;
+}
+
+/**
+ * One stint's receipts for its player's trust ledger: the pledges that count (`countsForLedger`),
+ * at most one receipt per audience per phase. Sixty promises to one power in one phase are one
+ * promise: broken if any of them was broken, else kept if any was kept, else void.
+ */
+export function ledgerTally(pledges: readonly LedgerPledge[], distinctPlayers: number): { kept: number; broken: number; void: number } {
+  const byPromise = new Map<string, LedgerPledge["receipt"]>();
+  const rank = { void: 0, kept: 1, broken: 2 } as const;
+  for (const p of pledges) {
+    if (!countsForLedger(p, distinctPlayers)) continue;
+    const key = `${p.phase} ${p.audience}`;
+    const was = byPromise.get(key);
+    if (was === undefined || rank[p.receipt] > rank[was]) byPromise.set(key, p.receipt);
+  }
+  const out = { kept: 0, broken: 0, void: 0 };
+  for (const receipt of byPromise.values()) out[receipt] += 1;
+  return out;
 }
