@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -132,7 +133,8 @@ function edge(): Plugin {
           const accepts = String(req.headers["accept-encoding"] ?? "");
           const encoding = /\bbr\b/.test(accepts) ? "br" : /\bgzip\b/.test(accepts) ? "gzip" : null;
           if (encoding && body.length > 1024 && COMPRESSIBLE.test(out.get("Content-Type") ?? "")) {
-            const key = `${encoding} ${response.status} ${url.pathname}`;
+            // Keyed by what is being sent, so a rebuild under a running preview is never served stale.
+            const key = `${encoding} ${createHash("sha1").update(body).digest("base64")}`;
             let small = packed.get(key);
             if (!small) {
               small =
