@@ -1,13 +1,50 @@
-export { AgentClient, type AgentClientOptions } from "./client.js";
+export { AgentClient, type AgentClientOptions, type DecisionInfo } from "./client.js";
+export {
+  PRICES,
+  type Price,
+  type Usage,
+  ZERO_USAGE,
+  addUsage,
+  costMicros,
+  maxCallCostMicros,
+  microsToUsd,
+  priceOf,
+} from "./cost.js";
 export {
   type Brain,
+  BrainFailure,
+  type BrainReply,
+  type BrainRequest,
   ClaudeBrain,
   type ClaudeBrainOptions,
+  DEFAULT_EFFORT,
+  DEFAULT_MODEL,
   Decision,
+  type Effort,
+  type EffortPlan,
+  FallbackBrain,
+  MAX_INPUT_TOKENS,
+  MAX_OUTPUT_TOKENS,
+  MAX_PROMPT_BYTES,
+  MEMORY_LIMITS,
+  type Memory,
   PERSONAS,
+  type PlayInput,
+  type Played,
   Player,
   type Validated,
+  requestKind,
   validateOrders,
 } from "./player.js";
-export { type PromptInput, type Relationship, SYSTEM_PROMPT, boardReport, legalMenu, userPrompt } from "./prompt.js";
-export { type DecisionRecord, type ModelPricing, type TokenUsage, estimateCost } from "./cost.js";
+export {
+  type PromptInput,
+  type Relationship,
+  SYSTEM_PROMPT,
+  type Step,
+  boardReport,
+  legalMenu,
+  phaseKind,
+  staticReport,
+  systemPrompt,
+  userPrompt,
+} from "./prompt.js";

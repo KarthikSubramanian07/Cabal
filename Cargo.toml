@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/cabal-engine", "crates/cabal-wasm", "crates/cabal-cli"]
+members = ["crates/cabal-engine", "crates/cabal-bot", "crates/cabal-wasm", "crates/cabal-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,10 +12,11 @@ repository = "https://github.com/KarthikSubramanian07/Cabal"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 thiserror = "2"
 blake3 = "1"
 hex = "0.4"
+rayon = "1"
 
 [profile.release]
 opt-level = 3
@@ -23,3 +24,15 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# The WebAssembly build (`pnpm engine:build`). Same as release unless the
+# measurements in docs/PERFORMANCE.md say otherwise.
+[profile.wasm-release]
+inherits = "release"
+
+# The bot's tests play whole games through the adjudicator; unoptimised that takes minutes.
+[profile.test.package.cabal-engine]
+opt-level = 2
+
+[profile.test.package.cabal-bot]
+opt-level = 2

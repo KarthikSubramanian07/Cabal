@@ -174,6 +174,12 @@ pub struct GameState {
     pub dislodged: Vec<Dislodged>,
     /// Provinces where a standoff occurred in the last movement phase (no retreats allowed there).
     pub standoffs: BTreeSet<ProvinceId>,
+    /// The retreat restrictions above were worked out from a record that only
+    /// listed where each unit could go, not why. The legal retreats are right;
+    /// which closed province was the attacker's origin and which a standoff is
+    /// a guess, and is marked as one when the state is saved again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub retreats_inferred: bool,
 }
 
 impl GameState {
@@ -183,6 +189,7 @@ impl GameState {
             position: Position::initial(map),
             dislodged: Vec::new(),
             standoffs: BTreeSet::new(),
+            retreats_inferred: false,
         }
     }
 
@@ -192,6 +199,7 @@ impl GameState {
             position,
             dislodged: Vec::new(),
             standoffs: BTreeSet::new(),
+            retreats_inferred: false,
         }
     }
 
