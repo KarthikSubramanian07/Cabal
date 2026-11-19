@@ -37,6 +37,7 @@ import { SeatBar } from "./SeatBar.jsx";
 import { readiness } from "./seatState.js";
 import { threadList, totalUnread } from "./threads.js";
 import { NotifyOffer } from "../profile/NotificationsPanel.jsx";
+import { filedLine } from "./settle.js";
 import { useDesk } from "./useDesk.js";
 
 type Tab = "orders" | "press" | "table";
@@ -491,9 +492,7 @@ function Floor({
         : "Your orders are kept on this device and filed when the connection is back."
       : desk.sync === "failed"
         ? desk.syncError
-        : givenCount > 0
-          ? "Your orders are on file with the server."
-          : "No orders on file: your units hold.";
+        : filedLine({ kind, allowance: desk.allowance, given: givenCount, due });
 
   const sheetNote = (() => {
     const parts: string[] = [];

@@ -19,6 +19,7 @@ import type { ComposeContext, Piece } from "../game/compose.js";
 import { type PhaseKind, parseUnit, phaseKind } from "../game/notation.js";
 import { tidyLegal } from "../game/saved.js";
 import { type Board, loadBoard } from "../map/boardData.js";
+import { settledBook } from "./settle.js";
 
 export type SyncState =
   /** Every order on this device is on file with the server. */
@@ -49,7 +50,7 @@ export interface Desk {
   clearOrders: () => void;
   holdAll: () => void;
   waive: () => void;
-  /** File everything now, with holds for units left without orders in a movement phase. */
+  /** File everything now, with every open decision written out (holds, disbands, waives). */
   settle: () => Promise<boolean>;
   /** The engine's verdict on one typed order: canonical text, legal, and why not. */
   judge: (text: string) => OrderVerdict;
@@ -272,17 +273,21 @@ export function useDesk(props: Props): DeskLoad {
   }, [change, power, kind, allowance]);
 
   /**
-   * Make the orders final before saying ready: in a movement phase every unit left without an
-   * order is told to hold (so the server counts the seat as having moved), and whatever is waiting
-   * is filed now rather than after the pause. Resolves true once the server has it all on file.
+   * Make the orders final before saying ready: every decision left open is written as an order
+   * (holds, disbands, waives; see settle.ts) so the server counts the seat as having ordered, and
+   * whatever is waiting is filed now rather than after the pause. Resolves true once the server has it all on file.
    */
   const settle = useCallback(async (): Promise<boolean> => {
     if (!power) return false;
-    let out = latest.current;
-    if (kind === "M") {
-      const missing = Object.keys(legal).filter((unit) => unit !== "" && out[unit] === undefined);
-      if (missing.length) out = { ...out, ...Object.fromEntries(missing.map((unit) => [unit, `${unit} H`])) };
-    }
+    const disorder = () => {
+      try {
+        // The rules' own choice: the phase resolved on this seat's orders alone.
+        return game?.preview({ orders: { [power]: Object.values(latest.current) } }).civil_disorder ?? [];
+      } catch {
+        return [];
+      }
+    };
+    const out = settledBook({ kind, book: latest.current, legal, allowance, disorder });
     let sending = editsNow.current;
     if (out !== latest.current) {
       sending += 1;
@@ -300,7 +305,7 @@ export function useDesk(props: Props): DeskLoad {
     const ok = await send(Object.values(out), sending);
     if (!ok && filed.current === sending) filed.current = before;
     return ok;
-  }, [power, kind, legal, send]);
+  }, [power, kind, legal, allowance, game, send]);
 
   const judge = useCallback(
     (text: string): OrderVerdict => {
