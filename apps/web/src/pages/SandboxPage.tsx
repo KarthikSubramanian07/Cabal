@@ -3,6 +3,7 @@ import { ConfirmDialog } from "../app/ConfirmDialog.jsx";
 import { PageLoading } from "../app/PageLoading.jsx";
 import { StatusPage } from "../app/StatusPage.jsx";
 import { shortcutsEnabled } from "../app/prefs.js";
+import { OrderEntry, type WriteResult } from "../components/OrderEntry.jsx";
 import { OrderList, PhaseHeader, PhaseStepper, PowerTable, Results } from "../components/Sidebar.jsx";
 import {
   type ComposeContext,
@@ -15,6 +16,7 @@ import {
   disbandSelected,
   holdSelected,
   setMode,
+  typedOrder,
   viaAlternative,
 } from "../game/compose.js";
 import {
@@ -33,9 +35,11 @@ import {
   parseUnit,
   provinceOf,
   resolveLabel,
+  POWER_NAMES,
   titleCase,
 } from "../game/notation.js";
 import { ImportError } from "../game/persist.js";
+import { type Suggestion, normaliseTyped, routeTyped } from "../game/typed.js";
 import { type OpenedGame, type Sandbox, powerWithOrders, useSandbox } from "../game/useSandbox.js";
 import { Board, type DrawnOrder, POWER_COLOR } from "../map/Board.jsx";
 
@@ -105,6 +109,7 @@ function Table({ sb }: { sb: Sandbox }) {
   const [refocus, setRefocus] = useState(0);
   const boardWrap = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const entryRef = useRef<HTMLInputElement>(null);
   const choicesRef = useRef<HTMLElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   /** Set when a keyboard choice (or Escape) removed the focused button, so focus moves on. */
@@ -230,6 +235,51 @@ function Table({ sb }: { sb: Sandbox }) {
     announce("Last phase undone.");
   }, [sb, cancel, announce]);
 
+  /** Every legal order on the board, to suggest while an order is typed. */
+  const suggestions = useMemo<Suggestion[]>(
+    () =>
+      Object.entries(sb.legal).flatMap(([power, byUnit]) =>
+        Object.values(byUnit).flatMap((orders) => orders.map((text) => ({ power, text }))),
+      ),
+    [sb.legal],
+  );
+
+  /** Write orders typed as text: the engine reads and judges each, the composer keys it like a click. */
+  const writeTyped = useCallback(
+    (inputs: string[]): WriteResult => {
+      const result: WriteResult = { written: [], refused: [] };
+      // Later orders in one batch must see the earlier ones, for the winter allowance.
+      const orders = Object.fromEntries(Object.entries(sb.orders).map(([p, o]) => [p, { ...o }]));
+      let last: string | null = null;
+      for (const input of inputs) {
+        // Arrows and words first, so `A BER->KIE` reads as the player meant it.
+        const typed = normaliseTyped(input);
+        const { power, verdict } = routeTyped((p) => sb.judge(p, typed), active, POWER_NAMES);
+        if (!verdict.legal || !verdict.canonical) {
+          result.refused.push({ input, reason: verdict.reason });
+          continue;
+        }
+        const step = typedOrder({ ...ctx, orders }, power, verdict.canonical);
+        if (step.effect.kind !== "order") {
+          result.refused.push({ input, reason: step.effect.kind === "message" ? step.effect.text : verdict.reason });
+          continue;
+        }
+        const { key, text } = step.effect;
+        sb.setOrder(power, key, text);
+        orders[power] = { ...orders[power], [key]: text };
+        result.written.push(text);
+        last = power;
+      }
+      if (last) {
+        setActive(last);
+        setRoute(null);
+        setDraft(IDLE);
+      }
+      return result;
+    },
+    [sb, ctx, active, setActive],
+  );
+
   const startNew = useCallback(() => {
     sb.reset();
     setViewing(null);
@@ -301,6 +351,11 @@ function Table({ sb }: { sb: Sandbox }) {
       if (key === "s") return mode("support");
       if (key === "c") return mode("convoy");
       if (key === "v") return mode("via-convoy");
+      // The order field, for writing orders as text (only where it is on screen).
+      if (key === "/" && entryRef.current?.checkVisibility?.()) {
+        e.preventDefault();
+        return entryRef.current.focus();
+      }
       if (key === "m") return mode("move");
       if (key === "h") return apply(holdSelected(ctx, draft));
       if (key === "d") return apply(disbandSelected(ctx, draft));
@@ -783,6 +838,7 @@ function Table({ sb }: { sb: Sandbox }) {
                       Clear
                     </button>
                   </div>
+                  <OrderEntry ref={entryRef} legal={suggestions} active={active} onWrite={writeTyped} />
                 </section>
               </>
             )}

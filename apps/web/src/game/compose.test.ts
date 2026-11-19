@@ -10,6 +10,7 @@ import {
   holdSelected,
   nextWaiveKey,
   setMode,
+  typedOrder,
   viaAlternative,
 } from "./compose.js";
 import { continueLabel, describePhase, forUnit, parseOrder, phaseKind, resolveLabel } from "./notation.js";
@@ -358,5 +359,72 @@ describe("forUnit", () => {
     expect(forUnit("F TRI R ALB", "F TRI")).toBe("F TRI R ALB");
     expect(forUnit("A VIE R BOH", "F TRI")).toBe("A VIE R BOH");
     expect(forUnit("WAIVE", "F TRI")).toBe("WAIVE");
+  });
+});
+
+describe("orders typed as text", () => {
+  it("writes a legal move under its unit, as a click would", () => {
+    expect(typedOrder(movement, "FRANCE", "A PAR - BUR").effect).toEqual({
+      kind: "order",
+      power: "FRANCE",
+      key: "A PAR",
+      text: "A PAR - BUR",
+    });
+  });
+
+  it("sends a move only a convoy could make by convoy", () => {
+    expect(typedOrder(movement, "ENGLAND", "A LON - BRE").effect).toMatchObject({ text: "A LON - BRE VIA" });
+  });
+
+  it("refuses what the map would refuse, saying why", () => {
+    expect(typedOrder(movement, "FRANCE", "A PAR - MUN").effect).toEqual({
+      kind: "message",
+      text: "A PAR - MUN is not a legal order this phase.",
+    });
+    expect(typedOrder(movement, "FRANCE", "A MOS H").effect).toEqual({ kind: "message", text: "A MOS cannot be ordered." });
+    expect(typedOrder(movement, "FRANCE", "WAIVE").effect).toEqual({
+      kind: "message",
+      text: "Builds are only waived in winter.",
+    });
+  });
+
+  it("keys a retreat by the dislodged unit, whatever kind the engine wrote", () => {
+    const retreat: ComposeContext = {
+      phase: "R",
+      pieces: [{ power: "AUSTRIA", unit: "F TRI", province: "TRI", dislodged: true }],
+      legal: { AUSTRIA: { "F TRI": ["F TRI R ALB", "F TRI D"] } },
+    };
+    expect(typedOrder(retreat, "AUSTRIA", "A TRI R ALB").effect).toEqual({
+      kind: "order",
+      power: "AUSTRIA",
+      key: "F TRI",
+      text: "F TRI R ALB",
+    });
+  });
+
+  it("keys builds, disbands and waives like the map, within the allowance", () => {
+    const winter: ComposeContext = {
+      phase: "A",
+      pieces: [],
+      legal: { FRANCE: { "": ["A MAR B", "F MAR B", "A PAR B", "WAIVE"] } },
+      allowance: { FRANCE: 1 },
+      orders: { FRANCE: {} },
+    };
+    expect(typedOrder(winter, "FRANCE", "F MAR B").effect).toEqual({
+      kind: "order",
+      power: "FRANCE",
+      key: "B:MAR",
+      text: "F MAR B",
+    });
+    expect(typedOrder(winter, "FRANCE", "WAIVE").effect).toMatchObject({ key: "WAIVE:0", text: "WAIVE" });
+    const full = { ...winter, orders: { FRANCE: { "B:PAR": "A PAR B" } } };
+    expect(typedOrder(full, "FRANCE", "F MAR B").effect).toEqual({
+      kind: "message",
+      text: "France may only build 1 unit. Remove an order to choose a different one.",
+    });
+    expect(typedOrder(full, "FRANCE", "A PAR - BUR").effect).toEqual({
+      kind: "message",
+      text: "Only builds, disbands and waives are ordered in winter.",
+    });
   });
 });
