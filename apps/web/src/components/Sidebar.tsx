@@ -295,10 +295,13 @@ export function PhaseStepper({
   onPlay,
   onPause,
   onSpeed,
+  endLabel,
 }: {
   history: PhaseRecord[];
   viewing: number | null;
   livePhase: string;
+  /** How the position after the last phase is named; defaults to the live phase, `now`. A finished game's replay calls it the final position. */
+  endLabel?: string | undefined;
   /** A step, a jump or a scrub by the player. Playback pauses for it. */
   onView: (index: number | null) => void;
   playing: boolean;
@@ -311,7 +314,7 @@ export function PhaseStepper({
   if (history.length === 0) return null;
   const index = viewing ?? history.length;
   const go = (i: number) => onView(i >= history.length ? null : Math.max(0, i));
-  const name = (i: number) => (i >= history.length ? `${phaseLine(livePhase)}, now` : `${phaseLine(history[i]!.phase)} results`);
+  const name = (i: number) => (i >= history.length ? (endLabel ?? `${phaseLine(livePhase)}, now`) : `${phaseLine(history[i]!.phase)} results`);
   return (
     <nav className="stepper" aria-label="Phase history">
       <div className="stepper-row">
@@ -342,7 +345,7 @@ export function PhaseStepper({
               {h.phase} results
             </option>
           ))}
-          <option value={history.length}>{livePhase} (now)</option>
+          <option value={history.length}>{endLabel ?? `${livePhase} (now)`}</option>
         </select>
         <button type="button" onClick={() => go(index + 1)} disabled={viewing === null} aria-label="Next phase">
           ›
