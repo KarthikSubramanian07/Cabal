@@ -19,7 +19,8 @@ function mockEnv(files: Record<string, { body: string; type: string }>): AssetEn
 }
 
 const files = {
-  "/index.html": { body: "<!doctype html><h1>Cabal Diplomacy</h1><p>home</p>", type: "text/html" },
+  "/index.html": { body: "<!doctype html><html><head><title>Cabal</title></head><body><h1>Cabal Diplomacy</h1><p>home</p></body></html>", type: "text/html" },
+  "/landing/index.html": { body: "<!doctype html><html><head><title>Cabal</title></head><body><h1>Shake hands. Seal it.</h1></body></html>", type: "text/html" },
   "/index.md": { body: "# Cabal\n\nDiplomacy with receipts.\n", type: "text/markdown" },
   "/about/index.html": { body: "<!doctype html><h1>About</h1>", type: "text/html" },
   "/about/index.md": { body: "# About Cabal\n\nWe build Diplomacy with receipts.\n", type: "text/markdown" },
@@ -109,11 +110,35 @@ describe("handleAgentRequest", () => {
       }
     });
 
-    it("keeps the reserved routes out of search indexes but not the sandbox", async () => {
-      const game = await handleAgentRequest(new Request("https://playcabal.pages.dev/g/K7Q2", html), env);
-      expect(game.headers.get("X-Robots-Tag")).toBe("noindex");
-      const sandbox = await handleAgentRequest(new Request("https://playcabal.pages.dev/sandbox", html), env);
-      expect(sandbox.headers.get("X-Robots-Tag")).toBeNull();
+    it("keeps tables and replays out of search indexes but not the public pages", async () => {
+      for (const path of ["/g/K7Q2", "/replay/K7Q2"]) {
+        const res = await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, html), env);
+        expect(res.headers.get("X-Robots-Tag"), path).toBe("noindex");
+        expect(await res.text(), path).toContain('<meta name="robots" content="noindex, follow" />');
+      }
+      for (const path of ["/sandbox", "/games", "/ledger", "/u/ada"]) {
+        const res = await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, html), env);
+        expect(res.headers.get("X-Robots-Tag"), path).toBeNull();
+      }
+    });
+
+    it("writes each address's own title and canonical link into the shell", async () => {
+      const res = await handleAgentRequest(new Request("https://playcabal.pages.dev/u/ada", html), env);
+      const text = await res.text();
+      expect(text).toContain("<title>ada — Cabal</title>");
+      expect(text).toContain('<link rel="canonical" href="https://playcabal.pages.dev/u/ada" />');
+      expect(text).toContain('<meta property="og:url" content="https://playcabal.pages.dev/u/ada" />');
+    });
+
+    it("serves the front door from its prerendered shell, and the plain shell when there is none", async () => {
+      const res = await handleAgentRequest(new Request("https://playcabal.pages.dev/", html), env);
+      const text = await res.text();
+      expect(text).toContain("Shake hands. Seal it.");
+      expect(text).toContain('<link rel="canonical" href="https://playcabal.pages.dev/" />');
+      const bare = mockEnv({ ...files, "/landing/index.html": undefined as never });
+      const fallback = await handleAgentRequest(new Request("https://playcabal.pages.dev/", html), bare);
+      expect(fallback.status).toBe(200);
+      expect(await fallback.text()).toContain("Cabal Diplomacy");
     });
 
     it("still answers unknown paths with a real 404", async () => {

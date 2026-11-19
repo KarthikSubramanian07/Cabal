@@ -4,7 +4,7 @@
  * the client can render and a real 404 for everything else.
  */
 
-export type RouteName = "sandbox" | "game" | "games" | "ledger" | "profile" | "replay";
+export type RouteName = "home" | "sandbox" | "game" | "games" | "ledger" | "profile" | "replay";
 
 export interface RouteDef {
   name: RouteName;
@@ -13,7 +13,7 @@ export interface RouteDef {
 }
 
 export const ROUTES: readonly RouteDef[] = [
-  { name: "sandbox", pattern: "/" },
+  { name: "home", pattern: "/" },
   { name: "sandbox", pattern: "/sandbox" },
   { name: "games", pattern: "/games" },
   { name: "game", pattern: "/g/:code" },
@@ -60,7 +60,7 @@ export function matchRoute(pathname: string): RouteMatch | null {
 
 /** Build a path for a route, for links. */
 export function pathFor(name: RouteName, params: Record<string, string> = {}): string {
-  const route = ROUTES.find((r) => r.name === name && (name !== "sandbox" || r.pattern === "/sandbox"));
+  const route = ROUTES.find((r) => r.name === name);
   if (!route) return "/";
   return route.pattern.replace(/:([a-z]+)/g, (_, key: string) => encodeURIComponent(params[key] ?? ""));
 }

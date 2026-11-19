@@ -47,6 +47,7 @@ function copyFor(route: RouteMatch): Copy {
         pageTitle: `Replay ${route.params["code"] ?? ""}`,
         body: "Finished games will play back here phase by phase, every order and every receipt. You can already step through your own games in the sandbox.",
       };
+    case "home":
     case "sandbox":
       return { title: "Sandbox", pageTitle: "Sandbox", body: "" };
   }

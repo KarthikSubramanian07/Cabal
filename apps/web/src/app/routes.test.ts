@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { matchRoute, pathFor } from "./routes.js";
 
 describe("matchRoute", () => {
-  it("serves the sandbox at the root and at /sandbox", () => {
-    expect(matchRoute("/")).toEqual({ name: "sandbox", params: {} });
+  it("serves the front door at the root and the sandbox at /sandbox", () => {
+    expect(matchRoute("/")).toEqual({ name: "home", params: {} });
     expect(matchRoute("/sandbox")).toEqual({ name: "sandbox", params: {} });
     expect(matchRoute("/sandbox/")).toEqual({ name: "sandbox", params: {} });
   });
@@ -25,6 +25,7 @@ describe("matchRoute", () => {
 
 describe("pathFor", () => {
   it("builds links that match their own route", () => {
+    expect(pathFor("home")).toBe("/");
     expect(pathFor("sandbox")).toBe("/sandbox");
     expect(pathFor("game", { code: "K7Q2" })).toBe("/g/K7Q2");
     expect(matchRoute(pathFor("profile", { handle: "ada" }))).toEqual({ name: "profile", params: { handle: "ada" } });
