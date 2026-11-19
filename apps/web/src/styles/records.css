@@ -299,6 +299,14 @@
 
 /* ---- recent games */
 
+.file-own {
+  margin-bottom: var(--space-8);
+}
+
+.file-own > .fine {
+  margin-bottom: var(--space-3);
+}
+
 .file-recent .power-mark {
   display: inline-block;
   width: 10px;
