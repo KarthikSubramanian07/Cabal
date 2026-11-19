@@ -1161,3 +1161,20 @@ table.keys tr + tr {
     padding: 9px 12px;
   }
 }
+/* Phase results enter once when adjudication is shown. */
+@keyframes result-arrive {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+.order.ok,
+.order.failed {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: result-arrive 420ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .order.ok,
+  .order.failed {
+    animation: none;
+  }
+}
