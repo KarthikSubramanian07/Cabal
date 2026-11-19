@@ -10,6 +10,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { type PromptInput, SYSTEM_PROMPT, userPrompt } from "./prompt.js";
+import type { TokenUsage } from "./cost.js";
 
 export const Decision = z.object({
   reasoning: z.string().describe("Private strategic reasoning, under 300 words."),
@@ -35,9 +36,17 @@ export const Decision = z.object({
 });
 export type Decision = z.infer<typeof Decision>;
 
+/** A decision plus the tokens it cost, when the brain can report them. */
+export interface BrainResult {
+  decision: Decision;
+  usage?: TokenUsage;
+}
+
 /** Anything that can turn a prompt into a decision; the Claude client is the default, tests inject a fake. */
 export interface Brain {
   decide(system: string, prompt: string): Promise<Decision>;
+  /** Optional: like decide, but also reports token usage for cost logging. */
+  decideWithUsage?(system: string, prompt: string): Promise<BrainResult>;
 }
 
 export interface ClaudeBrainOptions {
@@ -58,7 +67,7 @@ export class ClaudeBrain implements Brain {
     this.effort = opts.effort ?? "medium";
   }
 
-  async decide(system: string, prompt: string): Promise<Decision> {
+  async decideWithUsage(system: string, prompt: string): Promise<BrainResult> {
     const response = await this.client.messages.parse({
       model: this.model,
       max_tokens: 16000,
@@ -70,7 +79,21 @@ export class ClaudeBrain implements Brain {
     if (response.stop_reason === "refusal" || !response.parsed_output) {
       throw new Error(`no decision (stop_reason ${response.stop_reason})`);
     }
-    return response.parsed_output;
+    const u = response.usage;
+    return {
+      decision: response.parsed_output,
+      usage: {
+        inputTokens: u.input_tokens,
+        outputTokens: u.output_tokens,
+        // The SDK types these two as nullable, so null means "none reported".
+        cacheCreationInputTokens: u.cache_creation_input_tokens ?? 0,
+        cacheReadInputTokens: u.cache_read_input_tokens ?? 0,
+      },
+    };
+  }
+
+  async decide(system: string, prompt: string): Promise<Decision> {
+    return (await this.decideWithUsage(system, prompt)).decision;
   }
 }
 
