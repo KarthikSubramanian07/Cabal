@@ -269,6 +269,18 @@ svg.board {
   stroke-dasharray: 9 3 1.5 3;
 }
 
+/* Curved tracks and rings carry no fill, only ink. */
+.order path.halo,
+.order path.stroke,
+.order.carrying circle {
+  fill: none;
+}
+
+/* A fleet carrying an army whose track is drawn through it: a dotted ring of its own colour. */
+.order.carrying .stroke {
+  stroke-width: 2;
+}
+
 .order.hold circle {
   fill: none;
   stroke: var(--power);

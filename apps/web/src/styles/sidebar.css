@@ -405,3 +405,102 @@ table.powers td.done {
   font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
+
+/* Orders written as text, like a dispatch: a ruled line in type, legal orders offered below it. */
+.order-entry {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--rule);
+}
+
+.order-entry-label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.order-entry-field {
+  position: relative;
+  display: flex;
+  gap: 6px;
+}
+
+.order-entry-field input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-bottom: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.order-entry-field input::placeholder {
+  color: var(--ink-4);
+}
+
+.order-entry-field input:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 1px;
+}
+
+.order-entry-list {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: var(--z-popover);
+  max-height: 264px;
+  margin: 0;
+  padding: 3px 0;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  box-shadow: 0 10px 24px -14px rgba(18, 17, 16, 0.45);
+}
+
+.order-entry-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+
+.order-entry-list li code {
+  font-size: 13.5px;
+}
+
+.order-entry-list li:hover,
+.order-entry-list li[aria-selected="true"] {
+  background: var(--bone-2);
+  box-shadow: inset 3px 0 0 var(--brass);
+}
+
+.order-entry-power {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.order-entry-note {
+  margin: 6px 0 0;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+.order-entry-note.alert {
+  color: var(--vermilion-deep);
+}

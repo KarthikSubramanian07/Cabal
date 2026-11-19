@@ -3,11 +3,14 @@ import {
   type ComposeContext,
   type Draft,
   adjustmentsLeft,
+  canGoByConvoy,
+  carryingFleets,
   click,
   disbandSelected,
   holdSelected,
   nextWaiveKey,
   setMode,
+  typedOrder,
   viaAlternative,
 } from "./compose.js";
 import { continueLabel, describePhase, forUnit, parseOrder, phaseKind, resolveLabel } from "./notation.js";
@@ -69,6 +72,76 @@ describe("movement orders", () => {
   it("uses a convoy route when that is the only way", () => {
     const s1 = click(movement, start, "LON");
     expect(click(movement, s1.draft, "BRE").effect).toMatchObject({ text: "A LON - BRE VIA" });
+  });
+
+  describe("choosing the convoy route first (V)", () => {
+    const both: ComposeContext = {
+      ...movement,
+      legal: {
+        ...movement.legal,
+        ENGLAND: { ...movement.legal.ENGLAND, "A LON": ["A LON H", "A LON - BRE", "A LON - BRE VIA", "A LON - WAL"] },
+      },
+    };
+
+    it("lets the player choose the convoy route when a direct route also exists", () => {
+      const selected = click(both, start, "LON").draft;
+      const via = setMode(both, selected, "via-convoy").draft;
+      expect(via).toEqual({ step: "unit", power: "ENGLAND", unit: "A LON", via: true });
+      expect(click(both, via, "BRE").effect).toMatchObject({ text: "A LON - BRE VIA" });
+      expect(setMode(both, via, "move").draft).toEqual({ step: "unit", power: "ENGLAND", unit: "A LON" });
+    });
+
+    it("goes back to the land route when V is pressed again", () => {
+      const via = setMode(both, click(both, start, "LON").draft, "via-convoy").draft;
+      expect(setMode(both, via, "via-convoy").draft).toEqual({ step: "unit", power: "ENGLAND", unit: "A LON" });
+    });
+
+    it("explains a destination no fleet can reach, and keeps the convoy route chosen", () => {
+      const via = setMode(both, click(both, start, "LON").draft, "via-convoy").draft;
+      const step = click(both, via, "WAL");
+      expect(step.effect).toEqual({
+        kind: "message",
+        text: "No fleet can carry A LON to WAL. Switch off By convoy to go by land.",
+      });
+      expect(step.draft).toEqual(via);
+    });
+
+    it("refuses the convoy route for a unit no fleet could carry", () => {
+      const selected = click(movement, start, "PAR").draft;
+      expect(setMode(movement, selected, "via-convoy").effect).toEqual({
+        kind: "message",
+        text: "No fleet is placed to carry A PAR anywhere.",
+      });
+      expect(canGoByConvoy(movement, "FRANCE", "A PAR")).toBe(false);
+      expect(canGoByConvoy(movement, "ENGLAND", "A LON")).toBe(true);
+    });
+
+    it("drops the convoy route when another unit is selected", () => {
+      const via = setMode(both, click(both, start, "LON").draft, "via-convoy").draft;
+      expect(click(both, via, "PAR").draft).toEqual({ step: "unit", power: "FRANCE", unit: "A PAR" });
+    });
+  });
+
+  describe("the fleets that carry a convoyed move", () => {
+    it("lists every fleet that could convoy the army there, of any power, and which are ordered", () => {
+      const ctx: ComposeContext = {
+        ...movement,
+        legal: {
+          ...movement.legal,
+          ENGLAND: { ...movement.legal.ENGLAND, "F ENG": ["F ENG H", "F ENG C A LON - BRE"] },
+        },
+        orders: { ENGLAND: { "F ENG": "F ENG C A LON - BRE" } },
+      };
+      expect(carryingFleets(ctx, "A LON - BRE VIA")).toEqual([
+        { power: "ENGLAND", unit: "F ENG", order: "F ENG C A LON - BRE", given: true },
+        { power: "FRANCE", unit: "F MAO", order: "F MAO C A LON - BRE", given: false },
+      ]);
+    });
+
+    it("is empty for a move by land or any other order", () => {
+      expect(carryingFleets(movement, "A LON - WAL")).toEqual([]);
+      expect(carryingFleets(movement, "F MAO C A LON - BRE")).toEqual([]);
+    });
   });
 
   it("composes a support for a foreign move", () => {
@@ -286,5 +359,72 @@ describe("forUnit", () => {
     expect(forUnit("F TRI R ALB", "F TRI")).toBe("F TRI R ALB");
     expect(forUnit("A VIE R BOH", "F TRI")).toBe("A VIE R BOH");
     expect(forUnit("WAIVE", "F TRI")).toBe("WAIVE");
+  });
+});
+
+describe("orders typed as text", () => {
+  it("writes a legal move under its unit, as a click would", () => {
+    expect(typedOrder(movement, "FRANCE", "A PAR - BUR").effect).toEqual({
+      kind: "order",
+      power: "FRANCE",
+      key: "A PAR",
+      text: "A PAR - BUR",
+    });
+  });
+
+  it("sends a move only a convoy could make by convoy", () => {
+    expect(typedOrder(movement, "ENGLAND", "A LON - BRE").effect).toMatchObject({ text: "A LON - BRE VIA" });
+  });
+
+  it("refuses what the map would refuse, saying why", () => {
+    expect(typedOrder(movement, "FRANCE", "A PAR - MUN").effect).toEqual({
+      kind: "message",
+      text: "A PAR - MUN is not a legal order this phase.",
+    });
+    expect(typedOrder(movement, "FRANCE", "A MOS H").effect).toEqual({ kind: "message", text: "A MOS cannot be ordered." });
+    expect(typedOrder(movement, "FRANCE", "WAIVE").effect).toEqual({
+      kind: "message",
+      text: "Builds are only waived in winter.",
+    });
+  });
+
+  it("keys a retreat by the dislodged unit, whatever kind the engine wrote", () => {
+    const retreat: ComposeContext = {
+      phase: "R",
+      pieces: [{ power: "AUSTRIA", unit: "F TRI", province: "TRI", dislodged: true }],
+      legal: { AUSTRIA: { "F TRI": ["F TRI R ALB", "F TRI D"] } },
+    };
+    expect(typedOrder(retreat, "AUSTRIA", "A TRI R ALB").effect).toEqual({
+      kind: "order",
+      power: "AUSTRIA",
+      key: "F TRI",
+      text: "F TRI R ALB",
+    });
+  });
+
+  it("keys builds, disbands and waives like the map, within the allowance", () => {
+    const winter: ComposeContext = {
+      phase: "A",
+      pieces: [],
+      legal: { FRANCE: { "": ["A MAR B", "F MAR B", "A PAR B", "WAIVE"] } },
+      allowance: { FRANCE: 1 },
+      orders: { FRANCE: {} },
+    };
+    expect(typedOrder(winter, "FRANCE", "F MAR B").effect).toEqual({
+      kind: "order",
+      power: "FRANCE",
+      key: "B:MAR",
+      text: "F MAR B",
+    });
+    expect(typedOrder(winter, "FRANCE", "WAIVE").effect).toMatchObject({ key: "WAIVE:0", text: "WAIVE" });
+    const full = { ...winter, orders: { FRANCE: { "B:PAR": "A PAR B" } } };
+    expect(typedOrder(full, "FRANCE", "F MAR B").effect).toEqual({
+      kind: "message",
+      text: "France may only build 1 unit. Remove an order to choose a different one.",
+    });
+    expect(typedOrder(full, "FRANCE", "A PAR - BUR").effect).toEqual({
+      kind: "message",
+      text: "Only builds, disbands and waives are ordered in winter.",
+    });
   });
 });

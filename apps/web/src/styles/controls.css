@@ -134,6 +134,54 @@
   color: var(--vermilion-deep);
 }
 
+/* The route of a move by convoy: the fleets that could carry the army, chosen like pieces on a chart. */
+.route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 8px;
+  padding: 4px 8px;
+  border-left: 3px solid var(--brass);
+  background: var(--paper);
+}
+
+.route-title {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.route-title code {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.route-stamp {
+  display: inline-block;
+  margin-right: 2px;
+  padding: 0 6px;
+  border: 1.5px solid var(--brass-ink);
+  border-radius: var(--radius);
+  color: var(--brass-ink);
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transform: rotate(-2deg);
+}
+
+.route-fleets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.route-fleets .tool {
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
 /* Keyboard and text path for the map: what a click would offer, and the board as lists. */
 .choices {
   padding-top: 10px;

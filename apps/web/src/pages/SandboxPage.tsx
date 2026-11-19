@@ -1,18 +1,22 @@
-import { type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmDialog } from "../app/ConfirmDialog.jsx";
 import { PageLoading } from "../app/PageLoading.jsx";
 import { StatusPage } from "../app/StatusPage.jsx";
 import { shortcutsEnabled } from "../app/prefs.js";
+import { OrderEntry, type WriteResult } from "../components/OrderEntry.jsx";
 import { OrderList, PhaseHeader, PhaseStepper, PowerTable, Results } from "../components/Sidebar.jsx";
 import {
   type ComposeContext,
   type Draft,
   type Mode,
   type Step,
+  canGoByConvoy,
+  carryingFleets,
   click,
   disbandSelected,
   holdSelected,
   setMode,
+  typedOrder,
   viaAlternative,
 } from "../game/compose.js";
 import {
@@ -31,11 +35,13 @@ import {
   parseUnit,
   provinceOf,
   resolveLabel,
+  POWER_NAMES,
   titleCase,
 } from "../game/notation.js";
 import { ImportError } from "../game/persist.js";
+import { type Suggestion, normaliseTyped, routeTyped } from "../game/typed.js";
 import { type OpenedGame, type Sandbox, powerWithOrders, useSandbox } from "../game/useSandbox.js";
-import { Board, type DrawnOrder } from "../map/Board.jsx";
+import { Board, type DrawnOrder, POWER_COLOR } from "../map/Board.jsx";
 
 interface Picker {
   x: number;
@@ -90,6 +96,8 @@ function Table({ sb }: { sb: Sandbox }) {
   const [active, setActiveState] = useState(sb.resumedActive ?? "FRANCE");
   const [message, setMessage] = useState<string | null>(null);
   const [picker, setPicker] = useState<Picker | null>(null);
+  /** The army whose move by convoy was just written: its carrying fleets are offered under the map. */
+  const [route, setRoute] = useState<{ power: string; unit: string } | null>(null);
   const [viewing, setViewing] = useState<number | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [sheet, setSheet] = useState(false);
@@ -101,6 +109,7 @@ function Table({ sb }: { sb: Sandbox }) {
   const [refocus, setRefocus] = useState(0);
   const boardWrap = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const entryRef = useRef<HTMLInputElement>(null);
   const choicesRef = useRef<HTMLElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   /** Set when a keyboard choice (or Escape) removed the focused button, so focus moves on. */
@@ -151,6 +160,10 @@ function Table({ sb }: { sb: Sandbox }) {
         sb.setOrder(effect.power, effect.key, effect.text);
         setActive(effect.power);
         setMessage(null);
+        // A move by convoy goes nowhere without fleets: offer the ones that could carry it.
+        // Ordering one of those fleets keeps the offer up, so a route of two fleets is two taps.
+        if (effect.text.endsWith(" VIA")) setRoute({ power: effect.power, unit: effect.key });
+        else if (!/ C A /.test(effect.text)) setRoute(null);
         announce(describeOrder(effect.text));
       } else if (effect.kind === "choose") {
         const rect = boardWrap.current?.getBoundingClientRect();
@@ -201,6 +214,7 @@ function Table({ sb }: { sb: Sandbox }) {
     setDraft(IDLE);
     setPicker(null);
     setMessage(null);
+    setRoute(null);
   }, []);
 
   const adjudicate = useCallback(() => {
@@ -220,6 +234,51 @@ function Table({ sb }: { sb: Sandbox }) {
     cancel();
     announce("Last phase undone.");
   }, [sb, cancel, announce]);
+
+  /** Every legal order on the board, to suggest while an order is typed. */
+  const suggestions = useMemo<Suggestion[]>(
+    () =>
+      Object.entries(sb.legal).flatMap(([power, byUnit]) =>
+        Object.values(byUnit).flatMap((orders) => orders.map((text) => ({ power, text }))),
+      ),
+    [sb.legal],
+  );
+
+  /** Write orders typed as text: the engine reads and judges each, the composer keys it like a click. */
+  const writeTyped = useCallback(
+    (inputs: string[]): WriteResult => {
+      const result: WriteResult = { written: [], refused: [] };
+      // Later orders in one batch must see the earlier ones, for the winter allowance.
+      const orders = Object.fromEntries(Object.entries(sb.orders).map(([p, o]) => [p, { ...o }]));
+      let last: string | null = null;
+      for (const input of inputs) {
+        // Arrows and words first, so `A BER->KIE` reads as the player meant it.
+        const typed = normaliseTyped(input);
+        const { power, verdict } = routeTyped((p) => sb.judge(p, typed), active, POWER_NAMES);
+        if (!verdict.legal || !verdict.canonical) {
+          result.refused.push({ input, reason: verdict.reason });
+          continue;
+        }
+        const step = typedOrder({ ...ctx, orders }, power, verdict.canonical);
+        if (step.effect.kind !== "order") {
+          result.refused.push({ input, reason: step.effect.kind === "message" ? step.effect.text : verdict.reason });
+          continue;
+        }
+        const { key, text } = step.effect;
+        sb.setOrder(power, key, text);
+        orders[power] = { ...orders[power], [key]: text };
+        result.written.push(text);
+        last = power;
+      }
+      if (last) {
+        setActive(last);
+        setRoute(null);
+        setDraft(IDLE);
+      }
+      return result;
+    },
+    [sb, ctx, active, setActive],
+  );
 
   const startNew = useCallback(() => {
     sb.reset();
@@ -291,6 +350,12 @@ function Table({ sb }: { sb: Sandbox }) {
       if (!shortcutsEnabled()) return;
       if (key === "s") return mode("support");
       if (key === "c") return mode("convoy");
+      if (key === "v") return mode("via-convoy");
+      // The order field, for writing orders as text (only where it is on screen).
+      if (key === "/" && entryRef.current?.checkVisibility?.()) {
+        e.preventDefault();
+        return entryRef.current.focus();
+      }
       if (key === "m") return mode("move");
       if (key === "h") return apply(holdSelected(ctx, draft));
       if (key === "d") return apply(disbandSelected(ctx, draft));
@@ -333,7 +398,9 @@ function Table({ sb }: { sb: Sandbox }) {
     for (const text of legal) {
       const o = parseOrder(text);
       if (!o) continue;
-      if (draft.step === "unit" && (o.type === "move" || o.type === "retreat")) set.add(provinceOf(o.dest));
+      // With By convoy chosen, only where a fleet could land the army.
+      if (draft.step === "unit" && o.type === "move" && (!draft.via || o.via)) set.add(provinceOf(o.dest));
+      if (draft.step === "unit" && o.type === "retreat") set.add(provinceOf(o.dest));
       if (draft.step === "support") {
         if (!draft.target && (o.type === "support-move" || o.type === "support-hold")) set.add(o.target.province);
         if (draft.target && o.type === "support-move" && o.target.unit === draft.target) set.add(provinceOf(o.dest));
@@ -387,6 +454,11 @@ function Table({ sb }: { sb: Sandbox }) {
   const selectedProvince = draft.step === "idle" ? null : parseUnit(draft.unit)?.province ?? null;
   const activeSummary = sb.powers.find((p) => p.power === active);
   const orderableUnits = Object.keys(sb.legal[active] ?? {}).filter((u) => u !== "");
+  /** The selected army could be carried by sea, so By convoy is on offer. */
+  const convoyable = playing && draft.step === "unit" && canGoByConvoy(ctx, draft.power, draft.unit);
+  /** The move by convoy whose fleets are on offer, while it is still written that way. */
+  const routeOrder = playing && route && draft.step === "idle" ? sb.orders[route.power]?.[route.unit] : undefined;
+  const carriers = routeOrder?.endsWith(" VIA") ? carryingFleets(ctx, routeOrder) : [];
   const choices = playing ? choicesFor(ctx, draft, active, orderableUnits, targets, sb.board.provinces) : [];
   const choose = (code: string) => {
     if (!playing) return;
@@ -415,6 +487,9 @@ function Table({ sb }: { sb: Sandbox }) {
             ? "Click a dislodged unit, then where it retreats."
             : "Click a unit, then where it should go.";
       case "unit":
+        if (draft.via) {
+          return `${draft.unit} by convoy: click where the fleets should land it.`;
+        }
         return sb.kind === "R" ? (
           <>
             {draft.unit}: click an empty neighbour, or disband it<span className="keys-only"> (D)</span>.
@@ -422,7 +497,10 @@ function Table({ sb }: { sb: Sandbox }) {
         ) : (
           <>
             {draft.unit}: click a destination, or click it again to hold
-            <span className="keys-only">. Press S to support, C to convoy</span>.
+            <span className="keys-only">
+              . Press S to support, C to convoy{canGoByConvoy(ctx, draft.power, draft.unit) ? ", V to go by convoy" : ""}
+            </span>
+            .
           </>
         );
       case "support":
@@ -507,6 +585,7 @@ function Table({ sb }: { sb: Sandbox }) {
             targets={record ? undefined : targets}
             hot={playing ? hot : undefined}
             standoffs={record?.outcome.standoffs}
+            results={record ? `${viewing}-${record.phase}` : undefined}
             ids={record ? sb.units.phases[viewing!] : sb.units.live}
             focus={focus}
             focusKey={refocus}
@@ -569,6 +648,7 @@ function Table({ sb }: { sb: Sandbox }) {
                     sb.setOrder(picker.power, picker.key, o);
                     setActive(picker.power);
                     setPicker(null);
+                    if (o.endsWith(" VIA")) setRoute({ power: picker.power, unit: picker.key });
                     moveFocus.current = true;
                     announce(describeOrder(o));
                   }}
@@ -601,6 +681,16 @@ function Table({ sb }: { sb: Sandbox }) {
                 >
                   Convoy <kbd>C</kbd>
                 </button>
+                {convoyable ? (
+                  <button
+                    type="button"
+                    className="tool"
+                    aria-pressed={draft.step === "unit" && Boolean(draft.via)}
+                    onClick={() => mode("via-convoy")}
+                  >
+                    By convoy <kbd>V</kbd>
+                  </button>
+                ) : null}
                 <button type="button" className="tool" onClick={() => apply(holdSelected(ctx, draft))}>
                   Hold <kbd>H</kbd>
                 </button>
@@ -620,6 +710,33 @@ function Table({ sb }: { sb: Sandbox }) {
               {hint}
             </p>
           </div>
+          {carriers.length > 0 && routeOrder ? (
+            <div className="route" role="group" aria-labelledby="route-title">
+              <p className="route-title" id="route-title">
+                <span className="route-stamp">Route</span> <code>{routeOrder}</code>{" "}
+                {carriers.some((c) => c.given) ? "carried by" : "needs a fleet:"}
+              </p>
+              <div className="route-fleets">
+                {carriers.map((c) => (
+                  <button
+                    key={c.unit}
+                    type="button"
+                    className="tool"
+                    aria-pressed={c.given}
+                    aria-label={c.given ? `${c.unit} carries it; remove the convoy order` : `Order ${c.order}`}
+                    onClick={() => {
+                      if (c.given) sb.removeOrder(c.power, c.unit);
+                      else sb.setOrder(c.power, c.unit, c.order);
+                      announce(c.given ? `${c.unit} no longer convoys.` : describeOrder(c.order));
+                    }}
+                  >
+                    <span className="swatch" style={{ "--power": POWER_COLOR[c.power] } as CSSProperties} aria-hidden />
+                    {c.unit}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           </div>
 
           {choices.length ? (
@@ -698,6 +815,7 @@ function Table({ sb }: { sb: Sandbox }) {
                     alternative={(text) => viaAlternative(ctx, active, text)}
                     onReplace={(key, text) => {
                       sb.setOrder(active, key, text);
+                      setRoute(text.endsWith(" VIA") ? { power: active, unit: key } : null);
                       announce(describeOrder(text));
                     }}
                   />
@@ -721,6 +839,7 @@ function Table({ sb }: { sb: Sandbox }) {
                       Clear
                     </button>
                   </div>
+                  <OrderEntry ref={entryRef} legal={suggestions} active={active} onWrite={writeTyped} />
                 </section>
               </>
             )}
