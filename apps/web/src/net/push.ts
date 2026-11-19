@@ -74,16 +74,23 @@ async function registration(): Promise<ServiceWorkerRegistration | null> {
   return Promise.race([navigator.serviceWorker.ready, timeout]);
 }
 
+/**
+ * The browser's subscription for this site, if it holds one. Asks for the registration that
+ * already exists rather than waiting for the worker to be ready, so a device without one (or with
+ * service workers blocked) answers at once.
+ */
 export async function currentSubscription(): Promise<PushSubscription | null> {
   try {
-    const reg = await registration();
+    if (!("serviceWorker" in navigator)) return null;
+    const sw = navigator.serviceWorker;
+    const reg = typeof sw.getRegistration === "function" ? await sw.getRegistration() : await registration();
     return (await reg?.pushManager.getSubscription()) ?? null;
   } catch {
     return null;
   }
 }
 
-export type TurnOnResult = { ok: true; devices: number } | { ok: false; why: "denied" | "dismissed" | "unavailable" | "server-off"; detail?: string | undefined };
+export type TurnOnResult = { ok: true; devices: number; endpoint: string } | { ok: false; why: "denied" | "dismissed" | "unavailable" | "server-off"; detail?: string | undefined };
 
 /**
  * Ask the browser for permission (from the click that called this), subscribe, and tell the
@@ -100,17 +107,38 @@ export async function turnOnPush(deps: {
   if (permission !== "granted") return { ok: false, why: "dismissed" };
   const reg = await registration();
   if (!reg) return { ok: false, why: "unavailable", detail: "The app's service worker is not running on this page. Reload and try again." };
+  const wanted = keyBytes(key);
   let sub: PushSubscription;
   try {
-    sub = (await reg.pushManager.getSubscription()) ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) }));
+    let held: PushSubscription | null = null;
+    try {
+      held = await reg.pushManager.getSubscription();
+    } catch {
+      held = null;
+    }
+    // A subscription made under another server key (the key was rotated since) is refused by the
+    // push service for every message signed with this one: replace it rather than register it.
+    if (held && !sameKey(held.options?.applicationServerKey ?? null, wanted)) {
+      await held.unsubscribe().catch(() => false);
+      held = null;
+    }
+    sub = held ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: wanted }));
   } catch (error) {
     return { ok: false, why: "unavailable", detail: error instanceof Error ? error.message : undefined };
   }
   const { devices } = await deps.register(sub.toJSON());
-  return { ok: true, devices };
+  return { ok: true, devices, endpoint: sub.endpoint };
+}
+
+/** Whether a subscription's server key is `wanted`. A browser that does not say is taken at its word. */
+export function sameKey(held: ArrayBuffer | null, wanted: Uint8Array): boolean {
+  if (held === null) return true;
+  const bytes = new Uint8Array(held);
+  return bytes.length === wanted.length && bytes.every((b, i) => b === wanted[i]);
 }
 
 export async function turnOffPush(unregister: (endpoint: string) => Promise<unknown>): Promise<void> {
+  forgetPushOwner();
   const sub = await currentSubscription();
   if (!sub) return;
   try {
@@ -118,6 +146,45 @@ export async function turnOffPush(unregister: (endpoint: string) => Promise<unkn
   } finally {
     await sub.unsubscribe().catch(() => false);
   }
+}
+
+// ---- which account this device's subscription was registered for
+
+const OWNER_KEY = "cabal.push.owner";
+
+/**
+ * The browser keeps one subscription for the site whoever is signed in. Remember which account
+ * registered it, so a device that changed hands does not tell its new player that notifications
+ * are on when the server sends them to nobody.
+ */
+export function markPushOwner(playerId: string, endpoint: string): void {
+  try {
+    localStorage.setItem(OWNER_KEY, JSON.stringify({ playerId, endpoint }));
+  } catch {
+    // remembered for this visit only
+  }
+}
+
+export function pushOwner(): { playerId: string; endpoint: string } | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(OWNER_KEY) ?? "null") as { playerId?: unknown; endpoint?: unknown } | null;
+    return v && typeof v.playerId === "string" && typeof v.endpoint === "string" ? { playerId: v.playerId, endpoint: v.endpoint } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function forgetPushOwner(): void {
+  try {
+    localStorage.removeItem(OWNER_KEY);
+  } catch {
+    // nothing to forget
+  }
+}
+
+/** On for this account: the browser holds a subscription, and this account is the one that registered it. */
+export function subscribedFor(playerId: string | null, endpoint: string | null, owner = pushOwner()): boolean {
+  return playerId !== null && endpoint !== null && owner !== null && owner.playerId === playerId && owner.endpoint === endpoint;
 }
 
 // ---- the offer made after a meaningful action

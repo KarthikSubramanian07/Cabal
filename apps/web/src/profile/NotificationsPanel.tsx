@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { failureText } from "../net/failure.js";
 import { loadApi } from "../net/lazy.js";
 import { readPlayer } from "../net/player.js";
-import { type PushState, browserPushEnv, currentSubscription, dismissOffer, offerDismissed, pushState, turnOffPush, turnOnPush } from "../net/push.js";
+import { type PushState, browserPushEnv, currentSubscription, dismissOffer, markPushOwner, offerDismissed, pushState, subscribedFor, turnOffPush, turnOnPush } from "../net/push.js";
 import { usePlayer } from "./usePlayer.js";
 
 const KINDS: { kind: NotificationKind; label: string; blurb: string }[] = [
@@ -25,11 +25,13 @@ export function usePush() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const playerId = player?.id ?? null;
   const refresh = useCallback(async () => {
     const env = browserPushEnv();
     const sub = env.hasServiceWorker && env.hasPushManager && env.permission === "granted" ? await currentSubscription() : null;
-    setState(pushState(env, sub !== null));
-  }, []);
+    // The browser's subscription counts only when this account registered it here.
+    setState(pushState(env, subscribedFor(playerId, sub?.endpoint ?? null)));
+  }, [playerId]);
 
   useEffect(() => {
     void refresh();
@@ -59,6 +61,7 @@ export function usePush() {
         else if (result.why === "unavailable") setError(result.detail ? `This browser could not subscribe: ${result.detail}` : "This browser could not subscribe.");
         else if (result.why === "dismissed") setError("The browser's question was closed without an answer. Try again when you are ready.");
       } else {
+        markPushOwner(me.id, result.endpoint);
         dismissOffer();
         void loadSettings();
       }
@@ -130,14 +133,16 @@ export function NotificationsPanel() {
     void loadSettings();
   }, [loadSettings]);
 
+  // The server dropped every device of this account (it signed out elsewhere, say): not on here.
+  const state = push.state === "on" && push.settings?.devices === 0 ? "off" : push.state;
   return (
     <div className="notify-panel">
-      <p>{stateLine(push.state)}</p>
-      {push.state === "off" ? (
+      <p>{stateLine(state)}</p>
+      {state === "off" ? (
         <button type="button" className="btn brass" onClick={() => void push.turnOn()} disabled={push.busy}>
           {push.busy ? "Asking the browser" : "Turn on notifications on this device"}
         </button>
-      ) : push.state === "on" ? (
+      ) : state === "on" ? (
         <button type="button" className="btn" onClick={() => void push.turnOff()} disabled={push.busy}>
           {push.busy ? "Turning off" : "Turn off on this device"}
         </button>
