@@ -2,7 +2,7 @@
  * A player's record in words and figures: the rating's path through their recent games, how
  * dependably they order, and their trust ledger. Pure, so each rule is unit tested.
  */
-import type { PlayerProfile, PlayerResult, ReliabilityView, TrustView } from "@cabal/protocol";
+import type { MyGame, PlayerProfile, PlayerResult, ReliabilityView, TrustView } from "@cabal/protocol";
 
 export interface RatingPoint {
   /** The rating after this game (or, for the first point, before the first game shown). */
@@ -83,4 +83,16 @@ export function resultWord(g: Pick<PlayerResult, "result" | "score" | "walkedOut
   if (g.result === "solo") return g.score > 0 ? "Won" : "Lost";
   if (g.result === "draw") return g.score > 0 ? "Drew" : "Lost";
   return "Abandoned";
+}
+
+/**
+ * The public record hides an unlisted game's code from everyone; its own player may see it. Fill
+ * the codes in from the player's own list of games, matched by seat and the moment it ended.
+ */
+export function withOwnCodes(recent: readonly PlayerResult[], mine: readonly MyGame[]): PlayerResult[] {
+  return recent.map((g) => {
+    if (g.gameId) return g;
+    const own = mine.find((m) => m.power === g.power && m.finishedAt === g.finishedAt);
+    return own ? { ...g, gameId: own.gameId } : g;
+  });
 }

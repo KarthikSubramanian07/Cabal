@@ -1,6 +1,6 @@
 import type { PlayerResult } from "@cabal/protocol";
 import { describe, expect, it } from "vitest";
-import { ratingPath, ratingTicks, reliabilityLine, resultWord, signed, trustLine } from "./record.js";
+import { ratingPath, ratingTicks, reliabilityLine, resultWord, signed, trustLine, withOwnCodes } from "./record.js";
 
 const game = (delta: number | null, at: number): PlayerResult => ({
   gameId: `G${at}`,
@@ -63,5 +63,18 @@ describe("words", () => {
     expect(resultWord({ result: "solo", score: 0, walkedOut: false })).toBe("Lost");
     expect(resultWord({ result: "draw", score: 0.25, walkedOut: false })).toBe("Drew");
     expect(resultWord({ result: "draw", score: 0.25, walkedOut: true })).toBe("Left");
+  });
+});
+
+describe("withOwnCodes", () => {
+  it("gives the owner their unlisted games' codes, matched by seat and when it ended", () => {
+    const hidden = { ...game(null, 7), gameId: null };
+    const listed = game(null, 8);
+    const mine = [
+      { gameId: "SECRT2", power: "FRANCE" as const, status: "finished" as const, joinedAt: 1, finishedAt: 7, result: "draw" as const, score: 0.5, centers: 6, ratingDelta: null },
+      { gameId: "OTHER3", power: "ITALY" as const, status: "finished" as const, joinedAt: 1, finishedAt: 7, result: "draw" as const, score: 0.5, centers: 6, ratingDelta: null },
+    ];
+    expect(withOwnCodes([hidden, listed], mine).map((g) => g.gameId)).toEqual(["SECRT2", "G8"]);
+    expect(withOwnCodes([hidden], []).map((g) => g.gameId)).toEqual([null]);
   });
 });
