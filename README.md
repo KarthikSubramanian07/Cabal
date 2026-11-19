@@ -122,7 +122,7 @@ cargo run -p cabal-cli -- explain "ENG: F NTH - HOL" "ENG: A BEL S F NTH - HOL" 
 | Piece | State |
 |---|---|
 | `cabal-engine` | 171 of 171 DATC v3.0 cases, property tests, benches, verifiable MILA saved games, lossless snapshots, seals and receipts |
-| `cabal-wasm`, `@cabal/engine` | one wasm module for browser and Workers (about 290 KB gzipped, CI budget 400 KB), generated TypeScript types |
+| `cabal-wasm`, `@cabal/engine` | one wasm module for browser and Workers (321 KB gzipped, CI fails above 354 KB), generated TypeScript types |
 | `@cabal/protocol` | zod schemas for every frame, settings, pledges and scoring |
 | `apps/server` | GameRoom Durable Object: seats, deadlines, orders, press, sealed pledges with receipts, replay export |
 | `apps/web` | the classic board sandbox: click-to-order from the legal list, coast picker, receipts with reasons, phase replay, undo, MILA import and export, phone and desktop |
