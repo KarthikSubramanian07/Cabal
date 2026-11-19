@@ -96,6 +96,74 @@ test.describe("convoys", () => {
   });
 });
 
+test.describe("convoy routes", () => {
+  test("an army is sent by convoy first, then the player picks the fleet that carries it", async ({ page }, info) => {
+    await ready(page);
+    await tap(page, "LON");
+    await tap(page, "ENG");
+    await tap(page, "LVP");
+    await tap(page, "WAL");
+    await resolveAndContinue(page);
+
+    await tap(page, "WAL");
+    const byConvoy = tool(page, "By convoy");
+    await expect(byConvoy).toHaveAttribute("aria-pressed", "false");
+    if (isPhone(info)) await byConvoy.click();
+    else await page.keyboard.press("v");
+    await expect(byConvoy).toHaveAttribute("aria-pressed", "true");
+    await expect(hint(page)).toHaveText("A WAL by convoy: click where the fleets should land it.");
+    // Only coasts a fleet can reach are lit: Liverpool, next door by land, is not one of them.
+    await expect(page.locator("svg.board path.target")).not.toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^By convoy to Liverpool/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^By convoy to London/ })).toBeVisible();
+
+    // London could be reached on foot too; the route chosen first wins.
+    await tap(page, "LON");
+    const route = page.getByRole("group", { name: /Route/ });
+    await expect(route).toContainText("A WAL - LON VIA");
+    await expect(route).toContainText("needs a fleet");
+    const fleet = route.getByRole("button", { name: "Order F ENG C A WAL - LON" });
+    await fleet.click();
+    await expect(route).toContainText("carried by");
+    await expect(route.getByRole("button", { name: /F ENG carries it/ })).toHaveAttribute("aria-pressed", "true");
+    // The army's track is drawn through the fleet, which wears a ring instead of a line of its own.
+    await expect(page.locator("svg.board g.order.routed")).toHaveCount(1);
+    await expect(page.locator("svg.board g.order.carrying")).toHaveCount(1);
+
+    await selectPower(page, "England");
+    await openSheet(page);
+    await expect(orders(page, "England")).toContainText("A WAL - LON VIA");
+    await expect(orders(page, "England")).toContainText("F ENG C A WAL - LON");
+    await closeSheet(page);
+    await primary(page).click();
+    await openSheet(page);
+    await expect(results(page).locator(".receipt.ok", { hasText: "A WAL - LON VIA" })).toBeVisible();
+    await expect(results(page).locator(".receipt.ok", { hasText: "F ENG C A WAL - LON" })).toBeVisible();
+  });
+
+  test("By convoy is only offered to an army a fleet could carry, and a second press goes by land", async ({ page }) => {
+    await ready(page);
+    await tap(page, "PAR");
+    await expect(tool(page, "Move")).toBeVisible();
+    await expect(tool(page, "By convoy")).toHaveCount(0);
+    await tool(page, "Cancel").click();
+
+    await tap(page, "LON");
+    await tap(page, "ENG");
+    await tap(page, "LVP");
+    await tap(page, "WAL");
+    await resolveAndContinue(page);
+    await tap(page, "WAL");
+    await tool(page, "By convoy").click();
+    await tool(page, "By convoy").click();
+    await expect(tool(page, "By convoy")).toHaveAttribute("aria-pressed", "false");
+    await tap(page, "LON");
+    await selectPower(page, "England");
+    await openSheet(page);
+    await expect(orders(page, "England").locator(".row.given code")).toHaveText(["A WAL - LON"]);
+  });
+});
+
 test.describe("retreats and adjustments", () => {
   test("a dislodged unit retreats, then winter builds and disbands are capped at what is owed", async ({ page }) => {
     await ready(page);

@@ -71,7 +71,7 @@ export function choicesFor(
     case "unit":
       return [...targets].sort().map((code) => ({
         code,
-        label: `${ctx.phase === "R" ? "Retreat" : "Move"} to ${at(code)}`,
+        label: `${ctx.phase === "R" ? "Retreat" : draft.via ? "By convoy" : "Move"} to ${at(code)}`,
       }));
     case "support": {
       if (!draft.target) {
@@ -102,7 +102,7 @@ export function choicePrompt(kind: PhaseKind, draft: Draft, power: string): stri
     case "idle":
       return `${titleCase(power)}: choose a unit to order`;
     case "unit":
-      return `${draft.unit}: choose where it goes`;
+      return draft.via ? `${draft.unit} by convoy: choose where it lands` : `${draft.unit}: choose where it goes`;
     case "support":
       return draft.target ? `${draft.unit} supports ${draft.target}: choose how` : `${draft.unit}: choose the unit to support`;
     case "convoy":

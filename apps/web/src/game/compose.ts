@@ -1,18 +1,18 @@
 /**
  * Order composition by clicking the board, in the style players know from
  * Backstabbr: click a unit, then where it goes. Click it twice to hold.
- * Press S (or the Support button) to support, C to convoy.
+ * Press S (or the Support button) to support, C to convoy, V to send an army by convoy.
  *
  * Pure functions over a small context so every path is unit tested. Nothing is
  * composed that the engine did not list as legal.
  */
 import { type PhaseKind, parseOrder, parseUnit, provinceOf, titleCase } from "./notation.js";
 
-export type Mode = "move" | "support" | "convoy";
+export type Mode = "move" | "via-convoy" | "support" | "convoy";
 
 export type Draft =
   | { step: "idle" }
-  | { step: "unit"; power: string; unit: string }
+  | { step: "unit"; power: string; unit: string; via?: boolean }
   | { step: "support"; power: string; unit: string; target?: string }
   | { step: "convoy"; power: string; unit: string; army?: string };
 
@@ -106,10 +106,19 @@ export function click(ctx: ComposeContext, draft: Draft, province: string): Step
         return say(draft, `${unit} cannot ${wanted === "move" ? "move" : "retreat"} to ${province}.`);
       }
       if (wanted === "move") {
-        // Where the army could walk or be carried, the click gives the land route. The order's
-        // "by convoy" switch (see `viaAlternative`) changes it to the convoy.
-        const direct = options.filter((o) => !o.endsWith(" VIA"));
-        if (direct.length > 0) options = direct;
+        // Where the army could walk or be carried, the click gives the land route unless the
+        // player switched to "by convoy" first (V). The order's own switch (see `viaAlternative`)
+        // changes it afterwards.
+        const carried = options.filter((o) => o.endsWith(" VIA"));
+        if (draft.via) {
+          if (carried.length === 0) {
+            return say(draft, `No fleet can carry ${unit} to ${province}. Switch off By convoy to go by land.`);
+          }
+          options = carried;
+        } else {
+          const direct = options.filter((o) => !o.endsWith(" VIA"));
+          if (direct.length > 0) options = direct;
+        }
       }
       if (options.length === 1) return orderStep(power, unit, options[0]!);
       return {
@@ -147,18 +156,61 @@ export function click(ctx: ComposeContext, draft: Draft, province: string): Step
   }
 }
 
-/** Switch the selected unit into support or convoy mode (S and C keys). */
+/** Switch the selected unit into an order mode: M, S, C, and V for a move by convoy. */
 export function setMode(ctx: ComposeContext, draft: Draft, mode: Mode): Step {
   if (draft.step === "idle") return say(draft, "Select one of your units first.");
   const { power, unit } = draft;
   if (mode === "move") return none({ step: "unit", power, unit });
   if (ctx.phase !== "M") return say(draft, "Supports and convoys are only ordered in movement phases.");
+  if (mode === "via-convoy") {
+    // A second press goes back to the land route.
+    if (draft.step === "unit" && draft.via) return none({ step: "unit", power, unit });
+    return canGoByConvoy(ctx, power, unit)
+      ? none({ step: "unit", power, unit, via: true })
+      : say(draft, `No fleet is placed to carry ${unit} anywhere.`);
+  }
   if (mode === "support") {
     const canSupport = legalFor(ctx, power, unit).some((o) => o.startsWith(`${unit} S `));
     return canSupport ? none({ step: "support", power, unit }) : say(draft, `${unit} has nothing to support.`);
   }
   const canConvoy = legalFor(ctx, power, unit).some((o) => o.startsWith(`${unit} C `));
   return canConvoy ? none({ step: "convoy", power, unit }) : say(draft, "Only a fleet at sea can convoy.");
+}
+
+/** Whether some fleet could carry `unit` this phase: the engine lists a `... VIA` move for it. */
+export function canGoByConvoy(ctx: ComposeContext, power: string, unit: string): boolean {
+  return ctx.phase === "M" && legalFor(ctx, power, unit).some((o) => o.endsWith(" VIA"));
+}
+
+/** A fleet that could carry a convoyed move, and whether it has been ordered to. */
+export interface CarryingFleet {
+  power: string;
+  /** `F ENG` */
+  unit: string;
+  /** `F ENG C A WAL - LON` */
+  order: string;
+  /** The fleet already has this order. */
+  given: boolean;
+}
+
+/**
+ * The fleets that could carry `move` (`A WAL - LON VIA`): every fleet, of any power, whose
+ * legal orders include convoying that army to that province. These are the route the player
+ * chooses from. Empty for anything but a move by convoy.
+ */
+export function carryingFleets(ctx: ComposeContext, move: string): CarryingFleet[] {
+  const parsed = parseOrder(move);
+  if (parsed?.type !== "move" || !parsed.via) return [];
+  const order = (fleet: string) => `${fleet} C ${parsed.unit.unit} - ${provinceOf(parsed.dest)}`;
+  const found: CarryingFleet[] = [];
+  for (const [power, byUnit] of Object.entries(ctx.legal)) {
+    for (const [unit, options] of Object.entries(byUnit)) {
+      if (!unit.startsWith("F ")) continue;
+      const text = order(unit);
+      if (options.includes(text)) found.push({ power, unit, order: text, given: ctx.orders?.[power]?.[unit] === text });
+    }
+  }
+  return found.sort((a, b) => (a.unit < b.unit ? -1 : a.unit > b.unit ? 1 : 0));
 }
 
 /** Order the selected unit to hold (H key). */

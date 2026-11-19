@@ -3,6 +3,8 @@ import {
   type ComposeContext,
   type Draft,
   adjustmentsLeft,
+  canGoByConvoy,
+  carryingFleets,
   click,
   disbandSelected,
   holdSelected,
@@ -69,6 +71,76 @@ describe("movement orders", () => {
   it("uses a convoy route when that is the only way", () => {
     const s1 = click(movement, start, "LON");
     expect(click(movement, s1.draft, "BRE").effect).toMatchObject({ text: "A LON - BRE VIA" });
+  });
+
+  describe("choosing the convoy route first (V)", () => {
+    const both: ComposeContext = {
+      ...movement,
+      legal: {
+        ...movement.legal,
+        ENGLAND: { ...movement.legal.ENGLAND, "A LON": ["A LON H", "A LON - BRE", "A LON - BRE VIA", "A LON - WAL"] },
+      },
+    };
+
+    it("lets the player choose the convoy route when a direct route also exists", () => {
+      const selected = click(both, start, "LON").draft;
+      const via = setMode(both, selected, "via-convoy").draft;
+      expect(via).toEqual({ step: "unit", power: "ENGLAND", unit: "A LON", via: true });
+      expect(click(both, via, "BRE").effect).toMatchObject({ text: "A LON - BRE VIA" });
+      expect(setMode(both, via, "move").draft).toEqual({ step: "unit", power: "ENGLAND", unit: "A LON" });
+    });
+
+    it("goes back to the land route when V is pressed again", () => {
+      const via = setMode(both, click(both, start, "LON").draft, "via-convoy").draft;
+      expect(setMode(both, via, "via-convoy").draft).toEqual({ step: "unit", power: "ENGLAND", unit: "A LON" });
+    });
+
+    it("explains a destination no fleet can reach, and keeps the convoy route chosen", () => {
+      const via = setMode(both, click(both, start, "LON").draft, "via-convoy").draft;
+      const step = click(both, via, "WAL");
+      expect(step.effect).toEqual({
+        kind: "message",
+        text: "No fleet can carry A LON to WAL. Switch off By convoy to go by land.",
+      });
+      expect(step.draft).toEqual(via);
+    });
+
+    it("refuses the convoy route for a unit no fleet could carry", () => {
+      const selected = click(movement, start, "PAR").draft;
+      expect(setMode(movement, selected, "via-convoy").effect).toEqual({
+        kind: "message",
+        text: "No fleet is placed to carry A PAR anywhere.",
+      });
+      expect(canGoByConvoy(movement, "FRANCE", "A PAR")).toBe(false);
+      expect(canGoByConvoy(movement, "ENGLAND", "A LON")).toBe(true);
+    });
+
+    it("drops the convoy route when another unit is selected", () => {
+      const via = setMode(both, click(both, start, "LON").draft, "via-convoy").draft;
+      expect(click(both, via, "PAR").draft).toEqual({ step: "unit", power: "FRANCE", unit: "A PAR" });
+    });
+  });
+
+  describe("the fleets that carry a convoyed move", () => {
+    it("lists every fleet that could convoy the army there, of any power, and which are ordered", () => {
+      const ctx: ComposeContext = {
+        ...movement,
+        legal: {
+          ...movement.legal,
+          ENGLAND: { ...movement.legal.ENGLAND, "F ENG": ["F ENG H", "F ENG C A LON - BRE"] },
+        },
+        orders: { ENGLAND: { "F ENG": "F ENG C A LON - BRE" } },
+      };
+      expect(carryingFleets(ctx, "A LON - BRE VIA")).toEqual([
+        { power: "ENGLAND", unit: "F ENG", order: "F ENG C A LON - BRE", given: true },
+        { power: "FRANCE", unit: "F MAO", order: "F MAO C A LON - BRE", given: false },
+      ]);
+    });
+
+    it("is empty for a move by land or any other order", () => {
+      expect(carryingFleets(movement, "A LON - WAL")).toEqual([]);
+      expect(carryingFleets(movement, "F MAO C A LON - BRE")).toEqual([]);
+    });
   });
 
   it("composes a support for a foreign move", () => {

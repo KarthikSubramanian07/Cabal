@@ -12,6 +12,7 @@ import {
 } from "react";
 import { type ParsedOrder, parseOrder, parseUnit } from "../game/notation.js";
 import { type UnitIds, unitKey } from "../game/unitIds.js";
+import { carryingOrders, convoyChain, smoothPath } from "./route.js";
 import {
   type Board as BoardData,
   LABEL_OUTLINE_TOLERANCE,
@@ -109,7 +110,21 @@ function mid(a: Point, b: Point): Point {
   return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
 }
 
-const OrderMark = memo(function OrderMark({ board, order, r }: { board: BoardData; order: DrawnOrder; r: number }) {
+const OrderMark = memo(function OrderMark({
+  board,
+  order,
+  r,
+  route,
+  carrying = false,
+}: {
+  board: BoardData;
+  order: DrawnOrder;
+  r: number;
+  /** A move by convoy: the regions of the fleets carrying it, in the order the army passes them. */
+  route?: readonly string[] | undefined;
+  /** A convoy whose army's track is drawn through this fleet: marked on the fleet, not with a line. */
+  carrying?: boolean;
+}) {
   const parsed: ParsedOrder | null = parseOrder(order.text);
   if (!parsed || parsed.type === "waive") return null;
   const style = { "--power": POWER_COLOR[order.power] ?? "var(--ink)" } as CSSProperties;
@@ -142,6 +157,28 @@ const OrderMark = memo(function OrderMark({ board, order, r }: { board: BoardDat
       );
     case "move":
     case "retreat": {
+      if (parsed.type === "move" && parsed.via && route && route.length > 0) {
+        const stops = route.map((region) => regionPoint(board, region));
+        const dest = regionPoint(board, parsed.dest);
+        const [a] = toward(at, stops[0]!, r + 2, 0);
+        const [, b] = toward(stops.at(-1)!, dest, 0, 3);
+        const d = smoothPath([a, ...stops, b]);
+        const cross = mid(stops.at(-1)!, b);
+        return (
+          <g className={`${cls} move via routed`} style={style}>
+            <path className="halo" d={d} />
+            <path className="stroke" d={d} />
+            <polygon className="head" points={arrowHead(stops.at(-1)!, b, Math.max(8, r * 0.8))} />
+            {order.ok === false ? (
+              <g className="fail-mark" transform={`translate(${cross[0]} ${cross[1]})`}>
+                <line x1={-4} y1={-4} x2={4} y2={4} />
+                <line x1={4} y1={-4} x2={-4} y2={4} />
+              </g>
+            ) : null}
+          </g>
+        );
+      }
+      // A move by land, a retreat, or a move by convoy no fleet has been ordered to carry yet.
       const [a, b] = toward(at, regionPoint(board, parsed.dest), r + 2, 3);
       return line(a, b, parsed.type === "retreat" ? "retreat" : parsed.via ? "move via" : "move");
     }
@@ -156,6 +193,14 @@ const OrderMark = memo(function OrderMark({ board, order, r }: { board: BoardDat
       return line(a, b, "support");
     }
     case "convoy": {
+      if (carrying) {
+        return (
+          <g className={`${cls} convoy carrying`} style={style}>
+            <circle className="halo" cx={at[0]} cy={at[1]} r={r + 4.5} />
+            <circle className="stroke" cx={at[0]} cy={at[1]} r={r + 4.5} />
+          </g>
+        );
+      }
       const army = regionPoint(board, parsed.army.region);
       const dest = regionPoint(board, parsed.dest);
       const [a, b] = toward(at, mid(army, dest), r + 2, 2);
@@ -472,6 +517,18 @@ export function Board({
     return list.sort((a, b) => Number(a.dislodged) - Number(b.dislodged) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   }, [board, state, ids]);
 
+  // Moves by convoy are drawn through the fleets carrying them; those fleets get a ring instead of a line.
+  const texts = useMemo(() => orders.map((o) => o.text), [orders]);
+  const routes = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const text of texts) {
+      const chain = convoyChain(text, texts, (region) => regionPoint(board, region));
+      if (chain.length) map.set(text, chain);
+    }
+    return map;
+  }, [board, texts]);
+  const carrying = useMemo(() => carryingOrders(texts), [texts]);
+
   const candidates = useMemo<TapCandidate[]>(() => {
     const codes = new Set<string>([...(targets ?? []), ...(hot ?? [])]);
     return [...codes].flatMap((code) => (board.provinces[code] ? [{ code, at: board.provinces[code]!.unit }] : []));
@@ -652,7 +709,14 @@ export function Board({
         </g>
         <g className="order-marks">
           {orders.map((o, i) => (
-            <OrderMark key={`${o.power}-${o.text}-${i}`} board={board} order={o} r={r} />
+            <OrderMark
+              key={`${o.power}-${o.text}-${i}`}
+              board={board}
+              order={o}
+              r={r}
+              route={routes.get(o.text)}
+              carrying={carrying.has(o.text)}
+            />
           ))}
         </g>
       </svg>
