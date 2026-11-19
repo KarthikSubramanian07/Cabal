@@ -127,8 +127,8 @@ test.describe("convoy routes", () => {
     await expect(route).toContainText("carried by");
     await expect(route.getByRole("button", { name: /F ENG carries it/ })).toHaveAttribute("aria-pressed", "true");
     // The army's track is drawn through the fleet, which wears a ring instead of a line of its own.
-    await expect(page.locator("svg.board g.order.routed")).toHaveCount(1);
-    await expect(page.locator("svg.board g.order.carrying")).toHaveCount(1);
+    await expect(page.locator("svg.board-live g.order.routed")).toHaveCount(1);
+    await expect(page.locator("svg.board-live g.order.carrying")).toHaveCount(1);
 
     await selectPower(page, "England");
     await openSheet(page);
@@ -179,7 +179,7 @@ test.describe("retreats and adjustments", () => {
 
     await expect(primary(page)).toHaveText("Resolve Fall 1901 retreats");
     await expect(hint(page)).toContainText("Click a dislodged unit");
-    await expect(page.locator("svg.board g.unit.dislodged")).toHaveCount(1);
+    await expect(page.locator("svg.board-live g.unit.dislodged")).toHaveCount(1);
     await tap(page, "TRI");
     await tap(page, "ALB");
     await selectPower(page, "Austria");
@@ -308,9 +308,9 @@ test.describe("the open power", () => {
     await ready(page);
     await italyTakesTrieste(page);
     await primary(page).click();
-    await expect(page.locator("svg.board g.unit.dislodged")).toHaveCount(1);
+    await expect(page.locator("svg.board-live g.unit.dislodged")).toHaveCount(1);
     // Later in the document is nearer the eye.
-    await expect(page.locator("svg.board g.units > g.unit").last()).toHaveClass(/dislodged/);
+    await expect(page.locator("svg.board-live g.units > g.unit").last()).toHaveClass(/dislodged/);
   });
 });
 
@@ -347,7 +347,7 @@ test.describe("receipts in context", () => {
       buffer: await readFile(new URL("./fixtures/pandins-paradox.json", import.meta.url)),
     });
     await closeSheet(page);
-    await expect(page.locator("svg.board g.unit")).toHaveCount(6);
+    await expect(page.locator("svg.board-live g.unit")).toHaveCount(6);
 
     await tap(page, "LON");
     await tool(page, "Support").click();
@@ -455,12 +455,12 @@ test.describe("repairs", () => {
 
   test("a unit keeps its piece on the board from one phase to the next", async ({ page }) => {
     await ready(page);
-    const unit = (label: string) => page.locator("svg.board g.unit", { has: page.locator("title", { hasText: label }) });
+    const unit = (label: string) => page.locator("svg.board-live g.unit", { has: page.locator("title", { hasText: label }) });
     const id = await unit("France: A MAR").getAttribute("data-unit");
     await unit("France: A MAR").evaluate((el) => {
       (el as unknown as { marked: boolean }).marked = true;
     });
-    const ids = await page.locator("svg.board g.unit").evaluateAll((els) => els.map((el) => el.getAttribute("data-unit")).sort());
+    const ids = await page.locator("svg.board-live g.unit").evaluateAll((els) => els.map((el) => el.getAttribute("data-unit")).sort());
     expect(new Set(ids).size).toBe(22);
 
     await tap(page, "MAR");
@@ -471,7 +471,7 @@ test.describe("repairs", () => {
     await expect(unit("France: A SPA")).toHaveAttribute("data-unit", id!);
     expect(await unit("France: A SPA").evaluate((el) => (el as unknown as { marked?: boolean }).marked)).toBe(true);
     await expect(unit("France: A MAR")).toHaveCount(0);
-    const after = await page.locator("svg.board g.unit").evaluateAll((els) => els.map((el) => el.getAttribute("data-unit")).sort());
+    const after = await page.locator("svg.board-live g.unit").evaluateAll((els) => els.map((el) => el.getAttribute("data-unit")).sort());
     expect(after).toEqual(ids);
   });
 

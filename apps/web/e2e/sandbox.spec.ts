@@ -5,7 +5,7 @@ test.describe("classic board", () => {
   test("draws the opening position of 1901", async ({ page }) => {
     await ready(page);
     await expect(page.getByRole("banner").getByRole("img", { name: "Cabal" })).toBeVisible();
-    await expect(page.locator("svg.board g.unit")).toHaveCount(22);
+    await expect(page.locator("svg.board-live g.unit")).toHaveCount(22);
     await expect(page.locator("svg.board g.sc")).toHaveCount(34);
     await expect(page.locator("svg.board [data-province]")).toHaveCount(76);
     await openSheet(page);

@@ -5,7 +5,7 @@ import { isPhone, openHelp, openSheet, primary, ready, tap } from "./helpers.js"
 async function mapSizes(page: Page) {
   return page.evaluate(() => {
     const label = document.querySelector("svg.board text.label.land")!;
-    const piece = document.querySelector("svg.board g.unit .body")!;
+    const piece = document.querySelector("svg.board-live g.unit .body")!;
     const svg = document.querySelector<SVGSVGElement>("svg.board")!;
     const scale = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
     return {
@@ -250,7 +250,7 @@ test.describe("phone layout", () => {
     await ready(page);
     // Land in the sea just off Brest, a few pixels from the fleet.
     const point = await page.evaluate(() => {
-      const svg = document.querySelector("svg.board")!;
+      const svg = document.querySelector(".board-frame")!;
       const fleet = [...svg.querySelectorAll("g.unit")].find((g) => g.querySelector("title")?.textContent === "France: F BRE")!;
       const b = fleet.getBoundingClientRect();
       for (let dx = -8; dx >= -22; dx -= 2) {
@@ -298,8 +298,8 @@ test.describe("phone layout", () => {
     const toggle = page.getByRole("button", { name: "Move the map with buttons" });
     await expect(arrows).toBeHidden();
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
-    // Four controls over the map, not seven.
-    expect(await page.locator(".board-frame button:visible").count()).toBe(4);
+    // Five controls over the map (zoom in, out, whole board, the pan toggle, sound), not eight.
+    expect(await page.locator(".board-frame button:visible").count()).toBe(5);
 
     const view = () => page.locator("svg.board").getAttribute("viewBox");
     const before = await view();
