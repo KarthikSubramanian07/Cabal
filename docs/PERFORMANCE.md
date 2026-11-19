@@ -124,7 +124,7 @@ not compute them.
 |---|---|---|---|
 | Before (`14e48cd`) | 796,133 | 289,382 | 220,035 |
 | After, shipped (`opt-level = 3`, fat LTO, one codegen unit, `panic = "abort"`, `wasm-opt -Oz`) | 854,820 | 321,347 | 244,269 |
-| After, with the heuristic bot merged from `main` | 994,307 | 371,808 | 281,181 |
+| After, with the heuristic bot merged from `main` | 996,836 | 372,566 | 281,963 |
 
 The new API (verdicts, explanations, structured moves, build info) costs
 32 KB gzip, and the bot (`cabal-bot`, merged separately) another 50 KB;

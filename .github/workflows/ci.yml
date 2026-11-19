@@ -14,7 +14,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # About 10 percent above the measured build (371,808 bytes gzip with the bot
+  # About 10 percent above the measured build (372,566 bytes gzip with the bot
   # inside, see docs/PERFORMANCE.md). Raise it only with a number and a reason.
   WASM_SIZE_BUDGET_BYTES: 409000
 
