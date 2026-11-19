@@ -4,6 +4,7 @@
  *   POST /api/games                   create a game, returns the creator's seat token
  *   GET  /api/games?status=           public games: `open` lobbies, `active` games, or `finished` ones (the default)
  *   POST /api/games/:id/join          claim a lobby seat, or a vacated seat with a substitute invite
+ *   POST /api/games/:id/seat          a signed-in player's own seat token, again (another device)
  *   POST /api/games/:id/start         creator starts early (AI fills open seats)
  *   POST /api/games/:id/substitute    a seated player opens a vacated seat to an invited substitute
  *   GET  /api/games/:id               public summary
@@ -12,6 +13,10 @@
  *   GET  /api/games/:id/press         one page of press history (`before`, `with`, `limit`)
  *   GET  /api/games/:id/ws            WebSocket; a player then sends `hello { token }`
  *   GET  /health                      liveness, engine version, build id, index reachability
+ *
+ * Players, profiles, the leaderboard and the trust ledger are served by players.ts. A signed-in
+ * player sends their player secret as the bearer on create and join; they then sit under their
+ * handle, one seat per game, and the seat is theirs to recover on another device.
  *
  * Every response is JSON with CORS headers, including failures: an exception anywhere below is
  * caught at the top, logged as one structured line and answered with a 500 that names a request id.
@@ -34,11 +39,14 @@ import { copyRegistryOnce, gameIndex, indexBackend, registrySchema } from "./gam
 import { describeError, log } from "./log.js";
 import { gameCode, randomId } from "./tokens.js";
 import { CORS, json, limited, readJson, tooMany, withCors } from "./http.js";
+import { playerRoute, resolvePlayer } from "./players.js";
 
 export { GameRoom } from "./room.js";
 export { Registry } from "./registry.js";
 
-const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|start|substitute|replay|ledger|press|ws))?$/;
+const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|seat|start|substitute|replay|ledger|press|ws))?$/;
+
+const signedOut = () => withCors(json({ error: "that player secret is not valid; sign in again or play without it", code: "signed_out" }, 401));
 
 /** How long `/health` waits for the index before calling it unreachable. */
 const HEALTH_TIMEOUT_MS = 2000;
@@ -103,17 +111,24 @@ async function route(request: Request, env: Env): Promise<Response> {
     return withCors(json(await health(env)));
   }
 
+  const players = await playerRoute(request, env, url);
+  if (players) return players;
+
   if (url.pathname === "/api/games" && request.method === "POST") {
     if (await limited(env.CREATE_LIMITER, request, "create")) return tooMany();
+    const who = await resolvePlayer(request, env);
+    if (who === "invalid") return signedOut();
     const body = CreateGameRequest.safeParse(await readJson(request));
     if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
+    const player = who === "none" ? undefined : { id: who.player.id, handle: who.player.handle };
+    if (!player && !body.data.name) return withCors(json({ error: "a name is required to play without signing in" }, 400));
     // Settings are validated and resolved here, so bad input is a 400 and never reaches a room.
     const settings = resolveSettings(body.data.settings);
     const id = gameCode();
     const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id));
     const res = await stub.fetch("https://room/create", {
       method: "POST",
-      body: JSON.stringify({ id, name: body.data.name, settings }),
+      body: JSON.stringify({ id, name: body.data.name, settings, player }),
     });
     return withCors(res);
   }
@@ -144,9 +159,21 @@ async function route(request: Request, env: Env): Promise<Response> {
     const authorization = { authorization: request.headers.get("authorization") ?? "" };
     if (action === "join" && request.method === "POST") {
       if (await limited(env.JOIN_LIMITER, request, "join")) return tooMany();
+      const who = await resolvePlayer(request, env);
+      if (who === "invalid") return signedOut();
       const body = JoinGameRequest.safeParse(await readJson(request));
       if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
-      return withCors(await stub.fetch("https://room/join", { method: "POST", headers: authorization, body: JSON.stringify(body.data) }));
+      const player = who === "none" ? undefined : { id: who.player.id, handle: who.player.handle };
+      if (!player && !body.data.name) return withCors(json({ error: "a name is required to play without signing in" }, 400));
+      // The room is told who the player is in the body; a player secret is never handed to a room.
+      const headers = player ? {} : authorization;
+      return withCors(await stub.fetch("https://room/join", { method: "POST", headers, body: JSON.stringify({ ...body.data, player }) }));
+    }
+    if (action === "seat" && request.method === "POST") {
+      if (await limited(env.JOIN_LIMITER, request, "seat")) return tooMany();
+      const who = await resolvePlayer(request, env);
+      if (who === "invalid" || who === "none") return signedOut();
+      return withCors(await stub.fetch("https://room/seat", { method: "POST", body: JSON.stringify({ player: { id: who.player.id, handle: who.player.handle } }) }));
     }
     if (action === "substitute" && request.method === "POST") {
       if (await limited(env.JOIN_LIMITER, request, "substitute")) return tooMany();

@@ -1,7 +1,7 @@
 /** Shared fixtures: every suite drives the real Worker and real Durable Objects inside workerd. */
 import { env, runDurableObjectAlarm, runInDurableObject, SELF } from "cloudflare:test";
 import { expect } from "vitest";
-import type { GameRecord, GameSettings, ServerMessage } from "@cabal/protocol";
+import { type GameRecord, type GameSettings, PlayerSession, type ServerMessage } from "@cabal/protocol";
 import { botOrders } from "../src/bot.js";
 import { botRuntime } from "../src/brain.js";
 import type { Env as ServerEnv } from "../src/env.js";
@@ -49,6 +49,7 @@ export interface Summary {
     power: string;
     kind: string;
     name: string | null;
+    handle?: string | null;
     missed: number;
     ready: boolean;
     eliminated: boolean;
@@ -299,3 +300,34 @@ export async function holdAndReady(client: Client, units: string[], phase: strin
   client.send({ t: "ready", p: { phase, ready: true } });
   return client.next("state", (m) => m.p.phase !== phase && m.p.phase.endsWith("M"));
 }
+
+// ---------- players ----------
+
+let handles = 0;
+/** A handle no other test in the run will pick. */
+export const freshHandle = (stem = "Envoy") => `${stem}${Date.now().toString(36).slice(-5)}${++handles}`;
+
+export async function newPlayer(handle?: string): Promise<PlayerSession> {
+  const res = await SELF.fetch("http://cabal/api/players", {
+    method: "POST",
+    headers: { "cf-connecting-ip": nextIp() },
+    body: JSON.stringify(handle === undefined ? {} : { handle }),
+  });
+  expect(res.status, await res.clone().text()).toBe(201);
+  return PlayerSession.parse(await res.json());
+}
+
+export const call = (path: string, secret: string | null, init: RequestInit = {}) =>
+  SELF.fetch(`http://cabal${path}`, {
+    ...init,
+    headers: { "cf-connecting-ip": nextIp(), ...(secret ? { authorization: `Bearer ${secret}` } : {}), ...(init.headers as Record<string, string> | undefined) },
+  });
+
+export async function createAs(secret: string, settings: Record<string, unknown> = {}) {
+  const res = await call("/api/games", secret, { method: "POST", body: JSON.stringify({ settings }) });
+  expect(res.status, await res.clone().text()).toBe(200);
+  return (await res.json()) as { gameId: string; token: string; power: string };
+}
+
+export const joinAs = (secret: string, gameId: string, body: Record<string, unknown> = {}) =>
+  call(`/api/games/${gameId}/join`, secret, { method: "POST", body: JSON.stringify(body) });

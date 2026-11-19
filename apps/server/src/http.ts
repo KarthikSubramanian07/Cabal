@@ -2,7 +2,7 @@
 
 export const CORS: Record<string, string> = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-methods": "GET, POST, PATCH, OPTIONS",
   "access-control-allow-headers": "content-type, authorization",
 };
 
@@ -63,6 +63,12 @@ export async function limited(limiter: RateLimit | undefined, request: Request, 
   const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
   const { success } = await limiter.limit({ key: `${route}:${ip}` });
   return !success;
+}
+
+/** True when `key` (a player, a game) is over the limit. Missing bindings never limit. */
+export async function limitedKey(limiter: RateLimit | undefined, key: string): Promise<boolean> {
+  if (!limiter) return false;
+  return !(await limiter.limit({ key })).success;
 }
 
 export const tooMany = () => withCors(json({ error: "too many requests, try again in a minute" }, 429));
