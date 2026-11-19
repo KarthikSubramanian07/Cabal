@@ -31,7 +31,7 @@ import { api } from "../net/api.js";
 import { clockFace, clockWords, urgency } from "./clock.js";
 import { DrawVote } from "./DrawVote.jsx";
 import { GameOver } from "./GameOver.jsx";
-import { mergeRecords, recordsFromReplay } from "./history.js";
+import { mergeRecords, missingPhases, recordsFromReplay } from "./history.js";
 import { PressPanel } from "./PressPanel.jsx";
 import { SeatBar } from "./SeatBar.jsx";
 import { readiness } from "./seatState.js";
@@ -184,8 +184,11 @@ function Floor({
   // ---- history: the server's saved game, and the phases this device saw resolve
 
   const historyCount = view.history.length;
+  // Fetched while some phase cannot be drawn from what this device has; once it can, the results
+  // frames carry each new phase and nothing is downloaded again.
+  const gap = useMemo(() => missingPhases(saved, view.resolved, view.history.map((h) => h.phase)).length > 0, [saved, view.resolved, view.history]);
   useEffect(() => {
-    if (historyCount === 0) return;
+    if (historyCount === 0 || !gap) return;
     let live = true;
     const timer = window.setTimeout(() => {
       api.replay(view.gameId, room.seat?.token).then(
@@ -204,7 +207,7 @@ function Floor({
       live = false;
       window.clearTimeout(timer);
     };
-  }, [view.gameId, historyCount, room.seat?.token]);
+  }, [view.gameId, historyCount, gap, room.seat?.token]);
 
   const history = useMemo(
     () => mergeRecords(saved, view.resolved, view.history.map((h) => h.phase)),
