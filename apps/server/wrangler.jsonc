@@ -14,7 +14,7 @@
   // Reminders go out PUSH_REMINDER_MINUTES before a deadline. Secrets, never here: VAPID_PRIVATE_KEY,
   // ADMIN_TOKEN (the metrics summary), ANTHROPIC_API_KEY.
   "vars": {
-    "VAPID_PUBLIC_KEY": "BEbMrS6yJObH-r2TjWp5wHsRUhjwn14hs9bvjjaVEaE5Vwu6kN1pMB8pXQ_XqbD1Z6qZ5XiYL5QWhFxXSfgBHzQ",
+    "VAPID_PUBLIC_KEY": "BJjrRWlws87Gk0wWOB0uOu62eA5vg50PTgvR9gwWJXs7cbE9BGmC2fRkF5LFmk2QpHFKeB0iOeNGAmp_Yo-ibsE",
     "VAPID_SUBJECT": "https://playcabal.pages.dev",
     "PUSH_REMINDER_MINUTES": "60"
   },
