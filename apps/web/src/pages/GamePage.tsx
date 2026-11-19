@@ -1,7 +1,7 @@
 /**
  * One table at `/g/:code`. Before the game: the lobby, with the seating plan as the seat picker,
- * the terms, the host's Start, and table talk. Once it runs: who is moving, the clock, the board
- * as it stands and the public press. The seat this device holds comes from localStorage; the
+ * the terms, the host's Start, and table talk. Once it runs: the game room (room/LiveTable.tsx),
+ * with the board, the seat's orders, press with seals, the draw vote and, at the end, the Ledger. The seat this device holds comes from localStorage; the
  * link itself carries only the code, so it is safe to share.
  */
 import type { PowerName } from "@cabal/protocol";
@@ -18,7 +18,7 @@ import { failureText } from "../net/api.js";
 import { isGameCode, spacedCode } from "../net/code.js";
 import { readName } from "../net/seats.js";
 
-const LiveBoard = lazy(() => import("../lobby/LiveBoard.jsx"));
+const LiveTable = lazy(() => import("../room/LiveTable.jsx").then((m) => ({ default: m.LiveTable })));
 
 function useNow(every = 15_000): number {
   const [now, setNow] = useState(Date.now);
@@ -259,11 +259,6 @@ function Table({ room, view }: { room: Room; view: RoomView }) {
       ) : null}
       <div className="table-grid">
         <div className="table-main">
-          {running && view.state ? (
-            <Suspense fallback={<p className="room-wait">Unrolling the map</p>}>
-              <LiveBoard state={view.state} label={`The board, ${phaseLabel(view.phase)}`} />
-            </Suspense>
-          ) : null}
           <section aria-labelledby="seats-title" className="seats-section">
             <h2 id="seats-title">{lobby ? "Seating plan" : "The powers"}</h2>
             {room.seat ? (
@@ -275,11 +270,6 @@ function Table({ room, view }: { room: Room; view: RoomView }) {
           </section>
           {lobby && !room.seat ? <JoinPanel view={view} selected={selected} onJoin={room.join} /> : null}
           {lobby && isHost ? <HostPanel view={view} onStart={room.start} /> : null}
-          {running && room.seat ? (
-            <p className="talk-note">
-              Ordering in live games arrives with the next release. Until then a seat that sends no orders holds its units, and after missed turns the bot may cover it.
-            </p>
-          ) : null}
           <Terms view={view} />
         </div>
         <TableTalk
@@ -343,7 +333,18 @@ function Live({ code }: { code: string }) {
       </StatusPage>
     );
   }
-  return <Table room={room} view={room.load.view} />;
+  const view = room.load.view;
+  // Once the game has begun the table becomes the game room: the board, orders, press and seals.
+  if (view.status !== "lobby") {
+    // The summary has no board; the socket's welcome brings it a moment later.
+    if (!view.state) return <PageLoading />;
+    return (
+      <Suspense fallback={<PageLoading />}>
+        <LiveTable room={room} view={view} />
+      </Suspense>
+    );
+  }
+  return <Table room={room} view={view} />;
 }
 
 function MissingTable({ code }: { code: string }) {
