@@ -22,7 +22,7 @@ use crate::game::Game;
 use crate::geo::Map;
 use crate::json::{
     ImportError, MilaMessage, MilaState, ReplayError, SavedGame, SavedOutcome, SavedPledge,
-    recorded_orders, state_from_mila, state_to_mila_with,
+    recorded_orders, same_holdings, state_from_mila, state_to_mila_with,
 };
 use crate::rulebook::Rulebook;
 
@@ -79,6 +79,13 @@ impl Game {
     /// restore. If the save is behind the snapshot, the snapshot still wins and
     /// the phases the save lacks are simply absent from later exports.
     ///
+    /// The save has to be this snapshot's history: the same map, and at the
+    /// point the snapshot was taken the same phase with the same units and
+    /// centres. Anything else is [`ReplayError::SnapshotMismatch`] rather than
+    /// another game's past spliced onto this one and its later orders
+    /// adjudicated on the wrong board. A save that ends before the snapshot
+    /// has no such point and is accepted on its map alone.
+    ///
     /// Without `history` the game continues from the snapshot with an empty
     /// record.
     pub fn from_snapshot(
@@ -99,6 +106,31 @@ impl Game {
         if !snapshot.messages.is_empty() {
             game.press
                 .insert(snapshot.state.name.clone(), snapshot.messages.clone());
+        }
+        if let Some(saved) = history {
+            if !saved.map.eq_ignore_ascii_case(&snapshot.map) {
+                return Err(ReplayError::SnapshotMismatch(format!(
+                    "it was played on {}, the snapshot on {}",
+                    saved.map, snapshot.map
+                )));
+            }
+            if let Some(join) = saved.phases.get(snapshot.adjudicated) {
+                let (theirs, ours) = (&join.state, &snapshot.state);
+                if !theirs.name.eq_ignore_ascii_case(&ours.name) {
+                    return Err(ReplayError::SnapshotMismatch(format!(
+                        "phase {} of it is {}, the snapshot was taken in {}",
+                        snapshot.adjudicated, theirs.name, ours.name
+                    )));
+                }
+                if !same_holdings(&theirs.units, &ours.units)
+                    || !same_holdings(&theirs.centers, &ours.centers)
+                {
+                    return Err(ReplayError::SnapshotMismatch(format!(
+                        "its board in {} is not the snapshot's",
+                        ours.name
+                    )));
+                }
+            }
         }
         // every phase of the save but its last (the unplayed one) was adjudicated
         let recorded = history.map_or(&[][..], |saved| match saved.phases.split_last() {
@@ -247,6 +279,54 @@ mod tests {
             Game::from_snapshot(&snapshot, None).unwrap_err(),
             ReplayError::SnapshotFormat(99)
         );
+    }
+
+    #[test]
+    fn a_snapshot_with_an_ending_from_a_newer_engine_still_restores() {
+        let map = Map::standard();
+        let mut g = Game::new(map, Rulebook::default());
+        g.process_movement(&movement(map, &["FRA: A PAR - BUR"]));
+        let mut json = serde_json::to_value(g.snapshot()).unwrap();
+        json["outcome"] = serde_json::json!({ "result": "abandoned", "by": "host" });
+        let snapshot: Snapshot = serde_json::from_value(json).unwrap();
+        assert_eq!(snapshot.outcome, SavedOutcome::Unknown);
+        let restored = Game::from_snapshot(&snapshot, None).unwrap();
+        assert_eq!(restored.state, g.state);
+        assert!(!restored.is_finished());
+    }
+
+    #[test]
+    fn a_save_that_is_not_the_snapshots_history_is_refused() {
+        let map = Map::standard();
+        let mut g = Game::new(map, Rulebook::default());
+        g.process_movement(&movement(map, &["FRA: A PAR - BUR"]));
+        let snapshot = g.snapshot();
+        g.process_movement(&movement(map, &["FRA: A BUR - BEL"]));
+        let mismatch = |saved: &SavedGame| match Game::from_snapshot(&snapshot, Some(saved)) {
+            Err(ReplayError::SnapshotMismatch(why)) => why,
+            other => panic!("expected a mismatch, got {:?}", other.map(|g| g.state)),
+        };
+
+        // another game that reached the same phase by other orders: its tail
+        // would be adjudicated on a board those orders were never given for
+        let mut other = Game::new(map, Rulebook::default());
+        other.process_movement(&movement(map, &["FRA: A PAR - PIC", "GER: A MUN - BUR"]));
+        other.process_movement(&movement(map, &["FRA: A PIC - BEL"]));
+        assert!(mismatch(&other.to_saved("other")).contains("board"));
+
+        // a save whose phases do not line up with the snapshot's count
+        let mut shifted = g.to_saved("x");
+        shifted.phases.remove(0);
+        assert!(mismatch(&shifted).contains("phase 1"));
+
+        // a game on another map
+        let duel = Game::new(Map::by_name("duel").unwrap(), Rulebook::default());
+        assert!(mismatch(&duel.to_saved("duel")).contains("duel"));
+
+        // its own save, and the snapshot alone, still restore
+        let restored = Game::from_snapshot(&snapshot, Some(&g.to_saved("x"))).unwrap();
+        assert_eq!(restored.state, g.state);
+        assert!(Game::from_snapshot(&snapshot, None).is_ok());
     }
 
     #[test]
