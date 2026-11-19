@@ -31,9 +31,12 @@
   border-bottom: 1px solid var(--rule);
 }
 
-.phase-title {
+/* A heading, so the phase can be found by one; it does not take the small section-heading style. */
+.sidebar .phase-title {
+  margin: 0;
   font-family: var(--font-display);
   font-size: 27px;
+  font-weight: 400;
   line-height: 1;
   letter-spacing: -0.01em;
   text-transform: uppercase;

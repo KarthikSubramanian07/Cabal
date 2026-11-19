@@ -9,9 +9,10 @@ export function PhaseHeader({ phase, status, viewing }: { phase: string; status:
   const ended = status !== "active";
   return (
     <div className="phase-header">
-      <div className="phase-title">
+      <h2 className="phase-title">
         <span className="season">{season}</span> <span className="year">{year}</span>
-      </div>
+        {kind ? <span className="sr-only"> {kind}</span> : null}
+      </h2>
       <div className="phase-meta">
         {viewing ? <span className="tag">Results</span> : null}
         {kind ? <span>{kind}</span> : null}
