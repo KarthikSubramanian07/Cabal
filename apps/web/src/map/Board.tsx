@@ -3,9 +3,9 @@ import {
   type CSSProperties,
   type PointerEvent,
   memo,
+  startTransition,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -16,7 +16,8 @@ import {
   type Board as BoardData,
   LABEL_OUTLINE_TOLERANCE,
   type Point,
-  insideRings,
+  insideOutline,
+  outlineOf,
   pathRings,
   regionPoint,
 } from "./boardData.js";
@@ -75,7 +76,7 @@ export interface BoardProps {
 /** How close, in CSS pixels, a touch must land to a province it can act on to count for it. */
 const TOUCH_REACH_PX = 26;
 /** The same reach in board units is capped, so on a far-out overview a tap cannot jump provinces away. */
-const TOUCH_REACH_MAX = 34;
+const TOUCH_REACH_MAX = 48;
 
 function toward(from: Point, to: Point, trimStart: number, trimEnd: number): [Point, Point] {
   const dx = to[0] - from[0];
@@ -288,12 +289,22 @@ const Labels = memo(function Labels({ board, size, r }: { board: BoardData; size
         .filter(([, p]) => p.kind !== "impassable")
         .map(([code, p]) => {
           // A thinned outline is plenty for placing a label, and far cheaper to test against.
-          const rings = pathRings(p.d, LABEL_OUTLINE_TOLERANCE);
-          return { code, unit: p.unit, label: p.label, inside: (point: Point) => insideRings(rings, point) };
+          const outline = outlineOf(pathRings(p.d, LABEL_OUTLINE_TOLERANCE));
+          return { code, unit: p.unit, label: p.label, inside: (point: Point) => insideOutline(outline, point[0], point[1]) };
         }),
     [board],
   );
-  const at = useMemo(() => layoutLabels(spots, r, size), [spots, r, size]);
+  // Zooming passes through the same sizes again and again; each is laid out once.
+  const cache = useRef(new Map<string, Record<string, Point>>());
+  const at = useMemo(() => {
+    const key = `${r}/${size}`;
+    let layout = cache.current.get(key);
+    if (!layout) {
+      layout = layoutLabels(spots, r, size);
+      cache.current.set(key, layout);
+    }
+    return layout;
+  }, [spots, r, size]);
   return (
     <g className="labels" style={{ "--label-size": `${size}px` } as CSSProperties}>
       {spots.map(({ code }) => {
@@ -358,23 +369,40 @@ export function Board({
   focusRef.current = focusPoints;
 
   // Follow the frame's size. A new shape re-frames an untouched view and re-clamps a moved one.
-  useLayoutEffect(() => {
+  // The observer reports the size the browser has already laid out, so nothing is measured
+  // by force, and the redraw that follows is a transition React can do in slices.
+  useEffect(() => {
     const el = frameRef.current;
     if (!el) return;
-    const apply = () => {
-      const rect = el.getBoundingClientRect();
-      if (rect.width < 1 || rect.height < 1) return;
-      const next = { w: rect.width, h: rect.height };
+    const apply = (width: number, height: number) => {
+      if (width < 1 || height < 1) return;
+      const next = { w: width, h: height };
       measured.current = true;
-      setFrame((old) => (old && Math.abs(old.w - next.w) < 0.5 && Math.abs(old.h - next.h) < 0.5 ? old : next));
-      setView((v) => (auto.current ? homeView(full, next, focusRef.current) : clampView(full, next, v)));
+      startTransition(() => {
+        setFrame((old) => (old && Math.abs(old.w - next.w) < 0.5 && Math.abs(old.h - next.h) < 0.5 ? old : next));
+        setView((v) => (auto.current ? homeView(full, next, focusRef.current) : clampView(full, next, v)));
+      });
     };
-    apply();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(apply);
+    if (typeof ResizeObserver === "undefined") {
+      const rect = el.getBoundingClientRect();
+      apply(rect.width, rect.height);
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const box = entries.at(-1)?.contentRect;
+      if (box) apply(box.width, box.height);
+    });
     observer.observe(el);
     return () => observer.disconnect();
   }, [full]);
+
+  // The map is 380 KB of outlines. Handing it to the browser in one piece freezes a phone for
+  // a moment, so it is drawn in three passes: the land and sea, then coastline and pieces,
+  // then the province codes.
+  const [pass, setPass] = useState(0);
+  useEffect(() => {
+    if (measuredFrame && pass < 2) startTransition(() => setPass((p) => Math.min(2, p + 1)));
+  }, [measuredFrame, pass]);
 
   // The player chose another power: bring its theatre into view (small frames only).
   const firstFocus = useRef(true);
@@ -435,7 +463,8 @@ export function Board({
       }
     }
     // A stable order keeps React from reshuffling nodes when the engine lists units differently.
-    return list.sort((a, b) => a.key.localeCompare(b.key));
+    // (Plain comparison: `localeCompare` spends tens of milliseconds waking the collator.)
+    return list.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   }, [board, state, ids]);
 
   const candidates = useMemo<TapCandidate[]>(() => {
@@ -575,7 +604,7 @@ export function Board({
       >
         <Geography board={board} layer="under" />
         <Territory board={board} control={control} centerOwner={centerOwner} layer="land" />
-        <Geography board={board} layer="over" />
+        {pass >= 1 ? <Geography board={board} layer="over" /> : null}
         <rect className="sheet-edge" x={0} y={0} width={full.w} height={full.h} />
 
         {standoffs?.map((code) => {
@@ -590,11 +619,11 @@ export function Board({
           : null}
         {selected && board.provinces[selected] ? <path className="selected" d={board.provinces[selected]!.d} /> : null}
 
-        <Territory board={board} control={control} centerOwner={centerOwner} layer="centres" />
-        <Labels board={board} size={size} r={r} />
+        {pass >= 1 ? <Territory board={board} control={control} centerOwner={centerOwner} layer="centres" /> : null}
+        {pass >= 2 ? <Labels board={board} size={size} r={r} /> : <g className="labels" />}
 
-        <g className="units">
-          {pieces.map((u) => (
+        <g className="units" data-ready={pass >= 1}>
+          {(pass >= 1 ? pieces : []).map((u) => (
             <g
               key={u.key}
               className={`unit${u.dislodged ? " dislodged" : ""}`}

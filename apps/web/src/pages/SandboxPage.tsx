@@ -2,7 +2,7 @@ import { type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useR
 import { ConfirmDialog } from "../app/ConfirmDialog.jsx";
 import { PageLoading } from "../app/PageLoading.jsx";
 import { StatusPage } from "../app/StatusPage.jsx";
-import { useShortcuts } from "../app/prefs.js";
+import { shortcutsEnabled } from "../app/prefs.js";
 import { OrderList, PhaseHeader, PhaseStepper, PowerTable, Results } from "../components/Sidebar.jsx";
 import {
   type ComposeContext,
@@ -97,7 +97,6 @@ function Table({ sb }: { sb: Sandbox }) {
   const [importError, setImportError] = useState<{ message: string; detail: string } | null>(null);
   /** Bumped when the player picks a power by name, so a small board re-frames on it. */
   const [refocus, setRefocus] = useState(0);
-  const [shortcuts] = useShortcuts();
   const boardWrap = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const choicesRef = useRef<HTMLElement>(null);
@@ -270,7 +269,7 @@ function Table({ sb }: { sb: Sandbox }) {
         return setViewing(sb.history.length - 1);
       }
       // Single-key shortcuts can be switched off (WCAG 2.1.4) in How to play.
-      if (!shortcuts) return;
+      if (!shortcutsEnabled()) return;
       if (key === "s") return mode("support");
       if (key === "c") return mode("convoy");
       if (key === "m") return mode("move");
@@ -279,7 +278,7 @@ function Table({ sb }: { sb: Sandbox }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [ctx, draft, picker, mode, apply, cancel, viewing, sb, shortcuts]);
+  }, [ctx, draft, picker, mode, apply, cancel, viewing, sb]);
 
   // Keyboard path: after a choice, a shortcut or a cancel, focus the first new choice (or the
   // coast picker) instead of leaving focus on a button that no longer exists.

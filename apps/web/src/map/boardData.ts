@@ -56,61 +56,88 @@ export function regionPoint(board: Board, region: string): Point {
 /** Province outlines are thinned to this many board units before labels are placed against them. */
 export const LABEL_OUTLINE_TOLERANCE = 3;
 
-const TOKEN = /[Mlz]|-?\d*\.?\d+(?:e-?\d+)?/g;
-
 /**
  * The rings of a province outline. Paths in board.json use only `M`, relative `l` and `z`.
  *
  * `tolerance` thins the outline as it is read: a vertex closer than that (in board units)
  * to the last one kept is dropped. The coastlines carry far more detail than a hit test
  * for a label needs, and at a tolerance of 3 a province is a few dozen points, not hundreds.
+ *
+ * The board is 380 KB of path text and this runs before the first paint, so it reads the
+ * characters directly instead of splitting the string into tokens.
  */
 export function pathRings(d: string, tolerance = 0): Point[][] {
   const rings: Point[][] = [];
   let ring: Point[] = [];
-  let command = "M";
-  let first = true;
+  let relative = false;
   let x = 0;
   let y = 0;
   let keptX = 0;
   let keptY = 0;
-  let pending: number | null = null;
-  const close = () => {
-    if (ring.length > 2) rings.push(ring);
-    ring = [];
-  };
-  TOKEN.lastIndex = 0;
-  for (let m = TOKEN.exec(d); m; m = TOKEN.exec(d)) {
-    const token = m[0];
-    if (token === "M" || token === "l" || token === "z") {
-      if (token !== "l") close();
-      command = token;
-      first = token === "M";
-      pending = null;
+  let pending = 0;
+  let havePending = false;
+  const n = d.length;
+  let i = 0;
+  while (i < n) {
+    const c = d.charCodeAt(i);
+    if (c === 77 /* M */ || c === 108 /* l */ || c === 122 /* z */) {
+      if (c !== 108) {
+        if (ring.length > 2) rings.push(ring);
+        ring = [];
+      }
+      relative = c === 108;
+      havePending = false;
+      i++;
       continue;
     }
-    const value = Number(token);
-    if (pending === null) {
+    const digit = c >= 48 && c <= 57;
+    if (!digit && c !== 45 /* - */ && c !== 46 /* . */) {
+      i++; // a space or a comma
+      continue;
+    }
+    // Read one decimal number.
+    let sign = 1;
+    if (c === 45) {
+      sign = -1;
+      i++;
+    }
+    let value = 0;
+    let ch = d.charCodeAt(i);
+    while (ch >= 48 && ch <= 57) {
+      value = value * 10 + (ch - 48);
+      ch = d.charCodeAt(++i);
+    }
+    if (ch === 46) {
+      let scale = 0.1;
+      ch = d.charCodeAt(++i);
+      while (ch >= 48 && ch <= 57) {
+        value += (ch - 48) * scale;
+        scale /= 10;
+        ch = d.charCodeAt(++i);
+      }
+    }
+    value *= sign;
+    if (!havePending) {
       pending = value;
+      havePending = true;
       continue;
     }
+    havePending = false;
     // After its first pair, `M` goes on as absolute line-tos; `l` pairs are relative.
-    if (command === "M") {
-      x = pending;
-      y = value;
-    } else {
+    if (relative) {
       x += pending;
       y += value;
+    } else {
+      x = pending;
+      y = value;
     }
-    pending = null;
-    if (first || ring.length === 0 || Math.abs(x - keptX) + Math.abs(y - keptY) >= tolerance) {
+    if (ring.length === 0 || Math.abs(x - keptX) + Math.abs(y - keptY) >= tolerance) {
       ring.push([x, y]);
       keptX = x;
       keptY = y;
     }
-    first = false;
   }
-  close();
+  if (ring.length > 2) rings.push(ring);
   return rings;
 }
 
@@ -123,6 +150,57 @@ export function insideRings(rings: readonly Point[][], point: Point): boolean {
       const [xi, yi] = ring[i]!;
       const [xj, yj] = ring[j]!;
       if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** Rings packed for fast hit tests: coordinates in one flat array each, with a bounding box. */
+export interface Outline {
+  rings: Float64Array[];
+  /** `[minX, minY, maxX, maxY]` per ring. */
+  boxes: Float64Array[];
+}
+
+export function outlineOf(rings: readonly Point[][]): Outline {
+  const out: Outline = { rings: [], boxes: [] };
+  for (const ring of rings) {
+    const flat = new Float64Array(ring.length * 2);
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < ring.length; i++) {
+      const [x, y] = ring[i]!;
+      flat[i * 2] = x;
+      flat[i * 2 + 1] = y;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    out.rings.push(flat);
+    out.boxes.push(Float64Array.of(minX, minY, maxX, maxY));
+  }
+  return out;
+}
+
+/** The same even-odd test as `insideRings`, skipping rings whose box the point is outside. */
+export function insideOutline(outline: Outline, px: number, py: number): boolean {
+  let inside = false;
+  for (let r = 0; r < outline.rings.length; r++) {
+    const box = outline.boxes[r]!;
+    if (px < box[0]! || px > box[2]! || py < box[1]! || py > box[3]!) continue;
+    const ring = outline.rings[r]!;
+    const n = ring.length;
+    let xj = ring[n - 2]!;
+    let yj = ring[n - 1]!;
+    for (let i = 0; i < n; i += 2) {
+      const xi = ring[i]!;
+      const yi = ring[i + 1]!;
+      if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+      xj = xi;
+      yj = yi;
     }
   }
   return inside;

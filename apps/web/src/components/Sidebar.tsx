@@ -192,7 +192,7 @@ export function Results({ record, names }: { record: PhaseRecord; names?: Names 
   const { dislodged, standoffs, civil_disorder: removed } = record.outcome;
   return (
     <div className="results" role="group" aria-label="Adjudication results">
-      {[...byPower.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([power, list]) => (
+      {[...byPower.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([power, list]) => (
         <section key={power} style={{ "--power": POWER_COLOR[power] } as CSSProperties}>
           <h3>
             <span className="swatch" aria-hidden />

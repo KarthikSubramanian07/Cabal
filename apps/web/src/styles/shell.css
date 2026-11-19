@@ -70,9 +70,12 @@
   align-items: start;
 }
 
+/* As tall as the board that replaces it, so the footer sits below the fold from the first
+   paint and does not jump when the board arrives. */
 .loading-body {
   display: grid;
   place-items: center;
+  min-height: calc(100dvh - var(--topbar-h));
   color: var(--ink-3);
 }
 

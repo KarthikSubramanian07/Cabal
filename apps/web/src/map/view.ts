@@ -161,6 +161,13 @@ const EDGES = [
   [0, 0.4],
 ] as const;
 
+/** Places to try round a piece: how far out (in clearances) and at which angles, in order of preference. */
+const RINGS: readonly (readonly [number, readonly number[]])[] = [
+  [1, [90, 270, 0, 180, 45, 135, 315, 225, 68, 112, 292, 248, 22, 158, 338, 202]],
+  [1.4, [90, 270, 0, 180, 45, 135, 315, 225]],
+  [1.9, [90, 270, 0, 180, 45, 135, 315, 225]],
+];
+
 /**
  * Place every province code for a piece radius and text size. Each code first tries the
  * side of the piece the map maker chose, then the other sides, and takes the first spot
@@ -178,8 +185,8 @@ export function layoutLabels(spots: readonly LabelSpot[], radius: number, size: 
     // Below, above and beside first (how a map is usually lettered), then all round the piece,
     // then further out for a long thin province whose near spots fall outside it.
     const candidates: Point[] = [preferred];
-    for (const reach of [1, 1.4, 1.9]) {
-      for (const turn of [90, 270, 0, 180, 45, 135, 315, 225, 68, 112, 292, 248, 22, 158, 338, 202]) {
+    for (const [reach, turns] of RINGS) {
+      for (const turn of turns) {
         const a = (turn * Math.PI) / 180;
         candidates.push([ux + Math.cos(a) * sideways * reach, uy + Math.sin(a) * vertical * reach]);
       }
