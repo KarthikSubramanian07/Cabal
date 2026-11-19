@@ -143,6 +143,24 @@ describe("the deck", () => {
     expect(fake.started.length).toBeGreaterThan(0);
   });
 
+  it("starts part way into a run, dropping what came before (a speed changed mid-phase)", () => {
+    const { deck, fake } = make("on");
+    deck.schedule(
+      [
+        { at: 0, sound: "crack" },
+        { at: 400, sound: "march" },
+        { at: 1000, sound: "thud" },
+      ],
+      { rate: 0.5, from: 600 },
+    );
+    // Nothing before 600 ms of cue time is played again; the thud is 400 ms of cue time away,
+    // which at half speed is 800 ms.
+    vi.advanceTimersByTime(700);
+    expect(fake.started.length).toBe(0);
+    vi.advanceTimersByTime(150);
+    expect(fake.started.length).toBeGreaterThan(0);
+  });
+
   it("drops a repeat of the same sound in the same instant", () => {
     const { deck, fake } = make("on");
     deck.play("thud");

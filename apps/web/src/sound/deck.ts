@@ -38,8 +38,12 @@ export interface Deck {
   setEnabled(on: boolean): void;
   /** Play one sound now, or `delayMs` from now. */
   play(sound: SoundName, opts?: { delayMs?: number; weight?: number }): void;
-  /** Play a run of cues (a phase's choreography). `rate` above 1 plays them faster. Returns a cancel. */
-  schedule(cues: readonly Cue[], opts?: { rate?: number }): () => void;
+  /**
+   * Play a run of cues (a phase's choreography). `rate` above 1 plays them faster. `from` starts
+   * that far (in cue time) into the run, dropping what came before: a speed changed mid-phase
+   * cancels the run and schedules the rest again from where it had got to. Returns a cancel.
+   */
+  schedule(cues: readonly Cue[], opts?: { rate?: number; from?: number }): () => void;
   subscribe(listener: () => void): () => void;
 }
 
@@ -142,11 +146,12 @@ export function createDeck(options: DeckOptions): Deck {
     schedule(cues, opts) {
       if (!read() || cues.length === 0) return () => {};
       const rate = opts?.rate && opts.rate > 0 ? opts.rate : 1;
+      const from = Math.max(0, opts?.from ?? 0);
       // Cues are released a little ahead of time rather than all at once, so a cancel (a skip,
       // a step to another phase) silences what has not been heard yet.
-      const timers = cues.map((cue) =>
-        setTimeout(() => voice(cue.sound, 0, cue.weight ?? 1), Math.max(0, cue.at / rate - 20)),
-      );
+      const timers = cues
+        .filter((cue) => from === 0 || cue.at > from)
+        .map((cue) => setTimeout(() => voice(cue.sound, 0, cue.weight ?? 1), Math.max(0, (cue.at - from) / rate - 20)));
       return () => timers.forEach(clearTimeout);
     },
     subscribe(listener) {
