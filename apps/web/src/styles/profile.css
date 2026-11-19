@@ -204,6 +204,7 @@ dialog.seal-dialog {
 .replace-actions .btn.small {
   min-height: 36px;
   padding: 0 12px;
+  color: var(--ink);
 }
 
 .replace-leave {
