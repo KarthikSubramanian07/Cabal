@@ -566,13 +566,16 @@ pub(crate) fn phase_to_mila(map: &Map, rulebook: Rulebook, record: &PhaseRecord)
     }
 }
 
-/// Parse the recorded orders of one phase. Returns the orders that parse and,
-/// separately, `(order text, reason)` for those that do not.
+/// The orders of one recorded phase: those that parse, and `(order text,
+/// reason)` for those that do not.
+pub(crate) type RecordedOrders = (Vec<AnyOrder>, Vec<(String, String)>);
+
+/// Parse the recorded orders of one phase.
 pub(crate) fn recorded_orders(
     map: &Map,
     kind: PhaseKind,
     orders: &BTreeMap<String, Vec<String>>,
-) -> Result<(Vec<AnyOrder>, Vec<(String, String)>), ImportError> {
+) -> Result<RecordedOrders, ImportError> {
     let mut typed = Vec::new();
     let mut bad = Vec::new();
     for (power, list) in orders {
