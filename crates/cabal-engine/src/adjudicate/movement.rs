@@ -211,17 +211,20 @@ impl<'a> Resolver<'a> {
                 continue;
             }; // NoUnit: nothing to attach it to
             let e = &mut entries[i];
-            if list.len() > 1 {
+            // DATC 6.A.6: an order for another power's unit is ignored. It must
+            // never count against the owner, or any power could void a rival's
+            // order by submitting a second one for the same unit.
+            let own: Vec<&Order> = list
+                .iter()
+                .copied()
+                .filter(|o| o.power == e.unit.power)
+                .collect();
+            match own.as_slice() {
+                [] => e.illegal = Some(Illegal::ForeignUnit),
+                [o] => e.command = o.command,
                 // DATC 4.D.3: all orders illegal, unit holds
-                e.illegal = Some(Illegal::DuplicateOrder);
-                continue;
+                _ => e.illegal = Some(Illegal::DuplicateOrder),
             }
-            let o = list[0];
-            if o.power != e.unit.power {
-                e.illegal = Some(Illegal::ForeignUnit);
-                continue;
-            }
-            e.command = o.command;
         }
 
         // validate each command (DATC section 3 / 4.E.1); `check` is `normalise`, so the
