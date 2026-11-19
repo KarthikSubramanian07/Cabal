@@ -124,12 +124,12 @@ not compute them.
 |---|---|---|---|
 | Before (`14e48cd`) | 796,133 | 289,382 | 220,035 |
 | After, shipped (`opt-level = 3`, fat LTO, one codegen unit, `panic = "abort"`, `wasm-opt -Oz`) | 854,820 | 321,347 | 244,269 |
-
 | After, with the heuristic bot merged from `main` | 994,307 | 371,808 | 281,181 |
 
 The new API (verdicts, explanations, structured moves, build info) costs
-32 KB gzip, and the bot (`cabal-bot`, merged separately) another 50 KB; baking the maps and dropping the map JSON parser from the binary
-paid back part of what it added.
+32 KB gzip, and the bot (`cabal-bot`, merged separately) another 50 KB;
+baking the maps and dropping the map JSON parser from the binary paid back
+part of what the API added.
 
 The size-oriented settings were measured and **not adopted**, because the rule
 was to switch only if nothing got meaningfully slower:
