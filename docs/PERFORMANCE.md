@@ -34,8 +34,8 @@ change. Cold start figures are the median of seven fresh Node processes.
 | Opening adjudication (22 units) | `bench` job | 30 percent slower than the base commit, same runner |
 | Legal orders, all powers, fleet-heavy midgame, one power at a time | `bench` job | same |
 | Legal orders, all powers, fleet-heavy midgame, shared convoy search | `bench` job | same |
-| Engine wasm, gzip | `wasm` job, `WASM_SIZE_BUDGET_BYTES` | 409,000 bytes, about 10 percent above the build |
-| Worker bundle, gzip | `deploy-dry-run` job | 786,432 bytes (measured 742,344) |
+| Engine wasm, gzip | `wasm` job, `WASM_SIZE_BUDGET_BYTES` | 409,000 bytes, about 6 percent above the build |
+| Worker bundle, gzip | `deploy-dry-run` job | 786,432 bytes (measured 755,828) |
 
 The base commit and the change are benchmarked back to back on one runner,
 because shared runners differ from one another by far more than 30 percent. A
@@ -125,14 +125,20 @@ not compute them.
 | Before (`14e48cd`) | 796,133 | 289,382 | 220,035 |
 | After, shipped (`opt-level = 3`, fat LTO, one codegen unit, `panic = "abort"`, `wasm-opt -Oz`) | 854,820 | 321,347 | 244,269 |
 | After, with the heuristic bot merged from `main` | 996,836 | 372,566 | 281,963 |
+| After the review fixes (submitted-order record, saved rejections, map choice, tolerant `cabal` block) | 1,026,287 | 384,183 | 289,987 |
 
 The new API (verdicts, explanations, structured moves, build info) costs
 32 KB gzip, and the bot (`cabal-bot`, merged separately) another 50 KB;
 baking the maps and dropping the map JSON parser from the binary paid back
 part of what the API added.
 
+The review fixes added 12 KB gzip. Reading a host's `cabal` block through
+`serde_json::Value` would have cost another 12 KB for the `Value`
+deserializer alone, so the block is kept as raw text and read part by part
+with the parser that is already in the binary.
+
 The engine is most of the Worker's upload, so its growth moved the Worker
-bundle from 642,074 to 742,344 bytes gzip and past the 655,360 budget that job
+bundle from 642,074 to 755,828 bytes gzip and past the 655,360 budget that job
 had; the budget is now 786,432. No optimisation level brings the bundle back
 under the old figure (`"z"` saves about 72 KB of the 87 KB needed and costs the
 most speed), so this is a real cost of the new API, paid in isolate start-up,

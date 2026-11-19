@@ -14,7 +14,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # About 10 percent above the measured build (372,566 bytes gzip with the bot
+  # About 6 percent above the measured build (384,183 bytes gzip with the bot
   # inside, see docs/PERFORMANCE.md). Raise it only with a number and a reason.
   WASM_SIZE_BUDGET_BYTES: 409000
 
@@ -138,9 +138,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: wasm
     env:
-      # Measured 742,344 bytes with the engine of this change (642,074 before it: the engine
-      # wasm grew by about 100 KB gzip with replay verification, snapshots, verdicts and
-      # explanations; see docs/PERFORMANCE.md). The budget leaves about 6 percent of headroom.
+      # Measured 755,828 bytes with the engine of this change (642,074 before it: the engine
+      # wasm grew by about 110 KB gzip with replay verification, snapshots, verdicts and
+      # explanations; see docs/PERFORMANCE.md). The budget leaves about 4 percent of headroom.
       # Cloudflare's own limit is 3 MiB gzip on the free plan.
       WORKER_GZIP_BUDGET_BYTES: 786432
       WRANGLER_SEND_METRICS: "false"

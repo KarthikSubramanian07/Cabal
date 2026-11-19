@@ -137,7 +137,13 @@ movement target generates valid sparse or initial positions and selects a legal
 order for every unit, then calls `resolve_movement` and checks idempotence,
 permutation invariance, conservation, ownership, and unique occupation.
 `fuzz/Cargo.toml` isolates nightly fuzz dependencies from the stable workspace.
-The scheduled stress workflow has separate parser/movement matrix jobs, each
+The validate target feeds arbitrary text to `validate_orders` in every phase
+kind and requires one verdict per line, each with a reason, and in movement
+phases the same answer the resolver then gives. The record target plays up to
+twelve phases with arbitrary orders (illegal, duplicate, for a rival's unit,
+for an empty province) and requires the recorded game to verify clean, replay
+to the same position and read back the same rulings after a resume.
+The scheduled stress workflow has one matrix job per target, each
 with `-max_total_time=600`, `fail-fast: false`, and crash artifact upload.
 
 ## Saved games, replay and restore
@@ -164,7 +170,70 @@ game keeps earlier phases verbatim as an archive and continues from the last
 recorded state. `Game.snapshot()` is the constant-size form of that state for
 hosts that do not want to parse the whole save to wake.
 
-`verify_saved` compares, per phase: the orders as adjudicated, result codes,
+### The record says what was submitted
+
+A phase's `orders` are the orders that were given, not the ones that took
+effect. An order thrown out as illegal is written as it was ordered (`A PAR -
+MOS`, result `void`), every line of a duplicate is kept, and so is an order
+for a rival's unit or for an empty province, under the power that sent it.
+Only a unit that was given no order at all gets a hold written for it. The
+earlier behaviour, writing the hold an illegal order fell back to while
+keeping the `void` result, made the engine's own export fail its own
+verification and made a resumed game report that the unit had held by choice.
+The same holds in retreat phases (a rival's order for a dislodged unit is
+ignored and recorded; two orders from the owner disband the unit and both are
+recorded) and in adjustment phases, where an order naming a province without a
+unit is written without a unit letter (`BUL D`) so it can be read back.
+
+Adjustment results are keyed the MILA way, by unit, with every waive under
+`WAIVE`. When several orders share a key, the entry carries each distinct code
+once, so it does not depend on the order the orders arrived in. That entry is
+a summary; the per-order verdicts are in the phase's outcome, not in the file.
+
+Orders a host set aside before adjudication (text that could not be read, an
+order for a unit the sender does not have) never reach the resolver. They are
+kept in the game's `cabal` block under `rejected`, by phase, and come back
+from every loader, so `outcome(i).rejected` is the same before and after a
+restore.
+
+`tests/roundtrip.rs` plays whole games with such orders mixed in at random and
+requires every loader to reproduce them; `tests/submitted_record.rs` pins the
+individual cases.
+
+### What a resumed game does and does not adjudicate
+
+`resume` adjudicates nothing to produce the current state. Asking a resumed
+game about a past phase is different: `record_at`, and with it `outcome(i)`,
+`explain(i)` and `pledgeReceipt(i)`, adjudicate that one phase again from its
+recorded state and recorded orders, with the engine that is running now.
+For a game recorded by the same engine the answer is identical to what the
+live game reported, illegal orders included. For a phase recorded under a
+ruling that has since been corrected, the answer follows today's ruling and
+can disagree with the recorded next state; the board the game continues from
+is always the recorded one. `verify_saved` is the tool that lists such phases.
+
+A retreat state that arrives without Cabal's extras has its attacker origins
+and standoffs rebuilt from the retreat options it lists. The options are
+reproduced exactly; which closed province was the attacker's origin and which
+a standoff is a guess. Such a state is marked (`retreats_inferred`, written as
+`"inferred": true` in the extras) and stays marked through every later save.
+
+`from_snapshot` checks that the save it is given is the snapshot's own
+history: the same map, and at the phase the snapshot was taken the same phase
+name, units and centres. Anything else is an error rather than another game's
+past joined to this one.
+
+### Other writers of the `cabal` key
+
+Hosts put their own data under `cabal` (the server's replay endpoint writes a
+summary there). The block is the engine's only when it names an `engine` and
+holds a `rulebook`; anything else, of any shape, is read as absent. The
+engine's own block is read part by part, so a record written by a newer
+engine still loads after a rollback: an outcome kind this engine does not
+know is treated as no recorded outcome, and a pledge it cannot read is left
+out.
+
+`verify_saved` compares, per phase: the orders as submitted, result codes,
 dislodged units with attacker origins and standoffs, phase names, units,
 centres, retreat options, build allowances, and finally the outcome. After a
 difference in the board it continues from the recorded state, so one bad phase
