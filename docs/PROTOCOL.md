@@ -36,12 +36,14 @@ Province codes are three letters. Coasts are `/NC`, `/SC`, `/EC`, `/WC`. Parsing
 
 - `id` is chosen by the client. `welcome` (after `hello`), `orders.ack`, `orders.default.ack`, `press`, `extend.ack`, `synced` and `error` echo the `id` of the frame they answer.
 - `seq` is set by the server on every **broadcast** frame: anything that changes what the table knows and that `sync` can replay. It is that frame's own number in the room's sequence, which only ever grows. Replies to one socket (`welcome`, `orders.ack`, `orders.default.ack`, `extend.ack`, `press.unread`, `synced`, `error`) and presence-only `seats` frames carry no `seq`.
-- Frames are JSON text of at most 4 KB. Every frame spends the socket's rate limit (burst 30, 10 per second; `sync` costs five).
+- Frames are JSON text of at most 16 KB (16,384 bytes, room for the longest press message in any script). Every frame spends the socket's rate limit (burst 30, 10 per second; `sync` and `hello` cost five). A frame refused as `rate_limited` or `bad_frame` is still answered with the `id` it carried.
 - Keepalive: the client sends the text `ping` and the server answers the text `pong` without waking the room. Neither is a JSON frame.
 
 ## Connecting
 
 Open `GET /api/games/:id/ws`. The socket is a spectator at once and receives a `welcome` with `power: null`. A player then sends `hello { token }` as the first frame, which binds the socket to the seat and is answered with that seat's `welcome`. Seat tokens never appear in a URL: a `?token=` query is refused with 400. A bad token gets `error bad_token` and close code 4401. When a seat changes hands its open sockets are closed with code 4001. A ninth socket for one seat is closed with 4429. A client should not reconnect after 4001, 4401 or 4429.
+
+A room holds 200 sockets that have not bound to a seat. It never refuses a new connection for that reason, because a player's socket starts unbound too: the oldest unbound socket is sent `error spectator_evicted` and closed with 4408 to make way. A spectator closed with 4408 may reconnect.
 
 Spectators are read-only: every frame except `hello` and `sync` is answered `error spectator`.
 
@@ -50,7 +52,8 @@ Spectators are read-only: every frame except `hello` and `sync` is answered `err
 A client remembers the highest `seq` it has applied. After a reconnect it sends `hello` again and gets a `welcome`, whose `seq` is the number of the last broadcast frame the snapshot already contains. If that is higher than the client's own cursor it sends `sync { since: <its cursor> }`. The server replays, in order and each with its `seq`, the stored frames after `since` that this viewer may see, at most 500 per request, then `synced { seq, more, gap }`. While `more` is true the client sends `sync { since: seq }` again.
 
 - A frame is never replayed to a cursor at or past its own number: `sync { since: n }` starts at `n + 1`.
-- `gap: true` means the frames after `since` are no longer stored (a room keeps the last 4,000) or the cursor is ahead of the room. Nothing is replayed; the `welcome` is the truth.
+- `gap: true` means the frames after `since` are no longer stored (a room keeps the frames numbered within 4,000 of the newest, pruned as they are written) or the cursor is ahead of the room. Nothing is replayed; the `welcome` is the truth.
+- `seats` and `votes` frames are whole snapshots, so the room stores only the newest one for each audience. A replay therefore skips the older ones; applying the newest leaves a client exactly where applying all of them would.
 - A replayed `press` frame shows its pledge as it stands for the viewer now (their own sealed orders, or the receipt that has since arrived).
 - Apply replayed frames before the `welcome`, then live frames after it, dropping any frame whose `seq` is at or below the cursor. `CabalSocket` in `@cabal/protocol/client` does all of this, plus backoff and the keepalive.
 
@@ -82,7 +85,7 @@ A client remembers the highest `seq` it has applied. After a reconnect it sends 
 | `pledge.receipt` | `{ pledgeId, receipt, revealed, nonce }` | `receipt` is `kept`, `broken` or `void`; to the pledge's audience and its pledger, after adjudication |
 | `seats` | `{ seats }` | join, start, orders in, ready, civil disorder, recovery, substitution, and (without `seq`) a player connecting or leaving |
 | `deadline` | `{ phase, deadlineAt, serverTime, grace? }` | `grace: true` marks the one-off grace period; `deadlineAt` is null while paused |
-| `extend` | `{ phase, requestedBy, needed, granted, deadlineAt }` | to everyone on each request, so a second player can see one is pending |
+| `extend` | `{ phase, requestedBy, needed, granted, deadlineAt }` | to everyone when a player first asks and when the extension is granted, so a second player can see one is pending. Asking again changes nothing and is not announced |
 | `extend.ack` | `{ phase, requests, extended }` | to the requester |
 | `votes` | `{ phase, draw, required, hidden, cast, yes }` | on every vote, and emptied when the phase resolves |
 | `status` | `{ status, reason, until? }` | lifecycle changes: `active`, `paused` (with the time the pause ends by itself), `finished`, `abandoned` |
@@ -90,7 +93,7 @@ A client remembers the highest `seq` it has applied. After a reconnect it sends 
 | `synced` | `{ seq, more, gap }` | ends a `sync` reply |
 | `error` | `{ code, message }` | see below |
 
-Error codes: `rate_limited`, `too_large` (the socket is then closed with 1009), `bad_json`, `bad_frame`, `bad_token`, `too_many_sockets`, `spectator`, `not_active`, `seat_inactive`, `stale_phase`, `bad_order`, `no_press`, `public_only`, `lobby_public_only`, `press_closed`, `press_limit`, `whisper_budget`, `press_rate_limited`, `bad_pledge`, `bad_vote`, `extension_used`, `adjudication_retry`, `adjudication_fallback`.
+Error codes: `rate_limited`, `too_large` (the socket is then closed with 1009), `bad_json`, `bad_frame`, `bad_token`, `too_many_sockets`, `spectator`, `spectator_evicted` (the socket is then closed with 4408), `not_active`, `seat_inactive`, `stale_phase`, `bad_order`, `no_press`, `public_only`, `lobby_public_only`, `press_closed`, `press_limit`, `whisper_budget`, `press_rate_limited`, `bad_pledge`, `bad_vote`, `too_many_changes` (a seat may change its ready flag or its ballot 40 times in one phase), `extension_used`, `adjudication_retry`, `adjudication_fallback`, `internal`.
 
 ### The welcome
 
@@ -157,7 +160,7 @@ Each entry of `seats` is `{ power, kind, name, ready, eliminated, missed, autopi
 |---|---|
 | `open` | unclaimed, in the lobby |
 | `human` | a player's seat |
-| `ai` | played by the built-in bot, or by Claude when the game sets `aiBrain: "claude"` and the server has a key |
+| `ai` | played by the built-in bot (the heuristic player compiled into the engine, see `docs/BOT.md`), or by Claude when the game sets `aiBrain: "claude"` and the server has a key |
 | `civil_disorder` | its player has missed two movement phases; `autopilot: true` means the bot is covering it |
 
 | flag | meaning |
@@ -186,7 +189,7 @@ A movement phase is played in two steps, both visible to the table as `seats` fr
 
 Retreat and adjustment phases, gunboat games and movement phases shorter than four minutes skip straight to step 3. Every limit is also capped by the phase deadline. When a limit passes, a call fails, the queue is down or the budget is spent, nothing has to happen: the orders already on file are adjudicated.
 
-Spend is capped per game (5 US dollars unless the server says otherwise). The worst-case price of each call is reserved before it is made and the real price settled from the API's usage report, so the cap holds whatever the calls cost. `GET /api/games/:id` reports it as `ai: { brain, model, claudeTurns, claudeCalls, spentUsd, capUsd, tokens, stopped }`; `stopped` is null, or why the game went back to the bot (`spend_cap`, `model_failing`, `model_unauthorised`).
+Spend is capped twice. Per game (5 US dollars unless the server says otherwise): the worst-case price of each call is reserved before it is made and the real price settled from the API's usage report, so the cap holds whatever the calls cost. A prompt is bounded in bytes, and a token is never shorter than a byte, so the reservation covers the bill in any script. And for the whole deployment: before a game starts, the index admits it to Claude only while the day's budget (20 US dollars, each admitted game counting for its whole cap until it ends and hands back what it did not spend) and the number of Claude games in play (4) allow it. A game that is not admitted, or that cannot reach the index, is played by the bot. `GET /api/games/:id` reports it as `ai: { brain, model, claudeTurns, claudeCalls, spentUsd, capUsd, tokens, stopped }`; `stopped` is null, or why the game went back to the bot (`spend_cap`, `model_failing`, `model_unauthorised`, `claude_games_full`, `claude_daily_budget`, `no_budget_authority`, `budget_unreachable`).
 
 A seat in civil disorder still belongs to its player, whose token keeps working: submitting orders takes it back. After four missed movement phases the seat is vacant, and a seated player may open it to a substitute (see HTTP).
 
@@ -206,13 +209,17 @@ A seat in civil disorder still belongs to its player, whose token keeps working:
 
 `accepted` lists what is on file and `rejected` repeats the refused orders as `{ text, reason }`. Sealed defaults (`orders.default`) are checked for syntax and ownership only, because the board they will be used on is not known yet.
 
+A retreat is identified by the province the unit was dislodged from and where it goes: `A VEN R TUS` is accepted and put on file with the unit as `state.retreats` names it, whichever unit letter was sent.
+
+An `orders.set` in which nothing is accepted (an empty list, or only refused orders) puts nothing on file: the seat's own earlier orders for the phase are withdrawn, so its sealed defaults apply again, and orders the bot filed for a seat in civil disorder are left standing. Sealed defaults stand in for a present player's missing movement orders; a phase resolved from defaults still counts as missed, so after two the seat is in civil disorder and the bot's orders replace them.
+
 ## Press
 
 Messages go to one power or to `ALL`. A seat reads public messages and the private ones it sent or received; a spectator reads public ones. `welcome.press` holds the latest 500; older ones are paged over HTTP. Read markers are kept per seat and thread: `press.read { with, upTo }` moves a marker forward, and `welcome.unread` and `press.unread` count what others have sent since.
 
 ## Draws
 
-A draw passes when every surviving, present human player has voted yes in the current phase. Seats played by AI, seats in civil disorder and eliminated players are never required, so nobody absent can veto. With `dias: true` the draw is shared by all survivors. With `dias: false` every required voter must also name the same `include` set, and only the powers in it share the result: it still takes everyone to agree. Votes are cleared when the phase resolves. With `ghostVotes: true` an eliminated player may cast a vote that counts for nothing.
+A draw passes when every surviving, present human player has voted yes in the current phase. Seats played by AI, seats in civil disorder and eliminated players are never required, so nobody absent can veto. With `dias: true` the draw is shared by all survivors. With `dias: false` every required voter must also name the same `include` set, and only the powers in it share the result: it still takes everyone to agree. Nobody is cut out of a draw without agreeing to it: `include` may leave out only powers that are required voters, so a survivor played by AI or in civil disorder always shares, and a proposal that omits one is refused with `bad_vote`. A ballot that repeats the one on file changes nothing and is not announced. Votes are cleared when the phase resolves. With `ghostVotes: true` an eliminated player may cast a vote that counts for nothing.
 
 `votes` is `{ phase, draw, required, hidden, cast, yes }`. `required` lists the seats whose agreement is needed; `cast` and `yes` count how many of them have voted and voted yes, and are always public. With `publicVotes: true` (the default) `draw` lists every ballot as `{ power, value, include }`. With `publicVotes: false`, `hidden` is true and `draw` holds only the viewer's own ballot: the table sees the tally, never who cast it. A voter is then sent a `votes` frame of their own after the one everybody gets.
 
@@ -234,7 +241,7 @@ A seal protects a player from the other players, not from the server, which must
 | method and path | purpose |
 |---|---|
 | `POST /api/games` | create a game from `{ name, settings? }`; returns `{ gameId, token, power }` |
-| `GET /api/games` | `status=open` lists public lobbies with a free seat, `status=active` public games in play, `status=finished` (the default) finished and abandoned games. `limit` (up to 100) and `before` page each list; `result` filters the finished one. Answers `{ status, games }` |
+| `GET /api/games` | `status=open` lists public lobbies with a free seat, `status=active` public games in play, `status=finished` (the default) finished and abandoned games that were created `public` and played at least one phase. Unlisted games are recorded for ratings and the ledger but never listed. `limit` (up to 100) and `before` page each list; `result` filters the finished one. Answers `{ status, games }` |
 | `POST /api/games/:id/join` | `{ name, power? }` claims a lobby seat; `{ name, invite }` takes a vacated seat in a running game. Refused with 409 for a caller who presents a seat token for this game |
 | `POST /api/games/:id/start` | the host starts early; open seats become AI seats when `aiFill` is on. Answers the summary |
 | `POST /api/games/:id/substitute` | `{ power }` with a seated player's bearer token: returns a one-time `invite` for a seat whose player has missed four movement phases |
