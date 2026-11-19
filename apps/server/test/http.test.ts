@@ -1,0 +1,153 @@
+/** The HTTP API a lobby is built against: settings, listings, health, and failures that stay JSON. */
+import { SELF } from "cloudflare:test";
+import { describe, expect, it, vi } from "vitest";
+import { type GameListing, type GameRecord, GameSummary, HealthResponse, PROTOCOL_VERSION } from "@cabal/protocol";
+import { version as engineVersion } from "@cabal/engine";
+import worker from "../src/index.js";
+import { gameIndex } from "../src/game-index.js";
+import { Client, create, join, nextIp, registry, serverEnv, start, summary, until, untilIndexed } from "./helpers.js";
+
+const get = (path: string) => SELF.fetch(`http://cabal${path}`, { headers: { "cf-connecting-ip": nextIp() } });
+const live = async (status: "open" | "active") => ((await (await get(`/api/games?status=${status}&limit=100`)).json()) as { games: GameListing[] }).games;
+
+describe("creating a game", () => {
+  it("takes the full settings a lobby offers and returns them resolved", async () => {
+    const settings = {
+      pacing: "live",
+      press: "public",
+      dias: false,
+      scoring: "dss",
+      aiBrain: "bot",
+      aiFill: false,
+      visibility: "public",
+      publicVotes: false,
+      ghostVotes: false,
+      rulebook: "1971",
+      whisperBudget: 3,
+    };
+    const ann = await create("Ann", settings);
+    const s = GameSummary.parse(await (await get(`/api/games/${ann.gameId}`)).json());
+    expect(s.settings).toMatchObject({ ...settings, movementSeconds: 600, shortPhaseSeconds: 300, graceSeconds: 60, extendSeconds: 300 });
+    expect(s).toMatchObject({ status: "lobby", host: ann.power, phase: "S1901M", finished: null, history: [] });
+    expect(s.seats.filter((seat) => seat.host).map((seat) => seat.power)).toEqual([ann.power]);
+  });
+
+  it("defaults to an unlisted Sum of Squares game with public votes, and refuses settings it does not know", async () => {
+    const ann = await create("Ann");
+    expect((await summary(ann.gameId)).settings).toMatchObject({ scoring: "sos", visibility: "unlisted", publicVotes: true, dias: true, aiBrain: "bot", aiFill: true });
+    for (const bad of [{ scoring: "carnage" }, { visibility: "secret" }, { publicVotes: "yes" }]) {
+      const res = await SELF.fetch("http://cabal/api/games", { method: "POST", headers: { "cf-connecting-ip": nextIp() }, body: JSON.stringify({ name: "Ann", settings: bad }) });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it("scores a draw by draw size when the game asks for it: equal shares for the sharers", async () => {
+    const ann = await create("Ann", { aiFill: true, scoring: "dss" });
+    const bob = await join(ann.gameId, "Bob");
+    await start(ann);
+    const a = await Client.connect(ann.gameId, ann.token);
+    const b = await Client.connect(ann.gameId, bob.token);
+    await Promise.all([a.next("welcome"), b.next("welcome")]);
+    a.send({ t: "vote", p: { kind: "draw", value: true } });
+    b.send({ t: "vote", p: { kind: "draw", value: true } });
+    const finished = await a.next("finished");
+    // Russia starts with four centres: under Sum of Squares its share would be larger than the rest.
+    expect(new Set(Object.values(finished.p.scores).map((v) => v.toFixed(6)))).toEqual(new Set([(1 / 7).toFixed(6)]));
+  });
+});
+
+describe("listing games", () => {
+  it("lists a public game while it is open, then while it is running, then as finished; an unlisted game never", async () => {
+    const pub = await create("Ann", { visibility: "public", aiFill: true });
+    const hidden = await create("Zed", { visibility: "unlisted", aiFill: true });
+    const open = await until(async () => (await live("open")).find((g) => g.gameId === pub.gameId), "the lobby to be listed");
+    expect(open).toMatchObject({ status: "lobby", hostName: "Ann", humans: 1, openSeats: 6, phase: "S1901M", cluster: "standard:full:async" });
+    expect((await live("open")).some((g) => g.gameId === hidden.gameId)).toBe(false);
+
+    const bob = await join(pub.gameId, "Bob");
+    await until(async () => (await live("open")).find((g) => g.gameId === pub.gameId && g.humans === 2), "the second player to show");
+    await start(pub);
+    await start(hidden);
+    const active = await until(async () => (await live("active")).find((g) => g.gameId === pub.gameId), "the running game to be listed");
+    expect(active).toMatchObject({ status: "active", humans: 2, openSeats: 0 });
+    expect(active.deadlineAt).toBeGreaterThan(Date.now());
+    expect((await live("open")).some((g) => g.gameId === pub.gameId)).toBe(false);
+    expect((await live("active")).some((g) => g.gameId === hidden.gameId)).toBe(false);
+
+    const a = await Client.connect(pub.gameId, pub.token);
+    const b = await Client.connect(pub.gameId, bob.token);
+    await Promise.all([a.next("welcome"), b.next("welcome")]);
+    a.send({ t: "vote", p: { kind: "draw", value: true } });
+    b.send({ t: "vote", p: { kind: "draw", value: true } });
+    await a.next("finished");
+    await untilIndexed(pub.gameId);
+    await until(async () => !(await live("active")).some((g) => g.gameId === pub.gameId), "the finished game to leave the live list");
+    const finished = ((await (await get("/api/games?status=finished&limit=100")).json()) as { games: GameRecord[] }).games;
+    expect(finished.some((g) => g.gameId === pub.gameId)).toBe(true);
+    // The default is still the finished list, and an unknown status is a 400.
+    expect(((await (await get("/api/games?limit=100")).json()) as { status: string }).status).toBe("finished");
+    expect((await get("/api/games?status=everything")).status).toBe(400);
+  });
+
+  it("never lists a game again once it has been recorded as ended, and drops listings nobody refreshes", async () => {
+    const index = gameIndex(serverEnv)!;
+    const pub = await create("Ann", { visibility: "public" });
+    const listing = await until(async () => (await live("open")).find((g) => g.gameId === pub.gameId), "the lobby to be listed");
+    // A listing its room stopped refreshing more than a week ago is left out.
+    await index.upsertListing({ ...listing, gameId: "STALE1", updatedAt: Date.now() - 8 * 24 * 3600_000 });
+    expect((await live("open")).some((g) => g.gameId === "STALE1")).toBe(false);
+    // A refresh that arrives after the game was recorded must not resurrect it.
+    const settings = (await summary(pub.gameId)).settings;
+    await registry().recordGame({
+      gameId: "ENDED1", result: "draw", reason: "vote", winners: [], scores: {}, settings, cluster: "standard:full:async",
+      phaseCount: 1, createdAt: 1, finishedAt: 2, ledger: {}, seats: [],
+    });
+    await index.upsertListing({ ...listing, gameId: "ENDED1", updatedAt: Date.now() });
+    expect((await live("open")).some((g) => g.gameId === "ENDED1")).toBe(false);
+    await index.removeListing(pub.gameId);
+    expect((await live("open")).some((g) => g.gameId === pub.gameId)).toBe(false);
+  });
+});
+
+describe("health and failure", () => {
+  it("reports the engine version, the build and whether the index answers", async () => {
+    const health = HealthResponse.parse(await (await get("/health")).json());
+    expect(health).toMatchObject({ ok: true, protocol: PROTOCOL_VERSION, engine: engineVersion(), registry: { reachable: true, schema: 3 } });
+    expect(health.build.length).toBeGreaterThan(0);
+    expect(Math.abs(health.time - Date.now())).toBeLessThan(5_000);
+
+    const named = await worker.fetch(new Request("http://cabal/health"), { ...serverEnv, BUILD_ID: "abc1234" });
+    expect(((await named.json()) as HealthResponse).build).toBe("abc1234");
+
+    // An index that does not answer is reported, and health itself still answers.
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const down = await worker.fetch(new Request("http://cabal/health"), {
+      ...serverEnv,
+      REGISTRY: { idFromName: () => "id", get: () => ({ schemaVersion: async () => Promise.reject(new Error("down")) }) } as never,
+    });
+    expect(down.status).toBe(200);
+    expect(((await down.json()) as HealthResponse).registry).toEqual({ reachable: false, schema: null });
+    const none = await worker.fetch(new Request("http://cabal/health"), { ...serverEnv, REGISTRY: undefined as never });
+    expect(((await none.json()) as HealthResponse).registry.reachable).toBe(false);
+    error.mockRestore();
+  });
+
+  it("turns an exception anywhere into a JSON 500 with CORS and one structured log line", async () => {
+    const lines: string[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation((line: unknown) => void lines.push(String(line)));
+    const broken = {
+      ...serverEnv,
+      GAME_ROOM: { idFromName: () => { throw new Error("storage is on fire"); } } as never,
+    };
+    const res = await worker.fetch(new Request("http://cabal/api/games/ABCDEF", { headers: { "cf-ray": "ray-123" } }), broken);
+    error.mockRestore();
+    expect(res.status).toBe(500);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toEqual({ error: "internal error", requestId: "ray-123" });
+    const logged = lines.map((line) => JSON.parse(line) as Record<string, unknown>).find((line) => line.event === "unhandled_error")!;
+    expect(logged).toMatchObject({ event: "unhandled_error", requestId: "ray-123", route: "GET /api/games/:id", error: "Error: storage is on fire" });
+    // The response never repeats the error's text.
+    expect(JSON.stringify(await (await worker.fetch(new Request("http://cabal/api/games/ABCDEF"), broken).catch(() => new Response("{}"))).json())).not.toContain("fire");
+  });
+});
