@@ -29,3 +29,10 @@ path = "fuzz_targets/movement.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "saved"
+path = "fuzz_targets/saved.rs"
+test = false
+doc = false
+bench = false

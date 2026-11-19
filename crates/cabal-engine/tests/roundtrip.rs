@@ -106,8 +106,17 @@ fn assert_round_trips(game: &Game) -> Result<(), TestCaseError> {
     Ok(())
 }
 
+/// Each case plays and reloads a whole game, so it costs about twenty times a
+/// single-phase property; the nightly budget in `PROPTEST_CASES` is scaled to match.
+fn cases() -> u32 {
+    std::env::var("PROPTEST_CASES")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .map_or(48, |n| (n / 20).max(48))
+}
+
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(48)))]
+    #![proptest_config(ProptestConfig::with_cases(cases()))]
 
     #[test]
     fn prop_saved_games_round_trip(seed in any::<u64>(), edition in 0..4usize, phases in 1..40usize, draw in any::<bool>()) {
