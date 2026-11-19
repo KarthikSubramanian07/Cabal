@@ -1,0 +1,298 @@
+/* The board: provinces, labels, pieces and order marks. */
+
+.board-wrap {
+  position: relative;
+  padding: 14px 14px 10px;
+}
+
+/* The map and its order tools. A plain wrapper on wide screens; the first screen on a phone. */
+.stage {
+  display: contents;
+}
+
+.board-frame {
+  position: relative;
+  width: min(100%, calc((100vh - 150px) * var(--board-aspect, 1)));
+  min-width: min(100%, 560px);
+  aspect-ratio: var(--board-aspect, 1);
+  margin: 0 auto;
+  border: 1px solid var(--ink);
+  /* Shows only where the frame is not the board's shape: the desk under the map sheet. */
+  background: var(--bone-3);
+  box-shadow: 0 1px 0 var(--paper), 0 12px 30px -18px rgba(18, 17, 16, 0.35);
+  overflow: hidden;
+}
+
+svg.board {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.sea-bg,
+.prov.sea {
+  fill: var(--sea);
+}
+
+.prov {
+  cursor: pointer;
+  transition: fill var(--dur-instant) var(--ease-out);
+}
+
+.prov.land {
+  fill: var(--land);
+  stroke: var(--border);
+  stroke-width: 0.7;
+  stroke-linejoin: round;
+}
+
+.prov.land.controlled {
+  fill: color-mix(in srgb, var(--power) 17%, var(--land));
+}
+
+.prov.land.center-owned {
+  fill: color-mix(in srgb, var(--power) 34%, var(--land));
+}
+
+.prov.impassable-prov {
+  fill: url(#impassable);
+  stroke: var(--border);
+  stroke-width: 0.7;
+  cursor: default;
+}
+
+.prov.sea:hover {
+  fill: var(--sea-deep);
+}
+
+.prov.land:hover {
+  filter: brightness(0.95);
+}
+
+.lake {
+  fill: var(--sea);
+  stroke: var(--coast);
+  stroke-width: 0.8;
+  pointer-events: none;
+}
+
+.impassable {
+  fill: url(#impassable);
+  stroke: var(--coast);
+  stroke-width: 0.9;
+  pointer-events: none;
+}
+
+.impassable-bg {
+  fill: var(--impassable);
+}
+
+.impassable-line {
+  stroke: var(--impassable-line);
+  stroke-width: 2;
+}
+
+.coastline {
+  fill: none;
+  stroke: var(--coast);
+  stroke-width: 1.25;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.sea-lines {
+  fill: none;
+  stroke: var(--sea-ink);
+  stroke-width: 0.8;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+
+/* Brass is the brand's colour for what is active and selectable: the chosen unit's province
+   in solid brass, the provinces it may act on in a lighter, dashed brass. */
+.target {
+  fill: color-mix(in srgb, var(--brass) 26%, transparent);
+  stroke: var(--brass-deep);
+  stroke-width: 1.6;
+  stroke-dasharray: 5 3;
+  pointer-events: none;
+}
+
+.selected {
+  fill: color-mix(in srgb, var(--brass) 38%, transparent);
+  stroke: var(--brass-deep);
+  stroke-width: 2.6;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* The edge of the map sheet, visible when the frame shows the desk around it. */
+.sheet-edge {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.2;
+  pointer-events: none;
+}
+
+.standoff {
+  fill: none;
+  stroke: var(--vermilion);
+  stroke-width: 1.4;
+  stroke-dasharray: 5 3;
+  pointer-events: none;
+}
+
+.sc {
+  pointer-events: none;
+}
+
+.sc .ring {
+  fill: var(--paper);
+  stroke: var(--ink);
+  stroke-width: 1.1;
+}
+
+.sc .dot {
+  fill: var(--ink);
+}
+
+.sc.owned .dot {
+  fill: var(--power);
+  r: 2.6;
+}
+
+/* Province codes. Board.tsx sets --label-size for the zoom, so they stay readable. */
+.label {
+  font-family: var(--font-mono);
+  font-size: var(--label-size, 8.5px);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+}
+
+.label.land {
+  fill: var(--ink-2);
+  paint-order: stroke;
+  stroke: rgba(251, 249, 244, 0.78);
+  stroke-width: calc(var(--label-size, 8.5px) * 0.3);
+  stroke-linejoin: round;
+}
+
+.label.sea {
+  fill: var(--sea-ink);
+  font-style: italic;
+  letter-spacing: 0.1em;
+}
+
+.coast-label {
+  font-family: var(--font-mono);
+  font-size: calc(var(--label-size, 8.5px) * 0.68);
+  dominant-baseline: middle;
+  fill: var(--sea-ink);
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.unit {
+  pointer-events: none;
+}
+
+.piece .shadow {
+  fill: rgba(18, 17, 16, 0.28);
+}
+
+.piece .body {
+  fill: var(--power);
+  stroke: var(--ink);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+}
+
+.unit.dislodged .body {
+  stroke: var(--vermilion);
+  stroke-width: 2;
+  stroke-dasharray: 3 2;
+}
+
+.piece.ghost .body {
+  fill: none;
+  stroke: var(--power);
+  stroke-width: 2;
+  stroke-dasharray: 3 2;
+}
+
+.order {
+  pointer-events: none;
+}
+
+.order .halo {
+  stroke: var(--ink);
+  stroke-width: 4.6;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
+
+.order .stroke {
+  stroke: var(--power);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+.order .head {
+  fill: var(--power);
+  stroke: var(--ink);
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+
+.order.support .stroke,
+.order.support .halo {
+  stroke-dasharray: 6 4;
+}
+
+.order.convoy .stroke,
+.order.convoy .halo {
+  stroke-dasharray: 1.5 5;
+}
+
+.order.retreat .stroke {
+  stroke-dasharray: 4 3;
+}
+
+/* A move by convoy reads as a move, with the convoy's dotted rhythm. */
+.order.via .stroke {
+  stroke-dasharray: 9 3 1.5 3;
+}
+
+.order.hold circle {
+  fill: none;
+  stroke: var(--power);
+  stroke-width: 2.4;
+  paint-order: stroke;
+  filter: drop-shadow(0 0 0.6px var(--ink));
+}
+
+.order.disband line {
+  stroke: var(--vermilion);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+}
+
+.order.failed {
+  opacity: 0.8;
+}
+
+.order.failed .stroke {
+  stroke: color-mix(in srgb, var(--power) 55%, var(--bone));
+}
+
+.fail-mark line {
+  stroke: var(--vermilion);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
