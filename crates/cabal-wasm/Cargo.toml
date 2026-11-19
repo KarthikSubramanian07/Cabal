@@ -13,6 +13,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 cabal-engine = { path = "../cabal-engine" }
+cabal-bot = { path = "../cabal-bot" }
 wasm-bindgen = "0.2.128"
 serde.workspace = true
 serde_json.workspace = true

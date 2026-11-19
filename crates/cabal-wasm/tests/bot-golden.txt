@@ -1,0 +1,4 @@
+# seed level until decisions fnv1a64-of-transcript (see bot_tests in crates/cabal-wasm/src/lib.rs)
+golden easy 1910 224 ecb19006fce8ae2e
+golden standard 1910 280 769704e841f2d149
+golden hard 1906 161 ea254cbf2d824253
