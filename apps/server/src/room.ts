@@ -976,17 +976,26 @@ export class GameRoom extends DurableObject<Env> {
       }));
   }
 
-  /** The MILA saved game, plus a `cabal` key MILA tools ignore: pledges, receipts and phase summaries. */
+  /**
+   * The MILA saved game, plus a `cabal` key MILA tools ignore: pledges, receipts and phase
+   * summaries. The engine's own record under that key (its version, the full rulebook, the
+   * outcome, rejected orders) is kept and the room's summary is laid over it, so the file still
+   * says which rules it was played under and replays under them anywhere.
+   */
   private replay(viewer: PowerName | null): Record<string, unknown> {
     const meta = this.meta!;
     const saved = JSON.parse(this.game!.toSaved(meta.id)) as Record<string, unknown>;
+    const own = typeof saved.cabal === "object" && saved.cabal !== null ? (saved.cabal as Record<string, unknown>) : {};
     saved.cabal = {
-      protocol: PROTOCOL_VERSION,
-      status: meta.status,
-      finished: meta.finished,
-      pledges: this.ledgerEntries(viewer),
-      history: this.history(),
-    } satisfies ReplayExtension;
+      ...own,
+      ...({
+        protocol: PROTOCOL_VERSION,
+        status: meta.status,
+        finished: meta.finished,
+        pledges: this.ledgerEntries(viewer),
+        history: this.history(),
+      } satisfies ReplayExtension),
+    };
     return saved;
   }
 
