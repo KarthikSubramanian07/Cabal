@@ -2,6 +2,8 @@
 //! sequence, is invariant under relabelling of powers, only ever offers legal orders,
 //! and rejects exactly the orders `normalise` rejects.
 
+mod datc_harness;
+
 use std::collections::HashMap;
 
 use cabal_engine::adjudicate::movement::resolve_movement;
@@ -255,6 +257,20 @@ proptest! {
                     prop_assert_eq!(r.orders[i].command, Command::Hold);
                 }
             }
+        }
+    }
+
+    /// The lists a movement result carries follow from its outcomes: the
+    /// dislodged units are exactly those that stayed where another arrived,
+    /// every unit is where its outcome puts it, and a vacant province where two
+    /// units bounced is a standoff, whatever happened to those units elsewhere.
+    #[test]
+    fn prop_dislodgements_and_standoffs_follow_from_outcomes((pos, orders) in arb_crowded_position().prop_flat_map(|pos| { let o = arb_mixed_orders(&pos); o.prop_map(move |orders| (pos.clone(), orders)) })) {
+        let map = Map::standard();
+        for rulebook in [Rulebook::default(), Rulebook::edition_1971(), Rulebook::dptg()] {
+            let r = resolve_movement(map, &pos, rulebook, &orders);
+            let problems = datc_harness::check_movement_invariants(map, &pos, &r);
+            prop_assert!(problems.is_empty(), "{:?}\n{:#?}", problems, r.orders.iter().zip(&r.outcomes).collect::<Vec<_>>());
         }
     }
 }

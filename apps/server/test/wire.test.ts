@@ -4,7 +4,7 @@
  */
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { Game, pledgeCommit, pledgeOpens, randomNonce } from "@cabal/engine";
+import { Game, pledgeCommit, pledgeOpens, randomNonce, verifySaved } from "@cabal/engine";
 import { type LedgerResponse, PROTOCOL_VERSION, type PressPage, type ReplayExtension, type SeatView, ServerMessage } from "@cabal/protocol";
 import { LIMITS } from "../src/room.js";
 import { Client, POWERS, create, holdAndReady, inRoom, join, nextIp, sql, start, summary, until } from "./helpers.js";
@@ -341,6 +341,15 @@ describe("seals a client can verify", () => {
     expect(replay.cabal.pledges).toHaveLength(2);
     expect(replay.cabal.history.map((h) => h.phase)).toEqual(["S1901M"]);
     expect(Game.fromSaved(JSON.stringify(replay)).phase()).toBe("F1901M");
+    // It keeps the engine's own record under the same key: the rules it was played under travel
+    // with the file, and the engine reproduces it exactly, pledges included.
+    const own = replay.cabal as ReplayExtension & { engine?: string; rulebook?: { edition?: string }; outcome?: { result?: string } };
+    expect(own.engine).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(own.rulebook?.edition).toBe("e2023");
+    expect(own.outcome?.result).toBe("active");
+    const report = verifySaved(JSON.stringify(replay));
+    expect(report.strict).toBe(true);
+    expect(report.divergences).toEqual([]);
     const publicReplay = (await (await get(`/api/games/${ann.gameId}/replay`)).json()) as { cabal: ReplayExtension };
     expect(publicReplay.cabal.pledges.map((p) => p.audience)).toEqual(["ALL"]);
 

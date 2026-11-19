@@ -107,13 +107,13 @@ flowchart LR
 - **Algorithm.** DATC v3.0 chapter 5 partial information resolver: every order is a Boolean equation over attack, hold, defend and prevent strengths; `resolve` memoises, detects dependency cycles and applies the two backup rules (circular movement succeeds, convoy paradoxes fail the convoys per Szykman). No "cut supports first" heuristics anywhere.
 - **Explanations, not Booleans.** Every outcome says why: `bounced by A Mun`, `support cut by F Kie`, `no convoy path`, `friendly fire`, `paradox`. The UI renders the dependency graph.
 - **Editions as data.** 1971, 1982, 2023 and DPTG rulebooks differ only in `Rulebook` fields (convoy intent, civil disorder distance).
-- **Tests.** 171 DATC v3.0 cases across movement, retreat and build phases, vendored with attribution from the MIT `diplomacy` crate; property tests for order-independence and no-panic; snapshot tests on explanations; criterion benches; fuzz targets on the parser.
+- **Tests.** 171 DATC v3.0 cases across movement, retreat and build phases, vendored with attribution from the MIT `diplomacy` crate, checked for dislodgements, standoffs and retreats as well as order outcomes; property tests for order-independence, no-panic and whole-game round trips; replay fixtures in three tiers, including a complete 35-phase published Cicero game; criterion benches; fuzz targets on the parser.
+- **Verifiable saves.** A saved game records its rulebook, outcome, press and pledges. `cabal replay` and `verifySaved` report every divergence from a record; `Game.resume` and snapshots restore a game without adjudicating its past, so a corrected ruling never breaks a game in flight.
 - **Interop.** Orders and saved games use the MILA / Cicero notation, so every published AI Diplomacy harness understands Cabal games.
 
 ```sh
-cargo test -p cabal-engine --test datc    # run the DATC corpus (171 cases, zero skipped)
-cargo run -p cabal-cli -- datc            # print the corpus size by section
-cargo run -p cabal-cli -- replay game.json   # replay a MILA saved game through the engine
+cargo run -p cabal-cli -- datc --report   # adjudicate the DATC corpus: pass, fail and skip totals per section
+cargo run -p cabal-cli -- replay crates/cabal-engine/tests/data/games   # replay saved games, report every divergence
 cargo run -p cabal-cli -- explain "ENG: F NTH - HOL" "ENG: A BEL S F NTH - HOL" "GER: A HOL H"
 cargo run --release -p cabal-cli -- arena --games 100   # bot against bot on every core, with a strength table
 ```
@@ -122,8 +122,8 @@ cargo run --release -p cabal-cli -- arena --games 100   # bot against bot on eve
 
 | Piece | State |
 |---|---|
-| `cabal-engine` | 171 of 171 DATC v3.0 cases, property tests, benches, MILA saved games, seals and receipts |
-| `cabal-wasm`, `@cabal/engine` | one wasm module for browser and Workers (about 271 KB gzipped with the bot inside, CI budget 400 KB), generated TypeScript types |
+| `cabal-engine` | 171 of 171 DATC v3.0 cases, property tests, benches, verifiable MILA saved games, lossless snapshots, seals and receipts |
+| `cabal-wasm`, `@cabal/engine` | one wasm module for browser and Workers (372 KB gzipped with the bot inside, CI fails above 409 KB), generated TypeScript types |
 | `cabal-bot`, `cabal arena` | a deterministic heuristic player at three levels, exported as `botOrders`, and a native arena that plays 6 games a second and checks every order; see [docs/BOT.md](docs/BOT.md) |
 | `@cabal/protocol` | zod schemas for every frame, settings, pledges and scoring |
 | `apps/server` | GameRoom Durable Object: seats, deadlines, orders, press, sealed pledges with receipts, replay export |
