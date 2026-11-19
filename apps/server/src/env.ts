@@ -16,7 +16,15 @@ export interface AgentTurn {
 
 export interface Env {
   GAME_ROOM: DurableObjectNamespace<GameRoom>;
-  /** Singleton global index of finished and abandoned games (`idFromName("global")`). */
+  /**
+   * The cross-game index (database `cabal`): finished games, public listings, players, ratings and
+   * the trust ledger. Without it the router falls back to the Registry for games and has no players.
+   */
+  DB?: D1Database;
+  /**
+   * Singleton (`idFromName("global")`) that keeps the deployment-wide Claude budget, which needs
+   * strict serial order, and the games index written before D1 (copied across once).
+   */
   REGISTRY?: DurableObjectNamespace<Registry>;
   /** Claude turns for games that opted into `aiBrain: "claude"`. The built-in bot needs no queue. */
   AGENT_QUEUE?: Queue<AgentTurn>;
@@ -42,4 +50,8 @@ export interface Env {
   JOIN_LIMITER?: RateLimit;
   /** Per-IP limit on reads, starts and socket upgrades: each one can wake a room. */
   READ_LIMITER?: RateLimit;
+  /** Per-IP limit on creating guest accounts and restoring them from a recovery code. */
+  ACCOUNT_LIMITER?: RateLimit;
+  /** Per-player limit on changing an account: rename, new recovery code, sign out. */
+  PROFILE_LIMITER?: RateLimit;
 }
