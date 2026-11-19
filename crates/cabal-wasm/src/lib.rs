@@ -454,8 +454,8 @@ pub struct PhaseOutcome {
     pub results: Vec<OrderResult>,
     pub dislodged: Vec<DislodgedInfo>,
     pub standoffs: Vec<String>,
-    /// Orders that were submitted but could not be adjudicated at all. Kept for
-    /// the life of this `Game` object; a game restored from storage has none.
+    /// Orders that were submitted but could not be adjudicated at all. They are
+    /// kept in the saved game, so a restored game reports them as well.
     #[tsify(optional)]
     pub rejected: Vec<RejectedOrder>,
     /// Units removed by the civil disorder rule (adjustment phases).

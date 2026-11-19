@@ -629,7 +629,7 @@ describe("the record of what was submitted", () => {
   it("keeps rejected orders across a save and every way of loading it", () => {
     const game = new Game();
     const live = game.process({ orders: { FRANCE: ["complete garbage", "A PAR - BUR"], GERMANY: ["A PAR - PIC"] } });
-    expect(live.rejected.map((r) => [r.power, r.input, r.code])).toEqual([
+    expect((live.rejected ?? []).map((r) => [r.power, r.input, r.code])).toEqual([
       ["FRANCE", "complete garbage", "unparseable"],
       ["GERMANY", "A PAR - PIC", "foreign_unit"],
     ]);
