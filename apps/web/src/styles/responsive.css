@@ -148,6 +148,19 @@
     overscroll-behavior: contain;
   }
 
+  /* The handle already says the season and year. */
+  .sidebar .phase-title {
+    display: none;
+  }
+
+  .sidebar .phase-header {
+    padding-top: 10px;
+  }
+
+  .sidebar .phase-meta {
+    margin-top: 0;
+  }
+
   .sidebar .actions {
     flex: none;
     padding: 8px 14px;
@@ -365,8 +378,17 @@
     min-height: calc(100dvh - var(--topbar-h) - 61px);
   }
 
-  .phase-header {
+  .sidebar .phase-header {
     padding: 8px 14px;
+  }
+
+  .sidebar .phase-title {
+    display: block;
+    font-size: 20px;
+  }
+
+  .sidebar .phase-meta {
+    margin-top: 6px;
   }
 
   .sidebar .actions {
