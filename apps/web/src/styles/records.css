@@ -593,3 +593,24 @@
     padding: 0 var(--space-4) var(--space-3);
   }
 }
+
+/* A seat's player, where they are signed in, leads to their record. */
+a.place-who,
+a.score-who {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--rule);
+  text-underline-offset: 3px;
+}
+
+a.score-who {
+  color: var(--ink-2);
+}
+
+a.place-who:hover,
+a.score-who:hover {
+  text-decoration-color: currentColor;
+}

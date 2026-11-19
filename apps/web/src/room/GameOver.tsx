@@ -4,6 +4,7 @@
  */
 import type { GameSummary, LedgerResponse, PowerName, SeatView } from "@cabal/protocol";
 import { type CSSProperties, useEffect, useId, useMemo, useState } from "react";
+import { Link } from "../app/router.jsx";
 import { phaseLabel, powerLabel } from "../lobby/terms.js";
 import { api, failureText } from "../net/api.js";
 import { checkSeal, shortCommitment } from "./seals.js";
@@ -98,7 +99,13 @@ export function GameOver({
                 <th scope="row">
                   <span className="swatch" aria-hidden="true" />
                   {powerLabel(seat.power)}
-                  <span className="score-who">{seat.kind === "ai" ? (seat.brain === "claude" ? "Claude" : "the bot") : (seat.name ?? "")}</span>
+                  {seat.kind !== "ai" && seat.handle ? (
+                    <Link className="score-who" href={`/u/${encodeURIComponent(seat.handle)}`}>
+                      {seat.name ?? seat.handle}
+                    </Link>
+                  ) : (
+                    <span className="score-who">{seat.kind === "ai" ? (seat.brain === "claude" ? "Claude" : "the bot") : (seat.name ?? "")}</span>
+                  )}
                 </th>
                 <td>{c}</td>
                 <td>{(score * 100).toFixed(score > 0 && score < 0.1 ? 1 : 0)}%</td>
