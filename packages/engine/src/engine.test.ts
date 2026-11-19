@@ -292,6 +292,11 @@ describe("botOrders", () => {
     // The median, so that one descheduled sample on a busy runner cannot fail the build.
     times.sort((a, b) => a - b);
     const median = times[Math.floor(times.length / 2)] ?? Infinity;
+    const slowest = times[times.length - 1] ?? Infinity;
+    console.info(
+      `botOrders in wasm, standard level, ${times.length} decisions on a 1905 board: ` +
+        `median ${median.toFixed(2)} ms, slowest ${slowest.toFixed(2)} ms`,
+    );
     expect(median).toBeLessThan(30);
   });
 
