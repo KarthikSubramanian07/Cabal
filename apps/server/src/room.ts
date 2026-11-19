@@ -61,6 +61,7 @@ import {
   PAUSE_LIMIT_MS,
   LOBBY_TTL_MS,
   adjudicationRetryDelay,
+  alarmBackoff,
   listenMs,
   nextAlarmAt,
   outboxDelay,
@@ -78,8 +79,8 @@ import {
   randomNonce,
 } from "./engine.js";
 import { gameIndex } from "./game-index.js";
-import { hashToken, mintToken, parseToken, randomId } from "./tokens.js";
-import { judgeOrders } from "./validate.js";
+import { hashToken, mintToken, parseToken, randomId, sameHash } from "./tokens.js";
+import { judgeOrders, legalOrders } from "./validate.js";
 
 type Status = "lobby" | "active" | "paused" | "finished" | "abandoned";
 
@@ -88,10 +89,11 @@ export const LIMITS = {
   /** Token bucket per socket: burst size and refill per second. */
   burst: 30,
   refillPerSecond: 10,
-  /** A `sync` reads up to a page of events, so it costs more than an ordinary frame. */
+  /** A `sync` reads up to a page of events and a `hello` builds a whole welcome, so they cost more than an ordinary frame. */
   syncCost: 5,
-  /** Largest client frame, in bytes. */
-  frameBytes: 4096,
+  helloCost: 5,
+  /** Largest client frame, in bytes: room for the longest press body (4,000 characters) in any script. */
+  frameBytes: 16_384,
   /** Press messages one power may send in one phase. */
   pressPerPhase: 60,
   /** Events replayed by one `sync` request; clients page with `since`. */
@@ -103,12 +105,14 @@ export const LIMITS = {
   pressPageMax: 200,
   /** Resolved phases listed in a welcome frame and a summary (the most recent ones). */
   historyPhases: 400,
-  /** Sockets that have not bound to a seat. */
+  /** Sockets that have not bound to a seat. When the room is full the oldest of them makes way. */
   spectators: 200,
   /** Sockets one seat may hold open (several tabs and devices). */
   socketsPerSeat: 8,
-  /** Stored broadcast frames kept for `sync`. */
+  /** Stored broadcast frames kept for `sync`: frames numbered this far behind the newest are gone. */
   eventsKept: 4000,
+  /** Times one seat may change its ready flag or its ballot in one phase. */
+  changesPerPhase: 40,
   /** Consecutive missed movement phases before a seat is in civil disorder. */
   civilDisorderAfter: 2,
   /** Consecutive missed movement phases before a seat is vacant and may be given to a substitute. */
@@ -138,8 +142,8 @@ export const CLAUDE_MODEL = DEFAULT_MODEL;
 
 /**
  * The most one model call can cost, reserved against the game's budget before the call is made.
- * It assumes the prompt bound the brain enforces (two characters per token at the least) and the
- * whole output allowance, so a reservation is never smaller than the bill.
+ * It assumes the prompt bound the brain enforces (in UTF-8 bytes, and a token is never shorter
+ * than a byte) and the whole output allowance, so a reservation is never smaller than the bill.
  */
 export function reservationMicros(kind: "M" | "R" | "A", step: Step): number {
   const output = kind === "R" ? MAX_OUTPUT_TOKENS.retreat : kind === "A" ? MAX_OUTPUT_TOKENS.adjustment : step === "negotiate" ? MAX_OUTPUT_TOKENS.negotiate : MAX_OUTPUT_TOKENS.movement;
@@ -193,10 +197,17 @@ interface Meta {
   claudeStrikes: number;
   /** Why this game stopped asking Claude, once it has. The bot plays on. */
   claudeOff: string | null;
+  /**
+   * Whether the index has given this game a place under the deployment's Claude budget. Null until
+   * it has been asked. No model call is ever reserved without `admitted`.
+   */
+  claudeAdmission: "admitted" | "refused" | null;
 }
 
 interface Outbox {
   record: GameRecord;
+  /** Set when the game held a place under the Claude budget: what it committed, to hand the rest back. */
+  claude?: { committedMicros: number };
   attempts: number;
   nextAt: number;
   gaveUp?: boolean;
@@ -215,6 +226,8 @@ interface SeatRow extends Record<string, SqlStorageValue> {
 interface Attachment {
   /** Null until a `hello` frame binds the socket to a seat. */
   power: PowerName | null;
+  /** When the socket was accepted. */
+  at?: number;
 }
 
 /** What a Claude seat needs to decide one step of a turn. Served over the Durable Object binding only. */
@@ -372,7 +385,13 @@ CREATE TABLE IF NOT EXISTS agent_calls (
 CREATE TABLE IF NOT EXISTS events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   audience TEXT NOT NULL,
-  payload_json TEXT NOT NULL
+  payload_json TEXT NOT NULL,
+  snapshot TEXT
+);
+CREATE TABLE IF NOT EXISTS seat_changes (
+  power TEXT PRIMARY KEY,
+  phase TEXT NOT NULL,
+  n INTEGER NOT NULL
 );
 `;
 
@@ -411,6 +430,11 @@ export class GameRoom extends DurableObject<Env> {
   private actCache: { game: Game; phase: string; by: Map<string, boolean> } | null = null;
   /** Per-socket rate limit buckets. In memory only: hibernation resets them, which is harmless. */
   private buckets = new WeakMap<WebSocket, { tokens: number; at: number }>();
+  /** Alarm handlers that failed in a row, and the earliest instant the next one may run. */
+  private alarmFailures = 0;
+  private alarmNotBefore: number | null = null;
+  /** True while the index is being asked for a place under the Claude budget. */
+  private admitting = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -447,6 +471,7 @@ export class GameRoom extends DurableObject<Env> {
         claudeTokens: stored.claudeTokens ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
         claudeStrikes: stored.claudeStrikes ?? 0,
         claudeOff: stored.claudeOff ?? null,
+        claudeAdmission: stored.claudeAdmission ?? null,
       };
       this.meta = meta;
       const saved = this.kv.get<string>("saved");
@@ -479,6 +504,8 @@ export class GameRoom extends DurableObject<Env> {
     if (!has("orders", "source")) this.sql.exec("ALTER TABLE orders ADD COLUMN source TEXT NOT NULL DEFAULT 'human'");
     if (!has("votes", "include_json")) this.sql.exec("ALTER TABLE votes ADD COLUMN include_json TEXT");
     if (!has("phases", "summary_json")) this.sql.exec("ALTER TABLE phases ADD COLUMN summary_json TEXT");
+    if (!has("events", "snapshot")) this.sql.exec("ALTER TABLE events ADD COLUMN snapshot TEXT");
+    this.sql.exec("CREATE INDEX IF NOT EXISTS events_snapshot ON events(snapshot, audience) WHERE snapshot IS NOT NULL");
     // AI seats no longer hold bearer tokens: the Durable Object binding is the credential.
     this.sql.exec("DROP TABLE IF EXISTS agent_tokens");
     this.sql.exec("UPDATE seats SET token_hash = NULL WHERE kind = 'ai'");
@@ -519,7 +546,7 @@ export class GameRoom extends DurableObject<Env> {
 
   private alarmAt(): number | null {
     if (!this.meta) return null;
-    return nextAlarmAt({
+    const at = nextAlarmAt({
       status: this.meta.status,
       createdAt: this.meta.createdAt,
       deadlineAt: this.meta.deadlineAt,
@@ -528,6 +555,8 @@ export class GameRoom extends DurableObject<Env> {
       pausedUntil: this.meta.pause?.until ?? null,
       outboxAt: this.outboxAt,
     });
+    // After a failed alarm the next one waits out its backoff, however overdue the work is.
+    return at !== null && this.alarmNotBefore !== null ? Math.max(at, this.alarmNotBefore) : at;
   }
 
   /** Point the room's single alarm at whatever is due next. */
@@ -562,6 +591,11 @@ export class GameRoom extends DurableObject<Env> {
     if (this.listingDirty) {
       this.listingDirty = false;
       this.ctx.waitUntil(this.pushListing());
+    }
+    // A running game that only now wants Claude (a key set after it started) asks for its place here.
+    const meta = this.meta;
+    if (meta?.status === "active" && meta.claudeAdmission === null && meta.claudeOff === null && !this.admitting && this.brain().deliberates) {
+      this.ctx.waitUntil(this.admitClaude().then(() => this.settle()));
     }
   }
 
@@ -630,9 +664,15 @@ export class GameRoom extends DurableObject<Env> {
           this.onDeadline();
         }
       }
+      this.alarmFailures = 0;
+      this.alarmNotBefore = null;
     } catch (error) {
-      // Never let the runtime retry an alarm blind: log, re-arm from durable state, carry on.
-      this.log("alarm_failed", { error: String(error) }, "error");
+      // Never let the runtime retry an alarm blind: log, re-arm from durable state, carry on. The
+      // work is still overdue, so without a backoff the next alarm would fire at once, for ever.
+      this.alarmFailures += 1;
+      const delay = alarmBackoff(this.alarmFailures);
+      this.alarmNotBefore = Date.now() + delay;
+      this.log("alarm_failed", { error: String(error), failures: this.alarmFailures, retryInMs: delay }, "error");
     } finally {
       this.settle();
     }
@@ -645,7 +685,7 @@ export class GameRoom extends DurableObject<Env> {
     try {
       if (request.method === "POST" && path === "/create") return await this.create(request);
       if (request.method === "POST" && path === "/join") return await this.join(request);
-      if (request.method === "POST" && path === "/start") return this.start(request);
+      if (request.method === "POST" && path === "/start") return await this.start(request);
       if (request.method === "POST" && path === "/substitute") return await this.inviteSubstitute(request);
       if (request.method === "GET" && path === "/summary") {
         if (!this.meta) return bad("no such game", 404);
@@ -702,6 +742,7 @@ export class GameRoom extends DurableObject<Env> {
         claudeTokens: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
         claudeStrikes: 0,
         claudeOff: null,
+        claudeAdmission: null,
       };
       this.game = new Game(settings.rulebook);
       for (const p of POWERS) this.sql.exec("INSERT INTO seats (power, kind) VALUES (?, 'open')", p);
@@ -715,10 +756,15 @@ export class GameRoom extends DurableObject<Env> {
 
   private async join(request: Request): Promise<Response> {
     if (!this.meta) return bad("no such game", 404);
-    const meta = this.meta;
+    let meta = this.meta;
     const body = (await request.json()) as { name: string; power?: PowerName; invite?: string };
     // One player, one seat: a caller who already holds a seat here cannot take another.
     if (this.authorise(bearer(request))) return bad("you already hold a seat in this game", 409);
+    // The join that fills the table starts the game, so the Claude budget is asked first.
+    if (meta.status === "lobby" && this.seats().filter((s) => s.kind === "open").length === 1) await this.admitClaude();
+    // The room may have moved on during the awaits above: read it again.
+    if (!this.meta) return bad("no such game", 404);
+    meta = this.meta;
     // Everything from here to the write is synchronous, so two joins can never pick the same seat.
     if (meta.status === "lobby") {
       const open = this.seats().filter((s) => s.kind === "open");
@@ -797,7 +843,7 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   /** The creator starts early; open seats become AI seats when `aiFill` is on. */
-  private start(request: Request): Response {
+  private async start(request: Request): Promise<Response> {
     if (!this.meta) return bad("no such game", 404);
     const auth = this.authorise(bearer(request));
     if (!auth || auth !== this.meta.creator) return bad("only the creator may start the game", 403);
@@ -805,6 +851,9 @@ export class GameRoom extends DurableObject<Env> {
     if (!this.meta.settings.aiFill && this.seats().some((s) => s.kind === "open")) {
       return bad("seats are still open", 409);
     }
+    // A game that wants Claude asks for its place under the deployment's budget before it begins.
+    await this.admitClaude();
+    if (this.meta.status !== "lobby") return bad("game already started", 409);
     this.atomic(() => {
       this.sql.exec("UPDATE seats SET kind = 'ai', name = 'Automaton', token_hash = NULL WHERE kind = 'open'");
       this.begin();
@@ -1028,7 +1077,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!parsed || !this.meta || parsed.gameId !== this.meta.id) return null;
     const seat = this.seat(parsed.power as PowerName);
     if (!seat?.token_hash) return null;
-    return hashToken(token) === seat.token_hash ? seat.power : null;
+    return sameHash(hashToken(token), seat.token_hash) ? seat.power : null;
   }
 
   // ---------- WebSockets ----------
@@ -1042,7 +1091,7 @@ export class GameRoom extends DurableObject<Env> {
 
   private closeSeatSockets(power: PowerName, code: number, reason: string): void {
     for (const ws of this.socketsOf(power)) {
-      ws.serializeAttachment({ power: null } satisfies Attachment);
+      ws.serializeAttachment({ ...(ws.deserializeAttachment() as Attachment | null), power: null } satisfies Attachment);
       try {
         ws.close(code, reason);
       } catch {
@@ -1061,11 +1110,26 @@ export class GameRoom extends DurableObject<Env> {
     if (new URL(request.url).searchParams.has("token")) {
       return bad("send the seat token in a hello frame, not in the URL", 400);
     }
-    if (this.socketsOf(null).length >= LIMITS.spectators) return bad("too many spectators", 503);
+    // Every socket starts unbound, a seat holder's included, so a full house must never refuse the
+    // next arrival: that would let idle anonymous sockets lock the players out. The oldest unbound
+    // socket makes way instead. A player's socket binds with its first frame and then holds no
+    // spectator place, so nothing an anonymous caller opens can ever cost a player their seat.
+    const unbound = this.socketsOf(null)
+      .map((ws) => ({ ws, at: (ws.deserializeAttachment() as Attachment | null)?.at ?? 0 }))
+      .sort((a, b) => a.at - b.at);
+    const evict = unbound.length >= LIMITS.spectators ? unbound[0] : undefined;
+    if (evict) {
+      this.send(evict.ws, { t: "error", p: { code: "spectator_evicted", message: "this connection made way for a newer one; reconnect to keep watching" } });
+      try {
+        evict.ws.close(4408, "made way for a newer connection");
+      } catch {
+        // already closed
+      }
+    }
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ power: null } satisfies Attachment);
+    server.serializeAttachment({ power: null, at: Date.now() } satisfies Attachment);
     this.send(server, { t: "welcome", p: this.welcome(null) });
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -1083,7 +1147,7 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
     const arrived = this.socketsOf(power).length === 0;
-    ws.serializeAttachment({ power } satisfies Attachment);
+    ws.serializeAttachment({ ...(ws.deserializeAttachment() as Attachment | null), power } satisfies Attachment);
     this.presenceChanged();
     this.send(ws, { t: "welcome", id, p: this.welcome(power) });
     if (arrived) this.announcePresence();
@@ -1145,11 +1209,12 @@ export class GameRoom extends DurableObject<Env> {
   private async onFrame(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     // The limiter comes first, so no frame of any size or kind is ever free.
     if (!this.allow(ws)) {
-      return this.send(ws, { t: "error", p: { code: "rate_limited", message: "slow down" } });
+      // Unparsed, but a client matching replies to requests still gets its `id` back.
+      return this.send(ws, { t: "error", id: peekId(raw), p: { code: "rate_limited", message: "slow down" } });
     }
     // A string's UTF-8 size is at least its length, so the cheap test catches every large frame.
     if (typeof raw !== "string" || raw.length > LIMITS.frameBytes || new TextEncoder().encode(raw).byteLength > LIMITS.frameBytes) {
-      this.send(ws, { t: "error", p: { code: "too_large", message: "frames are JSON text of at most 4 KB" } });
+      this.send(ws, { t: "error", p: { code: "too_large", message: "frames are JSON text of at most 16 KB" } });
       ws.close(1009, "frame too large");
       return;
     }
@@ -1160,10 +1225,19 @@ export class GameRoom extends DurableObject<Env> {
       return this.send(ws, { t: "error", p: { code: "bad_json", message: "frame is not JSON" } });
     }
     const msg = parseClientMessage(data);
-    if (!msg) return this.send(ws, { t: "error", p: { code: "bad_frame", message: "frame did not validate" } });
+    if (!msg) {
+      const sent = (data as { id?: unknown } | null)?.id;
+      return this.send(ws, { t: "error", id: typeof sent === "string" ? sent.slice(0, 64) : undefined, p: { code: "bad_frame", message: "frame did not validate" } });
+    }
     const id = "id" in msg ? msg.id : undefined;
     if (!this.meta || !this.game) return;
-    if (msg.t === "hello") return this.hello(ws, id, msg.p.token);
+    if (msg.t === "hello") {
+      // A welcome is the dearest reply the room gives: state, press, history.
+      if (!this.allow(ws, LIMITS.helloCost - 1)) {
+        return this.send(ws, { t: "error", id, p: { code: "rate_limited", message: "slow down" } });
+      }
+      return this.hello(ws, id, msg.p.token);
+    }
     const { power } = (ws.deserializeAttachment() as Attachment | null) ?? { power: null };
     if (msg.t === "sync") {
       if (!this.allow(ws, LIMITS.syncCost - 1)) {
@@ -1205,6 +1279,10 @@ export class GameRoom extends DurableObject<Env> {
         // The await above may have let the phase move on: every check below reads fresh state.
         if (this.meta.status !== "active" && this.meta.status !== "lobby") {
           return this.send(ws, { t: "error", id, p: { code: "not_active", message: "the game is not active" } });
+        }
+        // The seat may have changed hands meanwhile: a displaced player gets no last word.
+        if (((ws.deserializeAttachment() as Attachment | null)?.power ?? null) !== power) {
+          return this.send(ws, { t: "error", id, p: { code: "spectator", message: "spectators cannot act" } });
         }
         const error = this.press(power, msg.p.to, msg.p.body, msg.p.pledge, { ws, id });
         if (error) this.send(ws, { t: "error", id, p: error });
@@ -1307,13 +1385,28 @@ export class GameRoom extends DurableObject<Env> {
    * its envelope: a client that remembers the highest `seq` it has applied can ask for exactly the
    * frames after it. A frame that also reports its own number inside its payload is passed as a
    * function of that number.
+   *
+   * The store is bounded at every insert, not only when a phase resolves, because a phase can stay
+   * open for days: frames numbered `eventsKept` behind the newest are dropped, and a `seats` or
+   * `votes` frame, which is a whole snapshot, replaces the stored one before it for the same
+   * audience. Replaying only the newest snapshot leaves a client exactly where replaying all of
+   * them would.
    */
   private broadcast(message: ServerMessage | ((seq: number) => ServerMessage), audience: PowerName | "ALL"): number {
     const seq = this.lastSeq() + 1;
-    const payload = JSON.stringify(typeof message === "function" ? message(seq) : message);
-    this.sql.exec("INSERT INTO events (seq, audience, payload_json) VALUES (?, ?, ?)", seq, audience, payload);
+    const frame = typeof message === "function" ? message(seq) : message;
+    const snapshot = frame.t === "seats" || frame.t === "votes" ? frame.t : null;
+    if (snapshot) this.sql.exec("DELETE FROM events WHERE snapshot = ? AND audience = ?", snapshot, audience);
+    const payload = JSON.stringify(frame);
+    this.storeEvent(seq, audience, payload, snapshot);
     this.pending.push({ payload: withSeq(payload, seq), audience });
     return seq;
+  }
+
+  /** Write one numbered frame and drop whatever has fallen out of the window `sync` can replay. */
+  private storeEvent(seq: number, audience: PowerName | "ALL", payload: string, snapshot: string | null = null): void {
+    this.sql.exec("INSERT INTO events (seq, audience, payload_json, snapshot) VALUES (?, ?, ?, ?)", seq, audience, payload, snapshot);
+    if (seq > LIMITS.eventsKept) this.sql.exec("DELETE FROM events WHERE seq <= ?", seq - LIMITS.eventsKept);
   }
 
   /** The number of the last broadcast frame; 0 before the first. Numbers only ever grow. */
@@ -1330,8 +1423,8 @@ export class GameRoom extends DurableObject<Env> {
    */
   private sync(ws: WebSocket, id: string | undefined, since: number, power: PowerName | null): void {
     const last = this.lastSeq();
-    const oldest = this.sql.exec<{ n: number | null }>("SELECT MIN(seq) AS n FROM events").one().n ?? 1;
-    if (since > last || since < oldest - 1) {
+    // Frames numbered `eventsKept` behind the newest are gone; a cursor older than that has a gap.
+    if (since > last || since < last - LIMITS.eventsKept) {
       return this.send(ws, { t: "synced", id, p: { seq: last, more: false, gap: true } });
     }
     const events = this.sql
@@ -1451,6 +1544,19 @@ export class GameRoom extends DurableObject<Env> {
     const rejected = verdicts.filter((v) => !v.ok).map((v) => ({ text: v.text, reason: v.reason }));
     // A Claude turn with nothing usable leaves the bot's orders standing.
     if (source === "claude" && accepted.length === 0) return { accepted, rejected, verdicts };
+    if (accepted.length === 0) {
+      // Nothing to put on file. A player clearing a draft takes their own orders back, so sealed
+      // defaults apply again as if nothing had been sent; the bot's cover for a seat in civil
+      // disorder is never wiped by a submission that ordered nothing.
+      const stored = this.storedOrders(phase, power);
+      if (stored?.source === "human") {
+        this.atomic(() => {
+          this.sql.exec("DELETE FROM orders WHERE phase = ? AND power = ?", phase, power);
+          this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
+        });
+      }
+      return { accepted, rejected, verdicts };
+    }
     let returned = false;
     this.atomic(() => {
       const first = this.storedOrders(phase, power) === undefined;
@@ -1505,6 +1611,7 @@ export class GameRoom extends DurableObject<Env> {
       return this.send(ws, { t: "error", id, p: { code: "seat_inactive", message: "submit orders to take your seat back before readying" } });
     }
     if (seat.ready === (ready ? 1 : 0)) return; // unchanged: no write, no broadcast
+    if (!this.spendChange(power)) return this.send(ws, { t: "error", id, p: TOO_MANY_CHANGES });
     this.atomic(() => {
       this.sql.exec("UPDATE seats SET ready = ? WHERE power = ?", ready ? 1 : 0, power);
       this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
@@ -1514,6 +1621,25 @@ export class GameRoom extends DurableObject<Env> {
       this.maybeBeginOrders();
       this.advance();
     }
+  }
+
+  /**
+   * Count one change of mind (a ready flag, a ballot) against the seat's allowance for the phase.
+   * Each one is a write and a frame to every socket, so a seat may not flip for ever. False when
+   * the allowance is spent.
+   */
+  private spendChange(power: PowerName): boolean {
+    const phase = this.game!.phase();
+    const row = this.sql.exec<{ phase: string; n: number }>("SELECT phase, n FROM seat_changes WHERE power = ?", power).toArray()[0];
+    const n = row && row.phase === phase ? row.n : 0;
+    if (n >= LIMITS.changesPerPhase) return false;
+    this.sql.exec(
+      "INSERT INTO seat_changes (power, phase, n) VALUES (?, ?, ?) ON CONFLICT(power) DO UPDATE SET phase = excluded.phase, n = excluded.n",
+      power,
+      phase,
+      n + 1,
+    );
+    return true;
   }
 
   /** Seats that have something to order this phase and somebody (or something) to order it. */
@@ -1557,6 +1683,7 @@ export class GameRoom extends DurableObject<Env> {
     const needed = Math.min(2, humans.length);
     let requestedBy: PowerName[] = [];
     let extended = false;
+    const asked = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM extension_requests WHERE phase = ? AND power = ?", phase, power).one().n > 0;
     this.atomic(() => {
       this.sql.exec("INSERT OR IGNORE INTO extension_requests (phase, power) VALUES (?, ?)", phase, power);
       requestedBy = this.sql
@@ -1570,7 +1697,8 @@ export class GameRoom extends DurableObject<Env> {
         meta.deadlineAt = Math.max(Date.now(), meta.deadlineAt ?? Date.now()) + meta.settings.extendSeconds * 1000;
         this.broadcast({ t: "deadline", p: { serverTime: Date.now(), phase, deadlineAt: meta.deadlineAt } }, "ALL");
       }
-      this.broadcast({ t: "extend", p: { phase, requestedBy, needed, granted: extended, deadlineAt: meta.deadlineAt } }, "ALL");
+      // A request already on record changes nothing, so it is acknowledged and not announced again.
+      if (!asked || extended) this.broadcast({ t: "extend", p: { phase, requestedBy, needed, granted: extended, deadlineAt: meta.deadlineAt } }, "ALL");
     });
     if (extended) this.log("deadline_extended", { by: requestedBy, deadlineAt: meta.deadlineAt });
     this.send(ws, { t: "extend.ack", id, p: { phase, requests: requestedBy.length, extended } });
@@ -1702,20 +1830,6 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
-  /** Every order `power` could legally give this phase, in canonical text. */
-  private legalMenu(power: PowerName, kind: "M" | "R" | "A"): Set<string> {
-    const menu = new Set<string>();
-    for (const order of Object.values(this.game!.legal(power).by_unit).flat()) {
-      menu.add(order);
-      try {
-        menu.add(this.canonicalOwnOrder(order, kind, power));
-      } catch {
-        // the menu's own spelling is already in the set
-      }
-    }
-    return menu;
-  }
-
   /** What `power` sent or received before `phase`, oldest first: the context a Claude seat reads. */
   private pressHistory(power: PowerName, phase: string, limit: number): AgentBrief["earlierPress"] {
     return this.sql
@@ -1778,11 +1892,14 @@ export class GameRoom extends DurableObject<Env> {
       }
       // A pledge is a promise about the pledger's own units. Syntax is not enough: an order for a
       // unit the pledger does not have would be stamped kept without ever being at risk.
-      const menu = this.legalMenu(from, kind);
-      const stranger = canonical.find((o) => !menu.has(o));
-      if (stranger !== undefined) {
-        return { code: "bad_pledge", message: `${stranger} is not an order one of your units can be given this phase` };
+      const legal = legalOrders(this.game!, from, kind, (text) => this.canonicalOwnOrder(text, kind, from));
+      const resolved = canonical.map((o) => legal.resolve(o));
+      const stranger = resolved.indexOf(null);
+      if (stranger >= 0) {
+        return { code: "bad_pledge", message: `${canonical[stranger]} is not an order one of your units can be given this phase` };
       }
+      // On file under the same spelling the pledger's orders will have, so the receipt compares like with like.
+      canonical = resolved as string[];
       const nonce = pledge.nonce ?? randomNonce();
       seal = { nonce, commitment: pledgeCommit(canonical, nonce) };
       // A client that sealed the pledge itself must get back exactly the seal it made.
@@ -1832,7 +1949,7 @@ export class GameRoom extends DurableObject<Env> {
       if (to === "ALL") {
         // A sealed pledge reads differently for its pledger, so each socket gets its own view.
         const seq = this.lastSeq() + 1;
-        this.sql.exec("INSERT INTO events (seq, audience, payload_json) VALUES (?, 'ALL', ?)", seq, JSON.stringify({ t: "press", p: view(null) }));
+        this.storeEvent(seq, "ALL", JSON.stringify({ t: "press", p: view(null) }));
         for (const ws of this.ctx.getWebSockets()) {
           const viewer = (ws.deserializeAttachment() as Attachment | null)?.power ?? null;
           const message: ServerMessage = { t: "press", id: ws === origin?.ws ? origin.id : undefined, seq, p: view(viewer) };
@@ -1891,6 +2008,10 @@ export class GameRoom extends DurableObject<Env> {
    * played by AI, seats in civil disorder and eliminated players are never required, so a ghost
    * can never veto. DIAS shares the draw among all survivors; without DIAS the voters must also
    * name the same set of sharers, and only that changes: it still takes everyone to agree.
+   *
+   * Nobody is cut out of a draw without agreeing to it. A power may be left out only if it is one
+   * of the voters, who by voting for the proposal accept it: a survivor played by AI or in civil
+   * disorder has no vote, so it always shares.
    */
   private vote(ws: WebSocket, id: string | undefined, power: PowerName, value: boolean, include: PowerName[] | undefined): void {
     const meta = this.meta!;
@@ -1905,27 +2026,56 @@ export class GameRoom extends DurableObject<Env> {
       if (proposal.some((p) => !survivors.has(p))) {
         return this.send(ws, { t: "error", id, p: { code: "bad_vote", message: "a draw can only include surviving powers" } });
       }
+      const voters = new Set(this.requiredVoters());
+      const voiceless = [...survivors].filter((p) => !voters.has(p) && !proposal!.includes(p));
+      if (voiceless.length > 0) {
+        return this.send(ws, {
+          t: "error",
+          id,
+          p: { code: "bad_vote", message: `a draw can only leave out players who vote on it: ${voiceless.join(", ")} must be included` },
+        });
+      }
       if (proposal.length === survivors.size) proposal = null; // everyone: the same as naming nobody
     }
-    this.atomic(() => {
-      this.sql.exec(
-        "INSERT INTO votes (power, kind, value, include_json) VALUES (?, 'draw', ?, ?) ON CONFLICT(power, kind) DO UPDATE SET value = excluded.value, include_json = excluded.include_json",
-        power,
-        value ? 1 : 0,
-        proposal ? JSON.stringify(proposal) : null,
-      );
-      this.broadcastVotes();
-      const cast = this.ballots();
-      const required = this.requiredVoters();
-      if (required.length === 0) return;
-      const ballots = required.map((p) => cast.find((v) => v.power === p));
-      if (!ballots.every((b) => b?.value === true)) return;
-      const proposals = new Set(ballots.map((b) => JSON.stringify(b!.include)));
-      if (proposals.size !== 1) return; // everybody wants a draw, but not the same one
-      const agreed = ballots[0]!.include;
-      this.game!.declareDraw();
-      this.conclude("draw", agreed ?? [...survivors], "vote");
-    });
+    const chosen = proposal ? JSON.stringify(proposal) : null;
+    const before = this.sql.exec<{ value: number; include_json: string | null }>("SELECT value, include_json FROM votes WHERE power = ? AND kind = 'draw'", power).toArray()[0];
+    if (before && before.value === (value ? 1 : 0) && before.include_json === chosen) return; // unchanged: no write, no broadcast
+    if (!this.spendChange(power)) return this.send(ws, { t: "error", id, p: TOO_MANY_CHANGES });
+    const game = this.game!;
+    const snapshot = game.toSaved(meta.id);
+    try {
+      this.atomic(() => {
+        this.sql.exec(
+          "INSERT INTO votes (power, kind, value, include_json) VALUES (?, 'draw', ?, ?) ON CONFLICT(power, kind) DO UPDATE SET value = excluded.value, include_json = excluded.include_json",
+          power,
+          value ? 1 : 0,
+          chosen,
+        );
+        this.broadcastVotes();
+        const cast = this.ballots();
+        const required = this.requiredVoters();
+        if (required.length === 0) return;
+        const ballots = required.map((p) => cast.find((v) => v.power === p));
+        if (!ballots.every((b) => b?.value === true)) return;
+        const proposals = new Set(ballots.map((b) => JSON.stringify(b!.include)));
+        if (proposals.size !== 1) return; // everybody wants a draw, but not the same one
+        const agreed = ballots[0]!.include;
+        // Whoever has no vote now (a voter may have lapsed since the proposal was made) shares.
+        const sharers = agreed ? [...survivors].filter((p) => agreed.includes(p) || !required.includes(p)) : [...survivors];
+        game.declareDraw();
+        this.conclude("draw", sharers, "vote");
+      });
+    } catch (error) {
+      // Storage rolled back; the engine may already have been told the game is drawn. Put it back.
+      this.game = Game.fromSaved(snapshot, meta.settings.rulebook);
+      try {
+        game.free();
+      } catch {
+        // already freed
+      }
+      this.log("vote_failed", { error: String(error) }, "error");
+      this.send(ws, { t: "error", id, p: { code: "internal", message: "the vote could not be recorded; try again" } });
+    }
   }
 
   // ---------- phases, deadlines and adjudication ----------
@@ -1947,6 +2097,39 @@ export class GameRoom extends DurableObject<Env> {
     return seatBrain(this.meta!.settings, { hasKey: !!this.env.ANTHROPIC_API_KEY, hasQueue: !!this.env.AGENT_QUEUE });
   }
 
+  /**
+   * Ask the index, once, for this game's place under the deployment's Claude budget. A room caps
+   * its own spend, but only the index can see every room: it admits a game while the day's budget
+   * and the number of Claude games in play allow it. Asked before the game starts, so the first
+   * phase already knows. Anything but a clear yes (a refusal, no index, an index that cannot be
+   * reached) leaves the game to the bot: a spend control fails closed.
+   */
+  private async admitClaude(): Promise<void> {
+    const asked = this.meta;
+    if (!asked || asked.claudeAdmission !== null || this.admitting || !this.brain().deliberates) return;
+    this.admitting = true;
+    let verdict: { admitted: boolean; reason: string | null };
+    try {
+      const index = gameIndex(this.env);
+      verdict = index
+        ? await index.admitClaudeGame({ gameId: asked.id, capMicros: this.claudeCapMicros(), now: Date.now() })
+        : { admitted: false, reason: "no_budget_authority" };
+    } catch (error) {
+      this.log("claude_admission_failed", { error: String(error) }, "error");
+      verdict = { admitted: false, reason: "budget_unreachable" };
+    } finally {
+      this.admitting = false;
+    }
+    // The room may have moved on during the call: read it again.
+    const meta = this.meta;
+    if (!meta || meta.claudeAdmission !== null) return;
+    this.atomic(() => {
+      meta.claudeAdmission = verdict.admitted ? "admitted" : "refused";
+      if (!verdict.admitted) meta.claudeOff ??= verdict.reason ?? "budget_refused";
+    });
+    this.log("claude_admission", { admitted: verdict.admitted, reason: verdict.reason });
+  }
+
   /** Spent so far plus everything reserved for calls that have not reported: what the cap is held against. */
   private claudeCommittedMicros(): number {
     const reserved = this.sql.exec<{ n: number | null }>("SELECT SUM(reserved_micros) AS n FROM agent_calls WHERE cost_micros IS NULL").one().n ?? 0;
@@ -1955,12 +2138,16 @@ export class GameRoom extends DurableObject<Env> {
 
   /**
    * Reserve a Claude turn for one seat: one model call per step, each at its worst-case price.
-   * Refused when the game has stopped asking, when the turn cap is spent, or when the reservation
-   * would take the game past its spend cap. Because the reservation is never smaller than the
-   * bill, the cap holds whatever the calls turn out to cost. Runs inside the caller's transaction.
+   * Refused when the index has not admitted the game under the deployment's budget, when the game
+   * has stopped asking, when the turn cap is spent, or when the reservation would take the game
+   * past its spend cap. Because the reservation is never smaller than the bill (the brain refuses
+   * a prompt larger than the reservation assumes, measured in bytes, which bound tokens), the cap
+   * holds whatever the calls turn out to cost. Runs inside the caller's transaction.
    */
   private reserveTurn(phase: string, power: PowerName, steps: Step[]): boolean {
     const meta = this.meta!;
+    // No place under the deployment's budget, no model call: the per-game cap alone bounds one game, not all of them.
+    if (meta.claudeAdmission !== "admitted") return false;
     if (meta.claudeOff !== null || meta.claudeTurns >= this.claudeBudget()) return false;
     const kind = this.phaseKind();
     const wanted = steps.map((step) => ({ step, micros: reservationMicros(kind, step) }));
@@ -2262,7 +2449,9 @@ export class GameRoom extends DurableObject<Env> {
       const stored = this.storedOrders(phase, seat.power);
       // Sealed defaults stand in for a present player's missing movement orders. A seat on
       // autopilot is covered by the bot, whose orders are already on file.
-      const text = stored?.orders ?? (kind === "M" && seat.kind !== "ai" ? this.defaultOrders(seat.power) : []);
+      // An empty row a player left behind counts as no row at all.
+      const filed = stored && !(stored.source === "human" && stored.orders.length === 0) ? stored.orders : null;
+      const text = filed ?? (kind === "M" && seat.kind !== "ai" ? this.defaultOrders(seat.power) : []);
       // Re-validate every stored order on its own: one bad row must never stop the phase.
       const valid: string[] = [];
       for (const order of text) {
@@ -2395,6 +2584,7 @@ export class GameRoom extends DurableObject<Env> {
     this.sql.exec("DELETE FROM votes");
     this.sql.exec("DELETE FROM extension_requests WHERE phase = ?", phase);
     this.sql.exec("DELETE FROM events WHERE seq <= (SELECT MAX(seq) FROM events) - ?", LIMITS.eventsKept);
+    this.sql.exec("DELETE FROM seat_changes");
 
     this.broadcast(
       (seq) => ({
@@ -2485,7 +2675,9 @@ export class GameRoom extends DurableObject<Env> {
           eliminated: s.eliminated === 1,
         })),
       };
-      this.kv.put("registry-outbox", { record, attempts: 0, nextAt: now } satisfies Outbox);
+      // Whatever is still reserved may yet be billed, so it counts as spent when the place is handed back.
+      const claude = meta.claudeAdmission === "admitted" ? { claude: { committedMicros: this.claudeCommittedMicros() } } : {};
+      this.kv.put("registry-outbox", { record, attempts: 0, nextAt: now, ...claude } satisfies Outbox);
       this.outboxAt = now;
     }
     this.touchListing();
@@ -2511,6 +2703,7 @@ export class GameRoom extends DurableObject<Env> {
     }
     this.flushingOutbox = true;
     try {
+      if (entry.claude) await index.releaseClaudeGame({ gameId: entry.record.gameId, spentMicros: entry.claude.committedMicros, now: Date.now() });
       await index.recordGame(entry.record);
       this.kv.delete("registry-outbox");
       this.outboxAt = null;
@@ -2789,6 +2982,14 @@ function cleanUsage(usage: Usage): Usage {
     cacheReadTokens: n(usage.cacheReadTokens),
     cacheWriteTokens: n(usage.cacheWriteTokens),
   };
+}
+
+const TOO_MANY_CHANGES = { code: "too_many_changes", message: `at most ${LIMITS.changesPerPhase} changes of ready flag or ballot per phase` };
+
+/** The `id` of a frame that will not be parsed, if it plainly has one. Never throws. */
+function peekId(raw: string | ArrayBuffer): string | undefined {
+  if (typeof raw !== "string" || raw.length > LIMITS.frameBytes) return undefined;
+  return /"id"\s*:\s*"([^"\\]{1,64})"/.exec(raw)?.[1];
 }
 
 /** A stored frame with its sequence number on the envelope. Frames are JSON objects, so this is a splice. */
