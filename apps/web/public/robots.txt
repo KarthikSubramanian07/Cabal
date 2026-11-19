@@ -1,4 +1,6 @@
 User-agent: *
 Allow: /
+# The game server's API: live state, never a page.
+Disallow: /api/
 
 Sitemap: https://playcabal.pages.dev/sitemap.xml
