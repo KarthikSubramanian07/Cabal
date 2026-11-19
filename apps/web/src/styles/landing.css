@@ -239,6 +239,11 @@
   fill: var(--vermilion);
 }
 
+/* London's fleet ends the phase in the Channel, at the head of its order. */
+.fleet.london {
+  transform: translate(227px, 616px);
+}
+
 .fleet rect {
   fill: var(--p-england);
   stroke: var(--bone);
@@ -277,7 +282,6 @@
   background: var(--paper);
   color: var(--ink);
   transform: rotate(-1.6deg);
-  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.5);
 }
 
 .dispatch-slip p {
@@ -644,6 +648,10 @@
     animation: land-appear 160ms linear 2800ms both;
   }
 
+  .fleet.london {
+    animation: land-sail 560ms var(--ease-in-out) 2860ms both;
+  }
+
   .dispatch-receipt {
     animation: land-appear 360ms var(--ease-out) 2650ms both;
   }
@@ -684,6 +692,16 @@
 @keyframes land-betray {
   from {
     stroke: var(--bone);
+  }
+}
+
+/* From London along the order's curve into the Channel. */
+@keyframes land-sail {
+  from {
+    transform: translate(295.6px, 567.1px);
+  }
+  50% {
+    transform: translate(261.5px, 597.4px);
   }
 }
 
@@ -777,7 +795,7 @@
   }
 
   .table-seals li {
-    font-size: 10.5px;
+    font-size: 12px;
   }
 
   .table-seals .seal-wax {

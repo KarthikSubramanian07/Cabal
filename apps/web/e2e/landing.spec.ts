@@ -44,7 +44,47 @@ test.describe("the front door", () => {
     await page.goto("/");
     await page.waitForTimeout(4200);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await expect(page.locator("#theatre-caption")).toContainText("stamped broken");
+    // Once, not twice: the map says what moves, the slip reads as itself, the stamp is read out.
+    await expect(page.getByRole("img", { name: /England's fleet sails from London into the Channel/ })).toBeVisible();
+    await expect(page.locator(".dispatch-slip")).toContainText("Sealed with F LON H");
+    await expect(page.locator(".broken-stamp")).not.toHaveAttribute("aria-hidden", "true");
+    await expect(page.locator("figure, figcaption")).toHaveCount(0);
+    expect(await page.getByRole("button", { name: /Play now/ }).getAttribute("aria-describedby")).toBeNull();
+  });
+
+  test("London's fleet sails into the Channel, and the slip casts no soft shadow", async ({ page }) => {
+    await page.goto("/");
+    const fleet = page.locator(".theatre-orders .fleet.london");
+    await page.locator(".dispatch-slip").scrollIntoViewIfNeeded();
+    // It sets out from London, on the order's line...
+    const from = await fleet.evaluate((el) => (el.getAnimations()[0]?.effect as KeyframeEffect | undefined)?.getKeyframes()[0]?.["transform"]);
+    expect(from).toBe("translate(295.6px, 567.1px)");
+    await expect.poll(() => page.locator(".broken-stamp").evaluate((el) => el.getAnimations().every((a) => a.playState === "finished")), { timeout: 10_000 }).toBe(true);
+    await expect.poll(() => fleet.evaluate((el) => el.getAnimations().every((a) => a.playState === "finished"))).toBe(true);
+    // ...and ends the phase in the Channel, at the head of the order.
+    expect(await fleet.evaluate((el) => getComputedStyle(el).transform)).toBe("matrix(1, 0, 0, 1, 227, 616)");
+    // BRAND.md allows one soft shadow, under the board.
+    expect(await page.locator(".dispatch-slip").evaluate((el) => getComputedStyle(el).boxShadow)).toBe("none");
+  });
+
+  test("the one moment of motion waits until the dispatch is on screen", async ({ page }, info) => {
+    test.skip(info.project.name !== "phone", "on a desktop the dispatch is in view from the start");
+    await page.goto("/");
+    await page.waitForTimeout(4500);
+    const stamp = page.locator(".broken-stamp");
+    // Below the fold, the stamp has not come down yet.
+    expect(await stamp.evaluate((el) => el.getBoundingClientRect().top > window.innerHeight)).toBe(true);
+    expect(await stamp.evaluate((el) => el.getAnimations().map((a) => a.playState))).toEqual(["paused"]);
+    await page.locator(".dispatch-slip").scrollIntoViewIfNeeded();
+    await expect.poll(() => stamp.evaluate((el) => el.getAnimations().every((a) => a.playState === "finished")), { timeout: 10_000 }).toBe(true);
+  });
+
+  test("promises the record only what reaches it: rated games, not friendly tables", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByText(/Every seal a player has ever made is on their record/)).toHaveCount(0);
+    const ledger = page.getByRole("region", { name: "The Ledger remembers" });
+    await expect(ledger).toContainText("Every rated game a player finishes goes on their record");
+    await expect(ledger).toContainText("Friendly tables, Play now among them, keep their seals on the table's own Ledger");
   });
 
   test("under reduced motion the story is told at once, with nothing moving", async ({ page }) => {
