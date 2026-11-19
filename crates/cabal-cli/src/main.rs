@@ -4,11 +4,12 @@
 //! cabal datc [--report]                 run the DATC v3.0 corpus and print a section report
 //! cabal explain [--graph] <order>...              adjudicate a movement phase from order text and explain it
 //! cabal legal <power> [<order>...]      list legal orders for a power (after optional setup orders)
-//! cabal replay <saved-game.json>        replay a MILA saved game through the engine
+//! cabal replay [--json] <file|dir>...   replay saved games and report every divergence (exit 1 on any)
 //! cabal version
 //! ```
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use cabal_engine::adjudicate::movement::{resolve_movement, resolve_movement_with_dependencies};
@@ -154,39 +155,137 @@ fn legal(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Every `.json` file under `path`, sorted, skipping the fixture manifest.
+fn saved_game_files(path: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    if path.is_dir() {
+        let mut entries: Vec<PathBuf> = std::fs::read_dir(path)?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|e| e.path())
+            .collect();
+        entries.sort();
+        for entry in entries {
+            let is_json = entry.extension().is_some_and(|e| e == "json");
+            let is_manifest = entry.file_name().is_some_and(|n| n == "manifest.json");
+            if entry.is_dir() || (is_json && !is_manifest) {
+                saved_game_files(&entry, out)?;
+            }
+        }
+    } else {
+        out.push(path.to_path_buf());
+    }
+    Ok(())
+}
+
+/// Replay saved games and report every divergence from the record.
+///
+/// Exit status: 0 when every game replays with zero divergences, 1 when any
+/// diverges, 2 when a path cannot be read or is not a saved game.
 fn replay(args: &[String]) -> ExitCode {
-    let Some(path) = args.first() else {
-        eprintln!("usage: cabal replay <saved-game.json>");
+    const USAGE: &str = "usage: cabal replay [--json] [--rulebook <2023|1982|1971|dptg>] <saved-game.json | directory>...";
+    let mut json = false;
+    let mut rulebook = Rulebook::default();
+    let mut paths: Vec<&String> = Vec::new();
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--json" => json = true,
+            "--rulebook" => match it.next().and_then(|name| Rulebook::by_name(name)) {
+                Some(r) => rulebook = r,
+                None => {
+                    eprintln!("--rulebook needs one of 2023, 1982, 1971, dptg");
+                    return ExitCode::from(2);
+                }
+            },
+            flag if flag.starts_with("--") => {
+                eprintln!("unknown option {flag}\n{USAGE}");
+                return ExitCode::from(2);
+            }
+            _ => paths.push(arg),
+        }
+    }
+    if paths.is_empty() {
+        eprintln!("{USAGE}");
         return ExitCode::from(2);
-    };
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) => {
+    }
+    let mut files = Vec::new();
+    for path in paths {
+        let before = files.len();
+        if let Err(e) = saved_game_files(Path::new(path), &mut files) {
             eprintln!("cannot read {path}: {e}");
             return ExitCode::from(2);
         }
-    };
-    let saved: SavedGame = match serde_json::from_str(&text) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("cannot parse {path}: {e}");
+        if files.len() == before {
+            eprintln!("no saved games under {path}");
             return ExitCode::from(2);
         }
-    };
-    match Game::from_saved(&saved, Rulebook::default()) {
-        Ok(game) => {
-            println!(
-                "replayed {} phases, now at {} ({:?})",
-                game.history.len(),
-                game.phase(),
-                game.status
-            );
-            ExitCode::SUCCESS
+    }
+
+    let mut reports = Vec::new();
+    let mut unreadable = 0;
+    let mut diverged = 0;
+    let mut phases = 0;
+    for file in &files {
+        let name = file.display();
+        let report = std::fs::read_to_string(file)
+            .map_err(|e| format!("cannot read: {e}"))
+            .and_then(|text| {
+                serde_json::from_str::<SavedGame>(&text)
+                    .map_err(|e| format!("not a saved game: {e}"))
+            })
+            .and_then(|saved| Game::verify_saved(&saved, rulebook).map_err(|e| e.to_string()));
+        match report {
+            Ok(report) => {
+                phases += report.phases;
+                if !report.is_clean() {
+                    diverged += 1;
+                }
+                if !json {
+                    println!(
+                        "{name}: {} phases, {} divergences",
+                        report.phases,
+                        report.divergences.len()
+                    );
+                    for d in &report.divergences {
+                        println!("  {d}");
+                    }
+                }
+                reports.push(serde_json::json!({ "file": name.to_string(), "report": report }));
+            }
+            Err(e) => {
+                unreadable += 1;
+                if !json {
+                    println!("{name}: error: {e}");
+                }
+                reports.push(serde_json::json!({ "file": name.to_string(), "error": e }));
+            }
         }
-        Err(e) => {
-            eprintln!("replay failed: {e}");
-            ExitCode::FAILURE
-        }
+    }
+    if json {
+        let all = serde_json::json!({
+            "engine": VERSION,
+            "games": files.len(),
+            "phases": phases,
+            "diverged": diverged,
+            "unreadable": unreadable,
+            "reports": reports,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&all).expect("report serialises")
+        );
+    } else {
+        println!(
+            "{} games, {phases} phases, {diverged} diverged, {unreadable} unreadable",
+            files.len()
+        );
+    }
+    if unreadable > 0 {
+        ExitCode::from(2)
+    } else if diverged > 0 {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }
 
