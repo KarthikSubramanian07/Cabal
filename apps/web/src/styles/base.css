@@ -91,17 +91,31 @@ kbd {
 }
 
 /*
- * Before the app mounts, #root holds the page's text for crawlers and readers without
- * script (scripts/emit-agent-site.mjs). It is set in system faces on purpose: nothing in
- * it waits for a web font, so nothing shifts when one arrives. The bar above it stands
- * where the app's top bar will be.
+ * Before the app mounts, #root holds two things the build wrote in (scripts/emit-agent-site.mjs):
+ * the top bar and loading screen exactly as the app will draw them, and under them the
+ * page's text for crawlers and readers without script. That text is set in system faces on
+ * purpose: nothing in it waits for a web font, so nothing shifts when one arrives.
+ *
+ * Without script the loading screen would promise a board that never comes, so it steps
+ * aside and a plain bar stands over the text.
  */
-#root:has(> .agent-static)::before {
-  content: "";
-  display: block;
-  height: 49px;
-  background: var(--ink);
-  border-bottom: 3px solid var(--vermilion);
+@media (scripting: none) {
+  .app.prerender {
+    display: none;
+  }
+
+  #root:has(> .agent-static)::before {
+    content: "";
+    display: block;
+    height: 49px;
+    background: var(--ink);
+    border-bottom: 3px solid var(--vermilion);
+  }
+}
+
+/* The loading screen fills the first screen, so the text under it starts below the fold. */
+.app.prerender {
+  min-height: 100dvh;
 }
 
 .agent-static {

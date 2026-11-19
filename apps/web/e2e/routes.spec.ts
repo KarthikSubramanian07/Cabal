@@ -72,6 +72,34 @@ test.describe("routes", () => {
     await expect(page).toHaveURL(/\/sandbox$/);
   });
 
+  test("the page arrives already showing the top bar and loading screen the app draws", async ({ page }) => {
+    const boxes = () =>
+      page.evaluate(() =>
+        [".topbar", ".topbar .wordmark", ".loading-title", ".loading-line", ".loading-note"].map((selector) => {
+          const b = document.querySelector(selector)!.getBoundingClientRect();
+          return [b.left, b.top, b.width, b.height].map((n) => Math.round(n));
+        }),
+      );
+    // Without the app's script: what the build wrote into index.html.
+    await page.route("**/assets/index-*.js", (route) => route.abort());
+    await page.goto("/");
+    await expect(page.locator(".app.prerender .loading-note")).toBeVisible();
+    const written = await boxes();
+    await page.unroute("**/assets/index-*.js");
+
+    // With it, held on the loading screen by a slow engine download.
+    await page.route("**/*.wasm", async (route) => {
+      await new Promise((done) => setTimeout(done, 2500));
+      await route.continue();
+    });
+    await page.goto("/");
+    await expect(page.locator("main.loading-body")).toBeVisible();
+    await expect(page.locator(".app.prerender")).toHaveCount(0);
+    expect(await boxes()).toEqual(written);
+    // And the app does take over.
+    await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
+  });
+
   test("a path the client cannot draw, reached without a page load, says so in the app", async ({ page }) => {
     await page.goto("/games");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();

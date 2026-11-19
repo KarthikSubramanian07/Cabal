@@ -294,6 +294,33 @@ function enrichIndexHtml() {
     );
   }
 
+  // What a visitor sees before the app's script has run: the top bar and the loading screen,
+  // word for word and box for box what src/app/Shell.tsx and PageLoading.tsx draw, so React
+  // taking over changes nothing on screen. The page's text follows below the fold, and is
+  // all there is for readers without script (see base.css).
+  const loading = JSON.parse(readFileSync(join(root, "src/app/loading.json"), "utf8"));
+  const escape = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const shell = `<div class="app prerender" data-route="sandbox">
+        <header class="topbar">
+          <a class="brand" href="/" aria-label="Cabal home">${wordmarkSvg()}</a>
+          <button type="button" class="nav-toggle" aria-expanded="false">Menu</button>
+          <nav aria-label="Site" data-open="false">
+            <a href="/sandbox" aria-current="page">Sandbox</a>
+            <button type="button">How to play</button>
+            <a href="/about">About</a>
+            <a href="/contact">Contact</a>
+            <a class="nav-end" href="https://github.com/KarthikSubramanian07/Cabal">GitHub</a>
+          </nav>
+        </header>
+        <main class="loading-body">
+          <div class="loading-card">
+            <p class="loading-title" role="status">${escape(loading.title)}</p>
+            <p class="loading-line">${escape(loading.line)}</p>
+            <p class="loading-note">${escape(loading.note)}</p>
+          </div>
+        </main>
+      </div>`;
+
   const article = `<article class="agent-static" data-agent-content="true">
         ${homeBody}
         <p><a href="/about">About</a> · <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a> · <a href="/llms.txt">llms.txt</a></p>
@@ -306,11 +333,11 @@ function enrichIndexHtml() {
 
   // Always replace #root contents with the full home.md article for no-JS crawlers.
   if (html.includes('<div id="root"></div>')) {
-    html = html.replace('<div id="root"></div>', `<div id="root">\n      ${article}\n    </div>`);
+    html = html.replace('<div id="root"></div>', () => `<div id="root">\n      ${shell}\n      ${article}\n    </div>`);
   } else {
     html = html.replace(
       /<div id="root">[\s\S]*?<\/div>\s*(?=<script|<\/body>)/,
-      `<div id="root">\n      ${article}\n    </div>\n    `,
+      () => `<div id="root">\n      ${shell}\n      ${article}\n    </div>\n    `,
     );
   }
 
