@@ -14,11 +14,13 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  WASM_SIZE_BUDGET_BYTES: 409600
+  # About 6 percent above the measured build (384,183 bytes gzip with the bot
+  # inside, see docs/PERFORMANCE.md). Raise it only with a number and a reason.
+  WASM_SIZE_BUDGET_BYTES: 409000
 
 jobs:
   rust:
-    name: "Rust: fmt, clippy, tests, DATC"
+    name: "Rust: fmt, clippy, tests, DATC, replay"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -36,17 +38,24 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - run: cargo test --workspace
+      # Adjudicates all 171 DATC cases plus Cabal's own and prints pass, fail and
+      # skip totals; exits 1 if any case fails.
       - name: DATC report
         run: cargo run -p cabal-cli -- datc --report
+      # Every committed saved game must replay with zero divergences.
+      - name: Replay fixtures
+        run: cargo run -p cabal-cli -- replay crates/cabal-engine/tests/data/games
 
   bench:
-    name: "Bench: opening adjudication gate"
+    name: "Bench: adjudication and legal-order gates"
     runs-on: ubuntu-latest
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       CRITERION_HOME: ${{ github.workspace }}/target/criterion
-      BENCH_ARGS: --sample-size 30 --measurement-time 3 --warm-up-time 1 --noplot ^adjudicate.spring.1901
+      # Gated: opening adjudication, and legal orders on the fleet-heavy midgame
+      # board (per power and with the shared convoy search).
+      BENCH_ARGS: --sample-size 30 --measurement-time 3 --warm-up-time 1 --noplot ^(adjudicate.spring.1901|midgame/legal.orders,.all.powers)
     steps:
       - uses: actions/checkout@v7
         with:
@@ -88,7 +97,7 @@ jobs:
         with:
           tool: wasm-pack
       - run: wasm-pack test --node crates/cabal-wasm
-      - run: wasm-pack build crates/cabal-wasm --target web --release --out-dir ../../packages/engine/pkg --out-name cabal_engine
+      - run: wasm-pack build crates/cabal-wasm --target web --profile wasm-release --out-dir ../../packages/engine/pkg --out-name cabal_engine
       - name: Size gate
         run: |
           size=$(gzip -c packages/engine/pkg/cabal_engine_bg.wasm | wc -c | tr -d ' ')
@@ -129,7 +138,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: wasm
     env:
-      WORKER_GZIP_BUDGET_BYTES: 655360
+      # Measured 755,828 bytes with the engine of this change (642,074 before it: the engine
+      # wasm grew by about 110 KB gzip with replay verification, snapshots, verdicts and
+      # explanations; see docs/PERFORMANCE.md). The budget leaves about 4 percent of headroom.
+      # Cloudflare's own limit is 3 MiB gzip on the free plan.
+      WORKER_GZIP_BUDGET_BYTES: 786432
       WRANGLER_SEND_METRICS: "false"
     steps:
       - uses: actions/checkout@v7

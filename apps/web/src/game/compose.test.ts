@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { type ComposeContext, type Draft, click, disbandSelected, holdSelected, setMode } from "./compose.js";
-import { describePhase, parseOrder, phaseKind } from "./notation.js";
+import {
+  type ComposeContext,
+  type Draft,
+  adjustmentsLeft,
+  canGoByConvoy,
+  carryingFleets,
+  click,
+  disbandSelected,
+  holdSelected,
+  nextWaiveKey,
+  setMode,
+  viaAlternative,
+} from "./compose.js";
+import { continueLabel, describePhase, forUnit, parseOrder, phaseKind, resolveLabel } from "./notation.js";
 
 const movement: ComposeContext = {
   phase: "M",
@@ -61,7 +73,77 @@ describe("movement orders", () => {
     expect(click(movement, s1.draft, "BRE").effect).toMatchObject({ text: "A LON - BRE VIA" });
   });
 
-  it("lets the player choose the convoy route when a direct route also exists", () => { const ctx: ComposeContext = { ...movement, legal: { ...movement.legal, ENGLAND: { ...movement.legal.ENGLAND, "A LON": ["A LON H", "A LON - BRE", "A LON - BRE VIA", "A LON - WAL"] } } }; const selected = click(ctx, start, "LON").draft; const via = setMode(ctx, selected, "via-convoy").draft; expect(via).toEqual({ step: "unit", power: "ENGLAND", unit: "A LON", via: true }); expect(click(ctx, via, "BRE").effect).toMatchObject({ text: "A LON - BRE VIA" }); expect(setMode(ctx, via, "move").draft).toEqual({ step: "unit", power: "ENGLAND", unit: "A LON" }); }); it("composes a support for a foreign move", () => {
+  describe("choosing the convoy route first (V)", () => {
+    const both: ComposeContext = {
+      ...movement,
+      legal: {
+        ...movement.legal,
+        ENGLAND: { ...movement.legal.ENGLAND, "A LON": ["A LON H", "A LON - BRE", "A LON - BRE VIA", "A LON - WAL"] },
+      },
+    };
+
+    it("lets the player choose the convoy route when a direct route also exists", () => {
+      const selected = click(both, start, "LON").draft;
+      const via = setMode(both, selected, "via-convoy").draft;
+      expect(via).toEqual({ step: "unit", power: "ENGLAND", unit: "A LON", via: true });
+      expect(click(both, via, "BRE").effect).toMatchObject({ text: "A LON - BRE VIA" });
+      expect(setMode(both, via, "move").draft).toEqual({ step: "unit", power: "ENGLAND", unit: "A LON" });
+    });
+
+    it("goes back to the land route when V is pressed again", () => {
+      const via = setMode(both, click(both, start, "LON").draft, "via-convoy").draft;
+      expect(setMode(both, via, "via-convoy").draft).toEqual({ step: "unit", power: "ENGLAND", unit: "A LON" });
+    });
+
+    it("explains a destination no fleet can reach, and keeps the convoy route chosen", () => {
+      const via = setMode(both, click(both, start, "LON").draft, "via-convoy").draft;
+      const step = click(both, via, "WAL");
+      expect(step.effect).toEqual({
+        kind: "message",
+        text: "No fleet can carry A LON to WAL. Switch off By convoy to go by land.",
+      });
+      expect(step.draft).toEqual(via);
+    });
+
+    it("refuses the convoy route for a unit no fleet could carry", () => {
+      const selected = click(movement, start, "PAR").draft;
+      expect(setMode(movement, selected, "via-convoy").effect).toEqual({
+        kind: "message",
+        text: "No fleet is placed to carry A PAR anywhere.",
+      });
+      expect(canGoByConvoy(movement, "FRANCE", "A PAR")).toBe(false);
+      expect(canGoByConvoy(movement, "ENGLAND", "A LON")).toBe(true);
+    });
+
+    it("drops the convoy route when another unit is selected", () => {
+      const via = setMode(both, click(both, start, "LON").draft, "via-convoy").draft;
+      expect(click(both, via, "PAR").draft).toEqual({ step: "unit", power: "FRANCE", unit: "A PAR" });
+    });
+  });
+
+  describe("the fleets that carry a convoyed move", () => {
+    it("lists every fleet that could convoy the army there, of any power, and which are ordered", () => {
+      const ctx: ComposeContext = {
+        ...movement,
+        legal: {
+          ...movement.legal,
+          ENGLAND: { ...movement.legal.ENGLAND, "F ENG": ["F ENG H", "F ENG C A LON - BRE"] },
+        },
+        orders: { ENGLAND: { "F ENG": "F ENG C A LON - BRE" } },
+      };
+      expect(carryingFleets(ctx, "A LON - BRE VIA")).toEqual([
+        { power: "ENGLAND", unit: "F ENG", order: "F ENG C A LON - BRE", given: true },
+        { power: "FRANCE", unit: "F MAO", order: "F MAO C A LON - BRE", given: false },
+      ]);
+    });
+
+    it("is empty for a move by land or any other order", () => {
+      expect(carryingFleets(movement, "A LON - WAL")).toEqual([]);
+      expect(carryingFleets(movement, "F MAO C A LON - BRE")).toEqual([]);
+    });
+  });
+
+  it("composes a support for a foreign move", () => {
     const s1 = click(movement, start, "PAR");
     const s2 = setMode(movement, s1.draft, "support");
     expect(s2.draft.step).toBe("support");
@@ -154,5 +236,127 @@ describe("notation", () => {
   it("describes phases", () => {
     expect(describePhase("F1903R")).toEqual({ season: "Fall", year: "1903", kind: "Retreats" });
     expect(phaseKind("W1901A")).toBe("A");
+  });
+});
+
+const idle: Draft = { step: "idle" };
+
+describe("via convoy", () => {
+  const both: ComposeContext = {
+    phase: "M",
+    pieces: [{ power: "ENGLAND", unit: "A WAL", province: "WAL", dislodged: false }],
+    legal: { ENGLAND: { "A WAL": ["A WAL H", "A WAL - LON", "A WAL - LON VIA", "A WAL - BRE VIA"] } },
+  };
+
+  it("gives the land route when both exist and offers the convoy as an alternative", () => {
+    const step = click(both, { step: "unit", power: "ENGLAND", unit: "A WAL" }, "LON");
+    expect(step.effect).toEqual({ kind: "order", power: "ENGLAND", key: "A WAL", text: "A WAL - LON" });
+    expect(viaAlternative(both, "ENGLAND", "A WAL - LON")).toBe("A WAL - LON VIA");
+    expect(viaAlternative(both, "ENGLAND", "A WAL - LON VIA")).toBe("A WAL - LON");
+  });
+
+  it("offers no switch when only one route exists or the order is not a move", () => {
+    expect(viaAlternative(both, "ENGLAND", "A WAL - BRE VIA")).toBeNull();
+    expect(viaAlternative(both, "ENGLAND", "A WAL H")).toBeNull();
+    expect(viaAlternative(both, "FRANCE", "A WAL - LON")).toBeNull();
+  });
+});
+
+describe("adjustments", () => {
+  const winter = (extra: Partial<ComposeContext> = {}): ComposeContext => ({
+    phase: "A",
+    pieces: [],
+    legal: {
+      FRANCE: { "": ["A MAR B", "F MAR B", "A PAR B", "WAIVE"] },
+      AUSTRIA: { "": ["A VIE D", "A BUD D", "F ALB D"] },
+    },
+    allowance: { FRANCE: 1, AUSTRIA: -1 },
+    orders: {},
+    ...extra,
+  });
+
+  it("refuses a build beyond the allowance and says why", () => {
+    const ctx = winter({ orders: { FRANCE: { "B:PAR": "A PAR B" } } });
+    const step = click(ctx, idle, "MAR");
+    expect(step.effect).toEqual({
+      kind: "message",
+      text: "France may only build 1 unit. Remove an order to choose a different one.",
+    });
+    expect(adjustmentsLeft(ctx, "FRANCE")).toBe(0);
+  });
+
+  it("still lets the player change the order already written for a province", () => {
+    const ctx = winter({ orders: { FRANCE: { "B:MAR": "A MAR B" } } });
+    const step = click(ctx, idle, "MAR");
+    expect(step.effect).toMatchObject({ kind: "choose", key: "B:MAR", title: "Build in MAR" });
+  });
+
+  it("refuses a disband beyond what is owed", () => {
+    const ctx = winter({ orders: { AUSTRIA: { "D:VIE": "A VIE D" } } });
+    expect(click(ctx, idle, "BUD").effect).toEqual({
+      kind: "message",
+      text: "Austria only has to disband 1 unit. Remove an order to choose a different one.",
+    });
+    expect(click(winter(), idle, "BUD").effect).toEqual({ kind: "order", power: "AUSTRIA", key: "D:BUD", text: "A BUD D" });
+  });
+
+  it("counts a waive against the builds", () => {
+    const ctx = winter({ orders: { FRANCE: { "WAIVE:0": "WAIVE" } } });
+    expect(click(ctx, idle, "PAR").effect.kind).toBe("message");
+  });
+
+  it("acts for the active power when two powers could act in the same province", () => {
+    const ctx = winter({
+      legal: { AUSTRIA: { "": ["A TRI D"] }, ITALY: { "": ["A TRI B", "F TRI B"] } },
+      allowance: { AUSTRIA: -1, ITALY: 1 },
+    });
+    expect(click({ ...ctx, active: "ITALY" }, idle, "TRI").effect).toMatchObject({ power: "ITALY", title: "Build in TRI" });
+    expect(click({ ...ctx, active: "AUSTRIA" }, idle, "TRI").effect).toMatchObject({ power: "AUSTRIA", key: "D:TRI" });
+    // Nobody active here: fall back to whoever can act.
+    expect(click({ ...ctx, active: "FRANCE" }, idle, "TRI").effect).toMatchObject({ power: "AUSTRIA" });
+  });
+
+  it("titles a disband choice as a disband", () => {
+    const ctx = winter({ legal: { RUSSIA: { "": ["F STP/NC D", "F STP/SC D"] } }, allowance: { RUSSIA: -1 } });
+    expect(click(ctx, idle, "STP").effect).toMatchObject({ kind: "choose", title: "Disband in STP" });
+  });
+});
+
+describe("nextWaiveKey", () => {
+  it("never reuses a key that is still in the book", () => {
+    expect(nextWaiveKey({})).toBe("WAIVE:0");
+    expect(nextWaiveKey({ "WAIVE:0": "WAIVE", "B:PAR": "A PAR B" })).toBe("WAIVE:1");
+    // The first waive was removed while the second stayed: the next one must not overwrite it.
+    expect(nextWaiveKey({ "WAIVE:1": "WAIVE" })).toBe("WAIVE:0");
+    expect(nextWaiveKey({ "WAIVE:0": "WAIVE", "WAIVE:1": "WAIVE" })).toBe("WAIVE:2");
+  });
+});
+
+describe("phase buttons", () => {
+  it("names the kind of phase being resolved", () => {
+    expect(resolveLabel("S1901M")).toBe("Adjudicate Spring 1901");
+    expect(resolveLabel("F1901R")).toBe("Resolve Fall 1901 retreats");
+    expect(resolveLabel("W1901A")).toBe("Resolve Winter 1901 builds");
+  });
+
+  it("names the phase that comes next, never the one just shown", () => {
+    expect(continueLabel("F1901M")).toBe("Continue to Fall 1901");
+    expect(continueLabel("F1901R")).toBe("Continue to Fall 1901 retreats");
+    expect(continueLabel("W1901A")).toBe("Continue to Winter 1901 builds");
+    expect(continueLabel("COMPLETED")).toBe("See the final position");
+  });
+});
+
+describe("forUnit", () => {
+  it("puts the right unit on the front of an order written with another kind", () => {
+    expect(forUnit("A TRI R ALB", "F TRI")).toBe("F TRI R ALB");
+    expect(forUnit("A TRI D", "F TRI")).toBe("F TRI D");
+    expect(forUnit("A STP R FIN", "F STP/SC")).toBe("F STP/SC R FIN");
+  });
+
+  it("leaves a correct order, and an order for somewhere else, alone", () => {
+    expect(forUnit("F TRI R ALB", "F TRI")).toBe("F TRI R ALB");
+    expect(forUnit("A VIE R BOH", "F TRI")).toBe("A VIE R BOH");
+    expect(forUnit("WAIVE", "F TRI")).toBe("WAIVE");
   });
 });

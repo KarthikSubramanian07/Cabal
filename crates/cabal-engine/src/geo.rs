@@ -121,7 +121,7 @@ pub enum SupplyCenter {
     Home(Power),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct Province {
     /// Three letter short name, lower case (`stp`).
     pub name: String,
@@ -132,7 +132,7 @@ pub struct Province {
     pub coasts: Vec<Coast>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct PowerInfo {
     /// Three letter code (`ENG`).
     pub code: String,
@@ -141,7 +141,7 @@ pub struct PowerInfo {
 }
 
 /// The board graph.
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Map {
     pub name: String,
     /// Variant-specific rulebook settings declared by the map document.
@@ -219,31 +219,229 @@ pub enum MapError {
     Json(String),
 }
 
+/// The bundled maps as tables generated at build time (see `build.rs`).
+// The explicit path keeps the file where it is for `build.rs` too, which
+// compiles this module from another directory.
+#[cfg(cabal_generated_maps)]
+#[path = "geo/bundled.rs"]
+mod bundled;
+
+/// A map as static tables: what `build.rs` writes for each bundled map after
+/// running it through [`Map::from_json`], so nothing is parsed or validated when
+/// the engine starts.
+#[cfg_attr(not(cabal_generated_maps), allow(dead_code))]
+struct Tables {
+    name: &'static str,
+    rulebook_overrides: RulebookOverrides,
+    /// `(name, full name, terrain, supply centre, coasts)`
+    provinces: &'static [ProvinceRow],
+    /// `(code, name)`
+    powers: &'static [(&'static str, &'static str)],
+    adjacency: &'static [(Region, &'static [(Region, Terrain)])],
+    homes: &'static [&'static [ProvinceId]],
+    start_units: &'static [(Power, UnitKind, Region)],
+    /// One byte per pair, row-major, zero or one.
+    fleet_adjacency: &'static [u8],
+}
+
+type ProvinceRow = (
+    &'static str,
+    &'static str,
+    Terrain,
+    SupplyCenter,
+    &'static [Coast],
+);
+
+#[cfg(cabal_generated_maps)]
 impl Map {
-    /// The classic 1901 map, parsed once and cached for the process lifetime.
+    /// The classic 1901 map, built once from static tables and cached for the
+    /// process lifetime.
     pub fn standard() -> &'static Map {
         static MAP: OnceLock<Map> = OnceLock::new();
-        MAP.get_or_init(|| {
-            Map::from_json(include_str!("../data/maps/standard.json"))
-                .expect("bundled standard map is valid")
-        })
+        MAP.get_or_init(|| Map::from_tables(&bundled::STANDARD))
     }
 
-    /// Look up a bundled map by name. Only `standard` ships today; variant maps are data files.
+    /// Look up a bundled map by name. `standard` and the three-province `duel` test board ship today; variant maps are data files.
     pub fn by_name(name: &str) -> Option<&'static Map> {
         match name.to_ascii_lowercase().as_str() {
             "standard" | "classic" => Some(Map::standard()),
             "duel" => {
                 static DUEL: OnceLock<Map> = OnceLock::new();
-                Some(DUEL.get_or_init(|| {
-                    Map::from_json(include_str!("../data/maps/duel.json"))
-                        .expect("bundled duel map is valid")
-                }))
+                Some(DUEL.get_or_init(|| Map::from_tables(&bundled::DUEL)))
             }
             _ => None,
         }
     }
 
+    /// A fresh copy of the standard map, built the way [`Map::standard`] builds
+    /// its cached one. For benchmarks of the start-up cost.
+    #[doc(hidden)]
+    pub fn standard_uncached() -> Map {
+        Map::from_tables(&bundled::STANDARD)
+    }
+
+    /// Copy the generated tables into the owned form the engine works on. No
+    /// parsing and no validation: `build.rs` did both.
+    fn from_tables(t: &Tables) -> Map {
+        let provinces: Vec<Province> = t
+            .provinces
+            .iter()
+            .map(
+                |&(name, full_name, terrain, supply_center, coasts)| Province {
+                    name: name.to_string(),
+                    full_name: full_name.to_string(),
+                    terrain,
+                    supply_center,
+                    coasts: coasts.to_vec(),
+                },
+            )
+            .collect();
+        let by_name = provinces
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.name.clone(), ProvinceId(i as u8)))
+            .collect();
+        Map {
+            name: t.name.to_string(),
+            rulebook_overrides: t.rulebook_overrides,
+            provinces,
+            powers: t
+                .powers
+                .iter()
+                .map(|&(code, name)| PowerInfo {
+                    code: code.to_string(),
+                    name: name.to_string(),
+                })
+                .collect(),
+            by_name,
+            adjacency: t
+                .adjacency
+                .iter()
+                .map(|&(region, borders)| (region, borders.to_vec()))
+                .collect(),
+            homes: t.homes.iter().map(|h| h.to_vec()).collect(),
+            start_units: t.start_units.to_vec(),
+            fleet_adjacency: t.fleet_adjacency.iter().map(|&b| b != 0).collect(),
+        }
+    }
+}
+
+/// Only in `build.rs`, which compiles this file to turn the map documents into
+/// the tables of `bundled.rs`.
+#[cfg(not(cabal_generated_maps))]
+impl Map {
+    /// Rust source for a `Tables` constant named `constant` describing this map.
+    pub fn to_tables_source(&self, constant: &str) -> String {
+        use std::fmt::Write;
+        let coast = |c: &Coast| format!("Coast::{c:?}");
+        let region = |r: &Region| match &r.coast {
+            Some(c) => format!(
+                "Region::new(ProvinceId({}), Some({}))",
+                r.province.0,
+                coast(c)
+            ),
+            None => format!("Region::land(ProvinceId({}))", r.province.0),
+        };
+        let option = |v: Option<String>| match v {
+            Some(v) => format!("Some({v})"),
+            None => "None".to_string(),
+        };
+        let o = &self.rulebook_overrides;
+        let mut s = String::new();
+        writeln!(s, "pub(super) static {constant}: Tables = Tables {{").unwrap();
+        writeln!(s, "    name: {:?},", self.name).unwrap();
+        writeln!(s, "    rulebook_overrides: RulebookOverrides {{").unwrap();
+        writeln!(
+            s,
+            "        edition: {},",
+            option(o.edition.map(|v| format!("Edition::{v:?}")))
+        )
+        .unwrap();
+        writeln!(
+            s,
+            "        convoy_intent: {},",
+            option(o.convoy_intent.map(|v| format!("ConvoyIntent::{v:?}")))
+        )
+        .unwrap();
+        writeln!(
+            s,
+            "        disband_distance: {},",
+            option(
+                o.disband_distance
+                    .map(|v| format!("DisbandDistance::{v:?}"))
+            )
+        )
+        .unwrap();
+        writeln!(s, "        convoy_fallback: {:?},", o.convoy_fallback).unwrap();
+        writeln!(s, "        build_anywhere: {:?},", o.build_anywhere).unwrap();
+        writeln!(s, "        fog_of_war: {:?},", o.fog_of_war).unwrap();
+        writeln!(s, "        victory_centers: {:?},", o.victory_centers).unwrap();
+        writeln!(s, "    }},").unwrap();
+        writeln!(s, "    provinces: &[").unwrap();
+        for p in &self.provinces {
+            let sc = match p.supply_center {
+                SupplyCenter::None => "SupplyCenter::None".to_string(),
+                SupplyCenter::Neutral => "SupplyCenter::Neutral".to_string(),
+                SupplyCenter::Home(power) => format!("SupplyCenter::Home(Power({}))", power.0),
+            };
+            let coasts: Vec<String> = p.coasts.iter().map(coast).collect();
+            writeln!(
+                s,
+                "        ({:?}, {:?}, Terrain::{:?}, {sc}, &[{}]),",
+                p.name,
+                p.full_name,
+                p.terrain,
+                coasts.join(", ")
+            )
+            .unwrap();
+        }
+        writeln!(s, "    ],").unwrap();
+        writeln!(s, "    powers: &[").unwrap();
+        for p in &self.powers {
+            writeln!(s, "        ({:?}, {:?}),", p.code, p.name).unwrap();
+        }
+        writeln!(s, "    ],").unwrap();
+        writeln!(s, "    adjacency: &[").unwrap();
+        for (from, borders) in &self.adjacency {
+            let list: Vec<String> = borders
+                .iter()
+                .map(|(to, terrain)| format!("({}, Terrain::{terrain:?})", region(to)))
+                .collect();
+            writeln!(s, "        ({}, &[{}]),", region(from), list.join(", ")).unwrap();
+        }
+        writeln!(s, "    ],").unwrap();
+        writeln!(s, "    homes: &[").unwrap();
+        for homes in &self.homes {
+            let list: Vec<String> = homes
+                .iter()
+                .map(|h| format!("ProvinceId({})", h.0))
+                .collect();
+            writeln!(s, "        &[{}],", list.join(", ")).unwrap();
+        }
+        writeln!(s, "    ],").unwrap();
+        writeln!(s, "    start_units: &[").unwrap();
+        for (power, kind, at) in &self.start_units {
+            writeln!(
+                s,
+                "        (Power({}), UnitKind::{kind:?}, {}),",
+                power.0,
+                region(at)
+            )
+            .unwrap();
+        }
+        writeln!(s, "    ],").unwrap();
+        let bits: String = self
+            .fleet_adjacency
+            .iter()
+            .map(|&b| if b { "\\x01" } else { "\\x00" })
+            .collect();
+        writeln!(s, "    fleet_adjacency: b\"{bits}\",").unwrap();
+        writeln!(s, "}};").unwrap();
+        s
+    }
+}
+
+impl Map {
     /// Build a map from one self-contained JSON document (see `data/maps/`).
     pub fn from_json(json: &str) -> Result<Map, MapError> {
         let doc: MapDocument =
@@ -645,6 +843,18 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The tables written by `build.rs` are the documents, nothing more or less.
+    #[test]
+    fn bundled_maps_equal_their_documents() {
+        let standard = Map::from_json(include_str!("../data/maps/standard.json")).unwrap();
+        assert_eq!(Map::standard(), &standard);
+        assert_eq!(Map::standard_uncached(), standard);
+        let duel = Map::from_json(include_str!("../data/maps/duel.json")).unwrap();
+        assert_eq!(Map::by_name("duel").unwrap(), &duel);
+        assert_eq!(duel.rulebook_overrides.victory_centers, Some(2));
+        assert!(Map::by_name("atlantis").is_none());
     }
 
     #[test]

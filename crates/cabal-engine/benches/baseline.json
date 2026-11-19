@@ -1,7 +1,10 @@
 {
-  "benchmark": "adjudicate spring 1901 (22 units)",
   "statistic": "mean",
   "unit": "nanoseconds",
-  "estimate": 9302.907802314,
-  "recorded_with": "Criterion 0.8.2, sample-size 10, warm-up 1s, measurement 1s"
+  "recorded_with": "Criterion 0.8.2 on an Apple M1, sample-size 40, warm-up 1s, measurement 5s",
+  "benchmarks": {
+    "adjudicate spring 1901 (22 units)": 9302.907802314,
+    "midgame/legal orders, all powers, midgame": 1362300.0,
+    "midgame/legal orders, all powers, shared search": 401070.0
+  }
 }
