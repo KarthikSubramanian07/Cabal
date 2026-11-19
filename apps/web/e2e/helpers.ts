@@ -3,7 +3,7 @@ import { type Locator, type Page, type TestInfo, expect } from "@playwright/test
 export const isPhone = (info: TestInfo) => info.project.name === "phone";
 
 /** Open the sandbox on a fresh game. */
-export async function ready(page: Page, path = "/") {
+export async function ready(page: Page, path = "/sandbox") {
   await page.goto(path);
   await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
   // The map is drawn in passes; the province codes are the last of them.
