@@ -1,0 +1,114 @@
+import { describe, expect, it } from "vitest";
+import type { OrderResult } from "../engine.js";
+import { receiptFor, wordsFromCode } from "./receipts.js";
+
+const names = { PAR: { name: "Paris" }, MUN: { name: "Munich" }, BUR: { name: "Burgundy" }, TYR: { name: "Tyrolia" } };
+
+function result(reason: string, code = "illegal", ok = false): OrderResult {
+  return { power: "FRANCE", unit: "A PAR", order: "A PAR - BUR", ok, code, reason };
+}
+
+/** Every reason string the engine can write (crates/cabal-engine/src/text.rs, crates/cabal-wasm/src/lib.rs). */
+const MOVEMENT = [
+  ["bounced with MUN", "bounce"],
+  ["bounced with MUN, TYR", "bounce"],
+  ["repelled by BUR", "bounce"],
+  ["lost head-to-head with MUN", "bounce"],
+  ["cannot dislodge own unit", "bounce"],
+  ["no convoy path", "no_path"],
+  ["dislodged by MUN", "dislodged"],
+  ["support cut by MUN", "cut"],
+  ["supporter dislodged by MUN", "dislodged"],
+  ["support void (no matching order)", "void"],
+  ["convoy dislodged by MUN", "dislodged"],
+  ["convoy fails (paradox, Szykman rule)", "paradox"],
+  ["convoy void (no matching move)", "void"],
+] as const;
+
+const ILLEGAL = {
+  M: ["NoUnit", "ForeignUnit", "DuplicateOrder", "MoveToSelf", "Unreachable", "AmbiguousCoast", "SupportSelf", "SupportUnreachable", "SupportNoUnit", "ConvoyNotAtSea", "ConvoyNotArmy", "ConvoyNoRoute", "NotInPhase"],
+  R: ["NotDislodged", "Unreachable", "AmbiguousCoast", "Occupied", "AttackerOrigin", "Standoff", "NotInPhase"],
+  A: ["NothingToDo", "AllowanceUsed", "NotHomeCenter", "NotOwned", "Occupied", "BadTerrain", "NoUnit", "ForeignUnit", "NotInPhase"],
+};
+
+/** No enum names, no brackets, no debug punctuation: a sentence a player can read. */
+function expectHuman(text: string) {
+  expect(text).not.toMatch(/\(|\)/);
+  expect(text).not.toMatch(/[a-z][A-Z]/);
+  expect(text).not.toMatch(/illegal/i);
+  expect(text).toMatch(/^[A-Z].*\.$/);
+}
+
+describe("receiptFor", () => {
+  it("says nothing more about an order that worked", () => {
+    expect(receiptFor(result("moves", "ok", true), "S1901M")).toEqual({ tone: "ok", verdict: "Succeeded", detail: "" });
+  });
+
+  it("explains every movement failure in a sentence", () => {
+    for (const [reason, code] of MOVEMENT) {
+      const r = receiptFor(result(reason, code), "S1901M", names);
+      expect(r.tone, reason).toBe("fail");
+      expect(r.verdict.length, reason).toBeGreaterThan(3);
+      expectHuman(r.detail);
+    }
+  });
+
+  it("uses place names when it has them and codes when it does not", () => {
+    expect(receiptFor(result("bounced with MUN", "bounce"), "S1901M", names).detail).toBe(
+      "Bounced with the unit from Munich. Nobody moved.",
+    );
+    expect(receiptFor(result("bounced with MUN, TYR", "bounce"), "S1901M", names).detail).toContain("Munich and Tyrolia");
+    expect(receiptFor(result("bounced with MUN", "bounce"), "S1901M").detail).toContain("MUN");
+  });
+
+  it("never shows a raw engine code for an illegal order, in any phase", () => {
+    for (const reason of ILLEGAL.M) {
+      const r = receiptFor(result(`illegal (${reason}), holds`), "S1901M", names);
+      expectHuman(r.detail);
+      expect(r.detail).toContain("The unit held instead.");
+    }
+    const dislodged = receiptFor(result("illegal (Unreachable), holds, dislodged by MUN"), "S1901M", names);
+    expectHuman(dislodged.detail);
+    expect(dislodged.detail).toContain("dislodged by the attack from Munich");
+    for (const reason of ILLEGAL.R) {
+      const r = receiptFor(result(`illegal retreat (${reason}), disbanded`), "F1901R", names);
+      expectHuman(r.detail);
+      expect(r.detail).toContain("The unit was disbanded.");
+    }
+    for (const reason of ILLEGAL.A) {
+      const r = receiptFor(result(`illegal (${reason})`), "W1901A", names);
+      expectHuman(r.detail);
+    }
+    expect(receiptFor(result("illegal (AllowanceUsed)"), "W1901A").detail).toBe(
+      "This power had already used every build or disband it was owed.",
+    );
+  });
+
+  it("treats a disband the player ordered as neutral, not as a failure", () => {
+    expect(receiptFor(result("disbanded", "disband"), "F1901R")).toEqual({
+      tone: "neutral",
+      verdict: "Disbanded",
+      detail: "The unit was disbanded.",
+    });
+  });
+
+  it("words a bounced retreat as a disband", () => {
+    const r = receiptFor(result("bounced with TYR", "bounce"), "F1901R", names);
+    expect(r.detail).toBe("Another retreat from Tyrolia was headed for the same province, so the unit was disbanded.");
+  });
+
+  it("falls back to readable words for a reason it has never seen", () => {
+    const unknown = receiptFor(result("illegal (SomethingBrandNew), holds"), "S1901M");
+    expectHuman(unknown.detail);
+    expect(unknown.detail).toContain("something brand new");
+    const odd = receiptFor(result("struck by lightning (ActOfGod)", "weird"), "S1901M");
+    expect(odd.detail).toBe("Struck by lightning (act of god).");
+  });
+});
+
+describe("wordsFromCode", () => {
+  it("splits camel case and snake case", () => {
+    expect(wordsFromCode("AllowanceUsed")).toBe("allowance used");
+    expect(wordsFromCode("no_path")).toBe("no path");
+  });
+});
