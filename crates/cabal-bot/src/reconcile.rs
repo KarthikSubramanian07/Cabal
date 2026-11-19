@@ -212,7 +212,7 @@ pub(crate) fn reconcile(b: &Board, me: Power, orders: &mut [Order]) -> usize {
     changed
 }
 
-/// The contradictions [`reconcile`] removes, counted. Zero for every order set
+/// The contradictions the reconcile pass removes, counted. Zero for every order set
 /// the bot hands out; the tests and the arena hold it to that.
 pub fn contradictions(orders: &[Order]) -> usize {
     let cmd = |x: ProvinceId| orders.iter().find(|o| o.unit == x).map(|o| o.command);
