@@ -342,10 +342,10 @@ export function PhaseStepper({
         <select value={index} onChange={(e) => go(Number(e.target.value))} aria-label="Jump to phase">
           {history.map((h, i) => (
             <option key={h.phase + i} value={i}>
-              {h.phase} results
+              {name(i)}
             </option>
           ))}
-          <option value={history.length}>{endLabel ?? `${livePhase} (now)`}</option>
+          <option value={history.length}>{name(history.length)}</option>
         </select>
         <button type="button" onClick={() => go(index + 1)} disabled={viewing === null} aria-label="Next phase">
           ›

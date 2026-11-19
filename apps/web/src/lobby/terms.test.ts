@@ -34,7 +34,7 @@ describe("terms of a table", () => {
   it("names powers and phases in words", () => {
     expect(powerLabel("AUSTRIA")).toBe("Austria");
     expect(phaseLabel("S1901M")).toBe("Spring 1901, movement");
-    expect(phaseLabel("F1903R")).toBe("Autumn 1903, retreats");
+    expect(phaseLabel("F1903R")).toBe("Fall 1903, retreats");
     expect(phaseLabel("W1901A")).toBe("Winter 1901, adjustments");
     expect(phaseLabel("COMPLETED")).toBe("Game over");
   });

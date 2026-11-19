@@ -1000,4 +1000,9 @@
   .app[data-route="game"] .footer {
     padding-bottom: calc(var(--sheet-h) + env(safe-area-inset-bottom, 0px) + 16px);
   }
+
+  /* The offline banner sits over the foot of the page: leave room to scroll the last row clear. */
+  .app[data-route="game"]:has(.wire-down) .footer {
+    padding-bottom: calc(var(--sheet-h) + env(safe-area-inset-bottom, 0px) + 120px);
+  }
 }

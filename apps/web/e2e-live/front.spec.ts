@@ -46,7 +46,7 @@ test.describe("the front door, live", () => {
     expect(await page.evaluate(() => (window as unknown as { __asked: number }).__asked)).toBe(0);
     await page.locator(".notify-offer").getByRole("button", { name: "Not now" }).click();
     await expect(page.locator(".notify-offer")).toHaveCount(0);
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("Autumn 1901", { timeout: 20_000 });
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Fall 1901", { timeout: 20_000 });
 
     // The only person at the table votes for a draw, and the game is over.
     await tab(page, "Table");

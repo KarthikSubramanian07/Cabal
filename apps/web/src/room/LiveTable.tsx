@@ -693,7 +693,7 @@ function Floor({
                 <span className="sr-only"> {live.kind}</span>
               </h2>
               <div className="phase-meta">
-                <span>{over ? "Game over" : live.kind}</span>
+                <span>{over ? (view.finished?.result === "solo" ? `${powerLabel(view.finished.winners[0] ?? "")} won outright` : view.finished?.result === "draw" ? "Drawn" : "Abandoned") : live.kind}</span>
                 {running ? (
                   <span className={`clock ${urgent}${view.grace ? " grace" : ""}`} aria-label={msLeft !== null ? `Time left: ${clockWords(msLeft)}` : "No deadline"}>
                     {view.status === "paused" ? "Paused" : msLeft !== null ? clockFace(msLeft) : "No clock"}
@@ -877,9 +877,15 @@ function Floor({
                 See the final scores
               </button>
             ) : !me ? (
-              <button type="button" className="btn primary" onClick={() => { setTab("press"); setSheet(true); }}>
-                Read the table talk
-              </button>
+              tab === "press" ? (
+                <button type="button" className="btn primary" onClick={() => { setTab("table"); setSheet(true); }}>
+                  See who sits where
+                </button>
+              ) : (
+                <button type="button" className="btn primary" onClick={() => { setTab("press"); setSheet(true); }}>
+                  Read the table talk
+                </button>
+              )
             ) : (
               <button type="button" className="btn primary" disabled>
                 Nothing to order this phase

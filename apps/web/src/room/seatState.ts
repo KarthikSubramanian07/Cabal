@@ -39,7 +39,7 @@ export function seatState(seat: SeatView, running: boolean, finalScore?: number)
   const by = seat.kind === "ai" ? `played by ${who(seat)}` : who(seat);
   if (!seat.canAct) return { word: "Rests", tone: "idle", sentence: `${power}, ${by}: nothing to order this phase.` };
   if (seat.ready) return { word: "Ready", tone: "ready", sentence: `${power}, ${by}: orders in and ready.` };
-  if (seat.submitted) return { word: "In", tone: "in", sentence: `${power}, ${by}: orders in, not ready yet.` };
+  if (seat.submitted) return { word: "Filed", tone: "in", sentence: `${power}, ${by}: orders in, not ready yet.` };
   if (seat.kind === "ai") return { word: seat.brain === "claude" ? "Claude" : "Bot", tone: "machine", sentence: `${power}, played by ${who(seat)}: deciding.` };
   if (!seat.present) return { word: "Away", tone: "away", sentence: `${power}, ${by}: away, no orders yet.` };
   return { word: "Writing", tone: "waiting", sentence: `${power}, ${by}: at the table, no orders yet.` };
