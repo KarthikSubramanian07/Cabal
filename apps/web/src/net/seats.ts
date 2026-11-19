@@ -1,0 +1,119 @@
+/**
+ * The seats this device holds. A seat token is a credential: it lives in localStorage under the
+ * game's code and nowhere else. It never goes into a URL, a link or a log; the socket presents it
+ * in its first `hello` frame and HTTP calls send it as a bearer header.
+ *
+ * Storage can be missing or refuse writes (private windows, blocked site data), so every access
+ * is guarded and a failure reads as "no seat here".
+ */
+import { PowerName } from "@cabal/protocol";
+import { isGameCode } from "./code.js";
+
+const PREFIX = "cabal.seat.";
+const NAME_KEY = "cabal.name";
+
+export interface HeldSeat {
+  gameId: string;
+  power: PowerName;
+  token: string;
+  /** The name this device sat down under. */
+  name: string;
+  /** When the seat was taken, ms since the epoch. */
+  savedAt: number;
+}
+
+function storage(): Storage | null {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function parse(gameId: string, raw: string | null): HeldSeat | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<HeldSeat>;
+    const power = PowerName.safeParse(value.power);
+    if (!power.success || typeof value.token !== "string" || value.token === "") return null;
+    // A token names its own game: one copied under the wrong key is not this game's seat.
+    if (!value.token.startsWith(`${gameId}.`)) return null;
+    return {
+      gameId,
+      power: power.data,
+      token: value.token,
+      name: typeof value.name === "string" ? value.name : "",
+      savedAt: typeof value.savedAt === "number" ? value.savedAt : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function readSeat(gameId: string): HeldSeat | null {
+  const store = storage();
+  if (!store) return null;
+  try {
+    return parse(gameId, store.getItem(PREFIX + gameId));
+  } catch {
+    return null;
+  }
+}
+
+/** Keep a seat. Returns false when the device would not store it (the seat then lasts this visit only). */
+export function saveSeat(seat: Omit<HeldSeat, "savedAt"> & { savedAt?: number }): boolean {
+  const store = storage();
+  if (!store) return false;
+  try {
+    const value: HeldSeat = { ...seat, savedAt: seat.savedAt ?? Date.now() };
+    store.setItem(PREFIX + seat.gameId, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function forgetSeat(gameId: string): void {
+  try {
+    storage()?.removeItem(PREFIX + gameId);
+  } catch {
+    // nothing to forget
+  }
+}
+
+/** Every seat this device holds, newest first. */
+export function listSeats(): HeldSeat[] {
+  const store = storage();
+  if (!store) return [];
+  const out: HeldSeat[] = [];
+  try {
+    for (let i = 0; i < store.length; i++) {
+      const key = store.key(i);
+      if (!key?.startsWith(PREFIX)) continue;
+      const gameId = key.slice(PREFIX.length);
+      if (!isGameCode(gameId)) continue;
+      const seat = parse(gameId, store.getItem(key));
+      if (seat) out.push(seat);
+    }
+  } catch {
+    return out;
+  }
+  return out.sort((a, b) => b.savedAt - a.savedAt);
+}
+
+/** The name this device last sat down under, so nobody types it twice. */
+export function readName(): string {
+  try {
+    return storage()?.getItem(NAME_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function saveName(name: string): void {
+  try {
+    storage()?.setItem(NAME_KEY, name.trim());
+  } catch {
+    // remembered for this visit only
+  }
+}

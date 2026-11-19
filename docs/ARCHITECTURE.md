@@ -37,12 +37,13 @@ flowchart TB
   SM --> Queue --> Anthropic[(Anthropic API)]
 ```
 
-Four principles:
+Five principles:
 
 1. **One engine, two hosts.** The Rust crate is compiled once to WebAssembly. The browser uses it for instant feedback; the Durable Object uses it as the authority. They cannot disagree because they are the same bytes.
 2. **One object owns one game.** All state for a game (positions, orders, press, pledges, deadlines, sockets) lives in one Durable Object with SQLite storage. Adjudication, persistence and broadcast are one transaction. No cross-service hop on the hot path.
 3. **Layers above the line never touch the resolver.** Pledges, cabals, vendettas and ratings consume adjudication results. They cannot change them.
-4. **One origin.** The browser only ever talks to `playcabal.pages.dev`. The Pages project proxies `/api/*`, including WebSocket upgrades, to the `cabal-server` Worker through a service binding named `SERVER`, so the content security policy can stay `connect-src 'self'`. In `vite dev` the same path is proxied to `http://localhost:8787`. Status: being built in phase 1; on `main` today the web app is a local sandbox that does not call the API.
+4. **One origin.** The browser only ever talks to `playcabal.pages.dev`. The Pages project proxies `/api/*`, including WebSocket upgrades, to the `cabal-server` Worker through a service binding named `SERVER`, so the content security policy can stay `connect-src 'self'`. In `vite dev` the same path is proxied to `http://localhost:8787`. The web app calls it through the typed client in `@cabal/protocol/client`: the games room (`/games`) and each table's lobby (`/g/:code`) are live; a seat token is kept in `localStorage` under the game's code and is never put in a URL.
+5. **A service worker that never serves an old app.** `sw.js` is built after every build (`apps/web/src/sw`, bundled by `scripts/emit-agent-site.mjs`) with a version hashed from the files it precaches, so each deploy ships a new worker. Navigations go to the network first and fall back to the installed shell only offline and only for app routes; hashed `/assets` files are cache first; `/api`, sockets and other origins are never touched. A new build waits until the player chooses Reload on the update prompt.
 
 ## 2. Repository layout
 

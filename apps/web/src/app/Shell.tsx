@@ -5,6 +5,8 @@
  */
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Wordmark } from "../brand/Wordmark.jsx";
+import { InstallButton } from "../pwa/InstallButton.jsx";
+import { UpdatePrompt } from "../pwa/UpdatePrompt.jsx";
 import { HowToPlay } from "./HowToPlay.jsx";
 import { useShortcuts } from "./prefs.js";
 import { Link, usePathname } from "./router.jsx";
@@ -64,6 +66,9 @@ export function Shell({ children }: { children: ReactNode }) {
           Menu
         </button>
         <nav id="site-nav" aria-label="Site" data-open={menu}>
+          <Link href="/games" aria-current={route?.name === "games" ? "page" : undefined}>
+            Games
+          </Link>
           <Link href="/sandbox" aria-current={route?.name === "sandbox" ? "page" : undefined}>
             Sandbox
           </Link>
@@ -78,6 +83,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </button>
           <a href="/about">About</a>
           <a href="/contact">Contact</a>
+          <InstallButton onDone={() => setMenu(false)} />
           <a className="nav-end" href={SOURCE_URL}>
             GitHub
           </a>
@@ -99,6 +105,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </span>
       </footer>
 
+      <UpdatePrompt />
       <HowToPlay open={help} onClose={() => setHelp(false)} shortcuts={shortcuts} onShortcuts={setShortcuts} />
     </div>
   );
