@@ -47,3 +47,13 @@ export function mergeRecords(saved: readonly PhaseRecord[], frames: Record<strin
   const rank = new Map(order.map((p, i) => [p, i]));
   return [...byPhase.values()].sort((a, b) => (rank.get(a.phase) ?? Infinity) - (rank.get(b.phase) ?? Infinity));
 }
+
+/**
+ * Phases in the history that neither the saved game nor this device's frames can draw. The saved
+ * game is fetched only while some are missing (on arrival, or after a gap in the connection), not
+ * again at every phase by every seat and spectator.
+ */
+export function missingPhases(saved: readonly PhaseRecord[], frames: Record<string, ResolvedPhase>, order: readonly string[]): string[] {
+  const have = new Set(saved.map((r) => r.phase));
+  return order.filter((phase) => !have.has(phase) && !frames[phase]?.before);
+}

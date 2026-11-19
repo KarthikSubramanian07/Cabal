@@ -4,7 +4,7 @@ import { Game, ready } from "@cabal/engine";
 import type { OrderResultView, StateView } from "@cabal/protocol";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { ResolvedPhase } from "../lobby/room.js";
-import { mergeRecords, recordFromFrame, recordsFromReplay } from "./history.js";
+import { mergeRecords, missingPhases, recordFromFrame, recordsFromReplay } from "./history.js";
 import { bookOf, piecesOf, sameOrders } from "./useDesk.js";
 
 beforeAll(async () => {
@@ -52,6 +52,20 @@ describe("a live game's history", () => {
     const merged = mergeRecords(saved, { S1901M: resolved, F1901M: fall }, ["S1901M", "F1901M"]);
     expect(merged.map((r) => r.phase)).toEqual(["S1901M", "F1901M"]);
     expect(merged[0]).toBe(saved[0]);
+  });
+});
+
+describe("when the saved game is worth fetching", () => {
+  it("only while a phase in the history can be drawn from neither the saved game nor the frames seen", () => {
+    const { game, resolved } = spring();
+    const saved = recordsFromReplay(game.toSaved("K7Q2XZ"));
+    const fall: ResolvedPhase = { ...resolved, phase: "F1901M", before: { ...resolved.before!, name: "F1901M" } };
+    // Arriving at a game in progress: nothing yet.
+    expect(missingPhases([], {}, ["S1901M", "F1901M"])).toEqual(["S1901M", "F1901M"]);
+    // Saved game loaded, then a phase resolved while watching: its frame is enough.
+    expect(missingPhases(saved, { F1901M: fall }, ["S1901M", "F1901M"])).toEqual([]);
+    // Back from a gap in the connection, with a phase never seen.
+    expect(missingPhases(saved, { F1901M: { ...fall, before: null } }, ["S1901M", "F1901M"])).toEqual(["F1901M"]);
   });
 });
 
