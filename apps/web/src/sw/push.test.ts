@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clickTarget, notificationFor, pickClient } from "./push.js";
+import { clickTarget, fallbackNotification, notificationFor, pickClient } from "./push.js";
 
 const ORIGIN = "https://playcabal.pages.dev";
 
@@ -29,5 +29,15 @@ describe("push messages", () => {
     expect(pickClient([a, b], "/g/K7Q2XZ", ORIGIN)).toEqual({ client: b, navigate: false });
     expect(pickClient([a], "/g/K7Q2XZ", ORIGIN)).toEqual({ client: a, navigate: true });
     expect(pickClient([], "/g/K7Q2XZ", ORIGIN)).toBeNull();
+  });
+});
+
+describe("a push this worker cannot read", () => {
+  it("still says something of its own, pointing at the games room, rather than the browser's generic notice", () => {
+    expect(notificationFor({ kind: "mystery" }, ORIGIN)).toBeNull();
+    const shown = fallbackNotification();
+    expect(shown.title).toBe("Something happened at your table");
+    expect(shown.options.data.url).toBe("/games");
+    expect(shown.options.tag).toBe("cabal-unknown");
   });
 });
