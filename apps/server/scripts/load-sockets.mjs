@@ -25,13 +25,26 @@ const socketOrigin = new URL(origin);
 socketOrigin.protocol = socketOrigin.protocol === "https:" ? "wss:" : "ws:";
 const wsUrl = new URL(`/api/games/${gameId}/ws`, socketOrigin);
 const sockets = [];
+// Every socket opens as a spectator. The creator then binds its seat with a hello frame: the
+// token never goes in the URL.
 const connect = (asCreator) => new Promise((resolve, reject) => {
-  const socket = new WebSocket(`${wsUrl}${asCreator ? `?token=${encodeURIComponent(token)}` : ""}`);
+  const socket = new WebSocket(wsUrl);
   const timer = setTimeout(() => reject(new Error("socket connect timeout")), 15_000);
-  socket.addEventListener("open", () => {
+  const done = () => {
     clearTimeout(timer);
     sockets.push(socket);
     resolve(socket);
+  };
+  socket.addEventListener("open", () => {
+    if (!asCreator) return done();
+    socket.send(JSON.stringify({ t: "hello", p: { token } }));
+    socket.addEventListener("message", function bound(event) {
+      const frame = JSON.parse(String(event.data));
+      if (frame.t === "welcome" && frame.p.power !== null) {
+        socket.removeEventListener("message", bound);
+        done();
+      }
+    });
   }, { once: true });
   socket.addEventListener("error", () => {
     clearTimeout(timer);
@@ -39,7 +52,9 @@ const connect = (asCreator) => new Promise((resolve, reject) => {
   }, { once: true });
 });
 
-const clients = await Promise.all(Array.from({ length: socketCount }, (_, i) => connect(i === 0)));
+// The creator binds first so it does not count against the 200 spectator sockets.
+const creator = await connect(true);
+const clients = [creator, ...(await Promise.all(Array.from({ length: socketCount - 1 }, () => connect(false))))];
 const arrivals = [];
 const broadcastAt = Date.now();
 const timeout = setTimeout(() => {
