@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Game, mapInfo, ready } from "@cabal/engine";
 import { beforeAll, describe, expect, it } from "vitest";
-import { type Brain, type Decision, PERSONAS, Player, validateOrders } from "./player.js";
+import { type Brain, type BrainReply, type BrainRequest, type Decision, PERSONAS, Player, validateOrders } from "./player.js";
 import { MAX_PRESS_CHARS, MAX_PRESS_IN_PROMPT, userPrompt } from "./prompt.js";
 
 beforeAll(async () => {
@@ -13,9 +13,9 @@ beforeAll(async () => {
 class ScriptedBrain implements Brain {
   prompts: string[] = [];
   constructor(private decision: Decision) {}
-  async decide(_system: string, prompt: string): Promise<Decision> {
-    this.prompts.push(prompt);
-    return this.decision;
+  async decide(request: BrainRequest): Promise<BrainReply> {
+    this.prompts.push(request.prompt);
+    return { decision: this.decision, usage: null, model: null };
   }
 }
 
@@ -23,14 +23,7 @@ describe("validateOrders", () => {
   it("keeps menu orders, repairs arrows, drops off-menu and duplicate orders", () => {
     const legal = { "A PAR": ["A PAR H", "A PAR - BUR", "A PAR - PIC"], "F BRE": ["F BRE H", "F BRE - MAO"] };
     const v = validateOrders(
-      {
-        reasoning: "",
-        orders: ["a par -> bur", "F BRE - MAO", "A PAR - PIC", "A MAR - SPA"],
-        messages: [],
-        pledge: null,
-        relationships: [],
-        diary: "",
-      },
+      { orders: ["a par -> bur", "F BRE - MAO", "A PAR - PIC", "A MAR - SPA"] },
       legal,
     );
     expect(v.orders).toEqual(["A PAR - BUR", "F BRE - MAO"]);
@@ -69,7 +62,7 @@ describe("Player", () => {
     expect(prompt).toContain("Unowned centres");
   });
 
-  it("falls back to legal orders when the brain fails", async () => {
+  it("falls back to holding every unit when the brain fails, the same way every time", async () => {
     const brain: Brain = {
       decide: async () => {
         throw new Error("boom");
@@ -78,7 +71,7 @@ describe("Player", () => {
     const game = new Game();
     const player = new Player("ITALY", PERSONAS["ITALY"]!, brain);
     const legal = game.legal("ITALY");
-    const { validated, decision } = await player.play({
+    const { validated, decision, fallback, failure, costMicros } = await player.play({
       phase: "S1901M",
       state: game.state(),
       map: mapInfo(),
@@ -87,9 +80,13 @@ describe("Player", () => {
       myPledges: [],
       trust: {},
     });
-    expect(validated.orders).toHaveLength(Object.keys(legal.by_unit).length);
-    expect(validated.orders.every((order) => Object.values(legal.by_unit).some((menu) => menu.includes(order)))).toBe(true);
+    expect(validated.orders.sort()).toEqual(Object.keys(legal.by_unit).map((unit) => `${unit} H`).sort());
     expect(decision.reasoning).toContain("boom");
+    expect(fallback).toBe(true);
+    expect(failure?.billed).toBe("unknown");
+    expect(costMicros).toBe(0);
+    // A failed turn leaves no mark on the player's memory.
+    expect(player.memory()).toEqual({ diary: [], relationships: [] });
   });
 
   it("renders the prompt sections", () => {
@@ -135,6 +132,7 @@ describe("Player", () => {
       trust: {},
     });
     const pressSection = text.split("# Press this phase\n")[1]!.split("\n\n# ")[0]!;
+    expect(text).toContain("# Earlier press (previous phases, for context)\nnone");
     const lines = pressSection.split("\n");
     expect(lines).toHaveLength(MAX_PRESS_IN_PROMPT);
     expect(lines.every((l) => l.startsWith("RUSSIA -> TURKEY: \""))).toBe(true);

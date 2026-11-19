@@ -1,19 +1,29 @@
 /**
  * A Claude powered Cabal player.
  *
- * The model reasons in prose, then returns a structured decision. Orders are
- * validated against the engine's legal list; anything off-menu is repaired to
- * the closest legal order or dropped (the unit holds), so the seat never submits
- * an illegal order and never stalls a human game.
+ * The model reasons in prose, then returns a structured decision. Orders are validated against the
+ * engine's legal list; anything off-menu is repaired to the matching legal order or dropped (the
+ * unit holds), so the seat never submits an illegal order and never stalls a human game.
+ *
+ * A player's memory (diary and relationships) is plain data: `memory()` returns it and `restore()`
+ * puts it back, so whoever runs the player can keep it between turns. A server that builds a
+ * fresh player for every turn stores it; a long-lived client just keeps the object.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import type { LegalOrders } from "@cabal/engine";
 import { z } from "zod";
-import { type PromptInput, SYSTEM_PROMPT, userPrompt } from "./prompt.js";
+import { type Usage, costMicros } from "./cost.js";
+import { type PromptInput, type Step, phaseKind, systemPrompt, userPrompt } from "./prompt.js";
 
+/**
+ * The shape the model must return. Structured outputs cannot enforce numeric ranges or lengths, so
+ * none are declared here: a schema that says more than the API guarantees turns one stray value
+ * into a lost turn. Ranges are clamped in `Player.play` instead.
+ */
 export const Decision = z.object({
   reasoning: z.string().describe("Private strategic reasoning, under 300 words."),
-  orders: z.array(z.string()).describe("One legal order per unit, copied exactly from the menu."),
+  orders: z.array(z.string()).describe("Legal orders copied exactly from the menu: one per unit, or as many adjustments as the allowance."),
   messages: z
     .array(
       z.object({
@@ -30,20 +40,66 @@ export const Decision = z.object({
     })
     .nullable()
     .describe("Optional pledge attached to one of the messages above."),
-  relationships: z.array(z.object({ power: z.string(), stance: z.number().int().min(-2).max(2), note: z.string() })),
+  relationships: z.array(
+    z.object({
+      power: z.string(),
+      stance: z.number().describe("A whole number from -2 (enemy) to 2 (ally)."),
+      note: z.string(),
+    }),
+  ),
   diary: z.string().describe("One or two sentences for your private diary."),
 });
 export type Decision = z.infer<typeof Decision>;
 
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/** One request for a decision. `kind` and `step` let a brain spend less on phases that need less. */
+export interface BrainRequest {
+  /** The stable prefix: instructions, rules and the map. Identical for every seat and every phase. */
+  system: string;
+  /** Everything that changes: persona, board, menu, press, memory, task. */
+  prompt: string;
+  kind: "M" | "R" | "A";
+  step: Step;
+}
+
+export interface BrainReply {
+  decision: Decision;
+  /** Null when the brain is not a metered model (a scripted or local brain). */
+  usage: Usage | null;
+  model: string | null;
+}
+
 /** Anything that can turn a prompt into a decision; the Claude client is the default, tests inject a fake. */
 export interface Brain {
-  decide(system: string, prompt: string): Promise<Decision>;
+  decide(request: BrainRequest): Promise<BrainReply>;
+}
+
+/**
+ * A brain that could not produce a decision. `usage` is what the failed attempt cost, when the API
+ * answered at all. `billed` says whether money may have been spent: `no` for a request the API
+ * rejected or never received, `yes` when usage is known, `unknown` for a timeout, where the request
+ * may have completed on the far side.
+ */
+export class BrainFailure extends Error {
+  override readonly name = "BrainFailure";
+  constructor(
+    message: string,
+    readonly billed: "no" | "yes" | "unknown",
+    readonly usage: Usage | null = null,
+    readonly model: string | null = null,
+    /** HTTP status when the API refused the request; a 4xx will fail the same way again. */
+    readonly status: number | null = null,
+  ) {
+    super(message);
+  }
 }
 
 export interface ClaudeBrainOptions {
   apiKey?: string;
   model?: string;
-  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  /** One effort for every request, or one per kind of request. Defaults to `DEFAULT_EFFORT`. */
+  effort?: Effort | Partial<EffortPlan>;
   /** Request timeout in milliseconds (the SDK default is ten minutes). */
   timeoutMs?: number;
   /** SDK retries on 408, 409, 429 and 5xx (the SDK default is 2). */
@@ -51,11 +107,48 @@ export interface ClaudeBrainOptions {
   client?: Anthropic;
 }
 
-/** Claude through structured outputs, adaptive thinking on. */
+export interface EffortPlan {
+  /** The opening, talking half of a movement phase. */
+  negotiate: Effort;
+  /** Final movement orders: the decision that wins or loses centres. */
+  movement: Effort;
+  retreat: Effort;
+  adjustment: Effort;
+}
+
+/**
+ * Movement orders get the model's default depth; talking, retreats and builds are small decisions
+ * from short menus and get the cheapest. Effort is part of what the API caches on, so each level
+ * keeps its own copy of the cached prefix: two levels, two cache entries, both shared by all seats.
+ */
+export const DEFAULT_EFFORT: EffortPlan = { negotiate: "low", movement: "medium", retreat: "low", adjustment: "low" };
+
+/** Output allowance per kind of request. It bounds what one call can cost; see `maxCallCostMicros`. */
+export const MAX_OUTPUT_TOKENS = { negotiate: 4000, movement: 8000, retreat: 4000, adjustment: 4000 } as const;
+
+/**
+ * The longest prompt a `ClaudeBrain` will send, in characters, system and user parts together. A
+ * longer one is refused before the request, so the input side of a call's cost is bounded too.
+ * Order text is dense in short upper-case words, so budget two characters per token.
+ */
+export const MAX_PROMPT_CHARS = 60_000;
+export const MAX_INPUT_TOKENS = MAX_PROMPT_CHARS / 2;
+
+export const DEFAULT_MODEL = "claude-opus-5-5";
+
+export function requestKind(kind: "M" | "R" | "A", step: Step): keyof EffortPlan {
+  if (kind === "R") return "retreat";
+  if (kind === "A") return "adjustment";
+  return step === "negotiate" ? "negotiate" : "movement";
+}
+
+const DecisionFormat = zodOutputFormat(Decision);
+
+/** Claude through structured outputs, adaptive thinking on, the static prefix cached. */
 export class ClaudeBrain implements Brain {
   private client: Anthropic;
-  private model: string;
-  private effort: NonNullable<ClaudeBrainOptions["effort"]>;
+  readonly model: string;
+  private effort: EffortPlan;
 
   constructor(opts: ClaudeBrainOptions = {}) {
     this.client =
@@ -65,30 +158,69 @@ export class ClaudeBrain implements Brain {
         ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
         ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
       });
-    this.model = opts.model ?? "claude-opus-5-5";
-    this.effort = opts.effort ?? "medium";
+    this.model = opts.model ?? DEFAULT_MODEL;
+    this.effort =
+      typeof opts.effort === "string"
+        ? { negotiate: opts.effort, movement: opts.effort, retreat: opts.effort, adjustment: opts.effort }
+        : { ...DEFAULT_EFFORT, ...opts.effort };
   }
 
-  async decide(system: string, prompt: string): Promise<Decision> {
-    const response = await this.client.messages.parse({
-      model: this.model,
-      max_tokens: 16000,
-      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-      thinking: { type: "adaptive" },
-      output_config: { effort: this.effort, format: zodOutputFormat(Decision) },
-      messages: [{ role: "user", content: prompt }],
-    });
-    if (response.stop_reason === "refusal" || !response.parsed_output) {
-      throw new Error(`no decision (stop_reason ${response.stop_reason})`);
+  async decide(request: BrainRequest): Promise<BrainReply> {
+    if (request.system.length + request.prompt.length > MAX_PROMPT_CHARS) {
+      throw new BrainFailure(`prompt is longer than ${MAX_PROMPT_CHARS} characters`, "no", null, this.model);
     }
-    return response.parsed_output;
+    const kind = requestKind(request.kind, request.step);
+    let response: Anthropic.Message;
+    try {
+      // `create`, not `parse`: a reply that fails to parse must still report what it cost.
+      response = await this.client.messages.create({
+        model: this.model,
+        max_tokens: MAX_OUTPUT_TOKENS[kind],
+        // The breakpoint sits at the end of the static prefix; nothing volatile comes before it.
+        system: [{ type: "text", text: request.system, cache_control: { type: "ephemeral" } }],
+        thinking: { type: "adaptive" },
+        output_config: { effort: this.effort[kind], format: { type: "json_schema", schema: DecisionFormat.schema } },
+        messages: [{ role: "user", content: request.prompt }],
+      });
+    } catch (error) {
+      if (error instanceof Anthropic.APIConnectionTimeoutError) {
+        throw new BrainFailure("the model timed out", "unknown", null, this.model);
+      }
+      if (error instanceof Anthropic.APIError) {
+        // A request the API rejected is not billed. Anything else (a 5xx, a dropped connection) may
+        // have run to completion on the far side, so it is never claimed to be free.
+        const status = typeof error.status === "number" ? error.status : null;
+        const billed = status !== null && status >= 400 && status < 500 ? "no" : "unknown";
+        throw new BrainFailure(`model request failed: ${error.message}`, billed, null, this.model, status);
+      }
+      throw new BrainFailure(`model request failed: ${error instanceof Error ? error.message : String(error)}`, "unknown", null, this.model);
+    }
+    const usage: Usage = {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+      cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: response.usage.cache_creation_input_tokens ?? 0,
+    };
+    if (response.stop_reason !== "end_turn") {
+      // A refusal, or an answer cut off by the output allowance: there is no decision to read.
+      throw new BrainFailure(`no decision (stop_reason ${response.stop_reason})`, "yes", usage, this.model);
+    }
+    const text = response.content.find((block): block is Anthropic.TextBlock => block.type === "text")?.text;
+    let parsed: ReturnType<typeof Decision.safeParse> | undefined;
+    try {
+      parsed = Decision.safeParse(JSON.parse(text ?? ""));
+    } catch {
+      parsed = undefined;
+    }
+    if (!parsed?.success) throw new BrainFailure("the model's reply did not match the decision schema", "yes", usage, this.model);
+    return { decision: parsed.data, usage, model: this.model };
   }
 }
 
-/** Used when no model API key is configured; Player selects only legal orders. */
+/** Used when no model API key is configured; the player then holds. */
 export class FallbackBrain implements Brain {
-  async decide(): Promise<Decision> {
-    throw new Error("no model provider configured");
+  async decide(): Promise<BrainReply> {
+    throw new BrainFailure("no model provider configured", "no");
   }
 }
 
@@ -97,25 +229,67 @@ export interface Validated {
   dropped: { text: string; reason: string }[];
 }
 
-/** Keep only orders that are on the legal menu; at most one order per unit. */
-export function validateOrders(decision: Decision, legal: Record<string, string[]>): Validated {
-  const menu = new Map<string, string>(); // order -> unit
-  for (const [unit, orders] of Object.entries(legal)) for (const o of orders) menu.set(o, unit);
+/** Spellings the model drifts into, folded onto the engine's canonical notation. */
+function normalise(text: string): string {
+  return text
+    .trim()
+    .toUpperCase()
+    .replace(/^[A-Z]+:\s*/, "")
+    .replace(/[.;,]+$/, "")
+    .replace(/\s*-+>\s*/g, " - ")
+    .replace(/\s+/g, " ")
+    .replace(/ (HOLDS?|STANDS?)$/, " H")
+    .replace(/ (SUPPORTS?) /, " S ")
+    .replace(/ (CONVOYS?) /, " C ")
+    .replace(/ (RETREATS?( TO)?) /, " R ")
+    .replace(/ (DISBANDS?)$/, " D")
+    .replace(/ (BUILDS?)$/, " B")
+    .replace(/ (MOVES?( TO)?|TO) /, " - ");
+}
+
+/** `A PAR B`, `F STP/SC B`, `A MUN D` -> `PAR`, `STP`, `MUN`. */
+function provinceOf(order: string): string | null {
+  return /^[AF] ([A-Z]{3})/.exec(order)?.[1] ?? null;
+}
+
+/**
+ * Keep only orders that are on the legal menu.
+ *
+ * Movement and retreat menus are keyed by unit: at most one order per unit, whichever spelling the
+ * model used. An adjustment menu is one list for the whole power: as many orders as the allowance
+ * (builds when positive, disbands when negative), each for a different province.
+ */
+export function validateOrders(decision: Pick<Decision, "orders">, legal: LegalOrders | Record<string, string[]>): Validated {
+  const byUnit = ("by_unit" in legal && typeof legal.by_unit === "object" ? legal.by_unit : legal) as Record<string, string[]>;
+  const allowance = "allowance" in legal && typeof legal.allowance === "number" ? legal.allowance : 0;
+  const menu = new Map<string, string>(); // canonical order -> unit
+  for (const [unit, options] of Object.entries(byUnit)) for (const o of options) menu.set(o, unit);
   const seen = new Set<string>();
+  const provinces = new Set<string>();
+  let adjustments = 0;
   const orders: string[] = [];
   const dropped: Validated["dropped"] = [];
   for (const raw of decision.orders) {
-    const text = raw.trim().toUpperCase().replace(/\s+/g, " ");
+    const text = normalise(raw);
     const unit = menu.get(text);
     if (unit === undefined) {
-      // repair: same unit, same destination, different spelling of the verb
-      const fixed = [...menu.keys()].find((o) => o.replace(/\s+/g, " ") === text.replace("->", "-"));
-      if (fixed) {
-        orders.push(fixed);
-        seen.add(menu.get(fixed)!);
-      } else {
-        dropped.push({ text: raw, reason: "not on the legal menu" });
+      dropped.push({ text: raw, reason: "not on the legal menu" });
+      continue;
+    }
+    if (unit === "") {
+      // The adjustment list. A waive may repeat; everything else is one order per province.
+      const province = provinceOf(text);
+      if (adjustments >= Math.abs(allowance)) {
+        dropped.push({ text: raw, reason: `more than the allowance of ${Math.abs(allowance)}` });
+        continue;
       }
+      if (province !== null && provinces.has(province)) {
+        dropped.push({ text: raw, reason: `second order for ${province}` });
+        continue;
+      }
+      if (province !== null) provinces.add(province);
+      adjustments++;
+      orders.push(text);
       continue;
     }
     if (seen.has(unit)) {
@@ -128,6 +302,36 @@ export function validateOrders(decision: Decision, legal: Record<string, string[
   return { orders, dropped };
 }
 
+/** What a player remembers between turns. Plain JSON, so it can be stored anywhere. */
+export interface Memory {
+  /** One line per turn, oldest first, each prefixed with its phase. */
+  diary: string[];
+  relationships: { power: string; stance: number; note: string }[];
+}
+
+export const MEMORY_LIMITS = { diaryEntries: 40, diaryChars: 400, noteChars: 200, relationships: 7 } as const;
+
+const clampStance = (stance: number): number => (Number.isFinite(stance) ? Math.max(-2, Math.min(2, Math.round(stance))) : 0);
+
+export type PlayInput = Omit<PromptInput, "power" | "persona" | "diary" | "relationships">;
+
+export interface Played {
+  decision: Decision;
+  validated: Validated;
+  /** True when the brain failed and the decision is the built-in one (every unit holds). */
+  fallback: boolean;
+  /** Why the brain failed, when it did. */
+  failure: BrainFailure | null;
+  step: Step;
+  model: string | null;
+  /** Tokens the turn used, whether or not it produced a decision. Null for an unmetered brain. */
+  usage: Usage | null;
+  /** What the turn cost in micro-dollars (0 for an unmetered brain or an unbilled failure). */
+  costMicros: number;
+  /** The prompt that was sent, for logs and evaluations. */
+  prompt: string;
+}
+
 export class Player {
   readonly power: string;
   readonly persona: string;
@@ -135,51 +339,106 @@ export class Player {
   diary: string[] = [];
   relationships: Map<string, { stance: number; note: string }> = new Map();
 
-  constructor(power: string, persona: string, brain: Brain) {
+  constructor(power: string, persona: string, brain: Brain, memory?: Memory) {
     this.power = power;
     this.persona = persona;
     this.brain = brain;
+    if (memory) this.restore(memory);
+  }
+
+  /** Everything this player remembers, bounded, ready to store. */
+  memory(): Memory {
+    return {
+      diary: this.diary.slice(-MEMORY_LIMITS.diaryEntries),
+      relationships: [...this.relationships].map(([power, r]) => ({ power, stance: r.stance, note: r.note })),
+    };
+  }
+
+  /** Replace this player's memory with a stored one. Tolerates anything a store hands back. */
+  restore(memory: Memory): void {
+    this.diary = (Array.isArray(memory.diary) ? memory.diary : [])
+      .filter((entry): entry is string => typeof entry === "string")
+      .slice(-MEMORY_LIMITS.diaryEntries)
+      .map((entry) => entry.slice(0, MEMORY_LIMITS.diaryChars));
+    this.relationships = new Map();
+    for (const r of Array.isArray(memory.relationships) ? memory.relationships : []) this.remember(r);
+  }
+
+  private remember(r: { power: string; stance: number; note: string }): void {
+    if (typeof r?.power !== "string") return;
+    const power = r.power.trim().toUpperCase().slice(0, 16);
+    if (!power || power === this.power) return;
+    if (!this.relationships.has(power) && this.relationships.size >= MEMORY_LIMITS.relationships) return;
+    this.relationships.set(power, {
+      stance: clampStance(Number(r.stance)),
+      note: String(r.note ?? "").slice(0, MEMORY_LIMITS.noteChars),
+    });
   }
 
   /**
-   * Decide a phase. Never throws on model misbehaviour: fallback orders come from the legal menu,
-   * and `fallback` is true so a caller with better orders of its own (the server's bot) can keep them.
+   * Decide one step of a phase. Never throws on model misbehaviour: the fallback decision holds
+   * every unit, says nothing and leaves memory alone, and `fallback` is true so a caller with
+   * better orders of its own (the server's bot) can keep them.
    */
-  async play(input: Omit<PromptInput, "power" | "persona" | "diary" | "relationships">): Promise<{
-    decision: Decision;
-    validated: Validated;
-    fallback: boolean;
-  }> {
+  async play(input: PlayInput): Promise<Played> {
+    const step: Step = input.step ?? "order";
     const full: PromptInput = {
       ...input,
+      step,
       power: this.power,
       persona: this.persona,
-      diary: this.diary.slice(-40),
+      diary: this.diary.slice(-MEMORY_LIMITS.diaryEntries),
       relationships: [...this.relationships].map(([power, r]) => ({ power, ...r })),
     };
+    const prompt = userPrompt(full);
     let decision: Decision;
-    let fallback = false;
+    let failure: BrainFailure | null = null;
+    let usage: Usage | null = null;
+    let model: string | null = null;
     try {
-      decision = await this.brain.decide(SYSTEM_PROMPT, userPrompt(full));
+      const reply = await this.brain.decide({ system: systemPrompt(input.map), prompt, kind: phaseKind(input.phase), step });
+      decision = reply.decision;
+      usage = reply.usage;
+      model = reply.model;
     } catch (e) {
-      fallback = true;
-      const fallbackOrders = Object.values(input.legal.by_unit).flatMap((menu) => {
-        if (menu.length === 0) return [];
-        return [menu[Math.floor(Math.random() * menu.length)]!];
-      });
+      failure = e instanceof BrainFailure ? e : new BrainFailure(e instanceof Error ? e.message : String(e), "unknown");
+      usage = failure.usage;
+      model = failure.model;
+      // Deterministic and harmless: hold in movement, and let the engine's own defaults (disband,
+      // waive) cover a retreat or adjustment.
+      const holds = Object.values(input.legal.by_unit).flatMap((menu) => menu.filter((o) => o.endsWith(" H")).slice(0, 1));
       decision = {
-        reasoning: `fallback: ${e instanceof Error ? e.message : String(e)}`,
-        orders: fallbackOrders,
+        reasoning: `fallback: ${failure.message}`,
+        orders: holds,
         messages: [],
         pledge: null,
         relationships: [],
-        diary: "The turn passed in silence.",
+        diary: "",
       };
     }
-    const validated = validateOrders(decision, input.legal.by_unit);
-    for (const r of decision.relationships) this.relationships.set(r.power, { stance: r.stance, note: r.note });
-    if (decision.diary) this.diary.push(`${input.phase}: ${decision.diary}`);
-    return { decision, validated, fallback };
+    const validated = validateOrders(decision, input.legal);
+    // One stray value must never cost the turn: clamp what the schema cannot enforce.
+    decision = {
+      ...decision,
+      relationships: decision.relationships.map((r) => ({ ...r, stance: clampStance(r.stance) })),
+    };
+    for (const r of decision.relationships) this.remember(r);
+    const entry = decision.diary.trim();
+    if (entry) {
+      const line = `${input.phase}${step === "negotiate" ? " (talks)" : ""}: ${entry}`.slice(0, MEMORY_LIMITS.diaryChars);
+      this.diary = [...this.diary, line].slice(-MEMORY_LIMITS.diaryEntries);
+    }
+    return {
+      decision,
+      validated,
+      fallback: failure !== null,
+      failure,
+      step,
+      model,
+      usage,
+      costMicros: usage && model ? costMicros(model, usage) : 0,
+      prompt,
+    };
   }
 }
 

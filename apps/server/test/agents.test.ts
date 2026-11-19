@@ -4,7 +4,7 @@
  * No test here calls the real API: the consumer's brain is replaced by a scripted one.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Brain, Decision } from "@cabal/agents";
+import type { Brain, BrainReply, BrainRequest, Decision } from "@cabal/agents";
 import { agentRuntime, playTurn } from "../src/agent-consumer.js";
 import { Client, type Seat, create, fireAlarm, inRoom, serverEnv, sleep, sql, start, stubOf, summary, until } from "./helpers.js";
 
@@ -23,12 +23,12 @@ afterAll(() => {
 function scripted(options: { gate?: Promise<void>; fail?: boolean; press?: boolean } = {}): { brain: Brain; calls: () => number } {
   let calls = 0;
   const brain: Brain = {
-    async decide(_system: string, prompt: string): Promise<Decision> {
+    async decide({ prompt }: BrainRequest): Promise<BrainReply> {
       calls++;
       await options.gate;
       if (options.fail) throw new Error("model unavailable");
-      const holds = [...prompt.matchAll(/\b([AF] [A-Z]{3}(?:\/[A-Z]{2})? H)\b/g)].map((m) => m[1]!);
-      return {
+      const holds = [...prompt.matchAll(/^ {2}([AF] [A-Z]{3}(?:\/[A-Z]{2})? H)$/gm)].map((m) => m[1]!);
+      const decision: Decision = {
         reasoning: "Hold the line.",
         orders: [...new Set(holds)],
         messages: options.press ? [{ to: "ALL", body: "The line holds." }, { to: "NOWHERE", body: "dropped" }] : [],
@@ -36,6 +36,7 @@ function scripted(options: { gate?: Promise<void>; fail?: boolean; press?: boole
         relationships: [],
         diary: "Held.",
       };
+      return { decision, usage: null, model: null };
     },
   };
   return { brain, calls: () => calls };
