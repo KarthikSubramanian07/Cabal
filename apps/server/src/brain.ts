@@ -10,8 +10,7 @@
  * if it arrives in time. If it does not (timeout, failure, budget, queue down), nothing needs to
  * happen: the orders already on file are adjudicated.
  *
- * `botBrain` is the seam for the Rust heuristic bot. When `@cabal/engine` exports `botOrders`,
- * its `orders` becomes a one-line call to that export and nothing else in the room changes.
+ * `botBrain` is the Rust heuristic bot (`botOrders` from `@cabal/engine`, wrapped in bot.ts).
  */
 import { botOrders } from "./bot.js";
 import type { Game } from "./engine.js";
@@ -24,10 +23,16 @@ export interface SeatBrain {
   readonly deliberates: boolean;
 }
 
+/**
+ * Where the in-room bot's orders come from. A seam for tests only, like `agentRuntime` for Claude:
+ * most suites are about the room, not about tactics, and swap in a bot that never fights.
+ */
+export const botRuntime: { orders: (game: Game, power: string, seed: string) => string[] } = { orders: botOrders };
+
 /** The default: free, instant, inside the Durable Object. */
 export const botBrain: SeatBrain = {
   id: "bot",
-  orders: (game, power, seed) => botOrders(game, power, seed),
+  orders: (game, power, seed) => botRuntime.orders(game, power, seed),
   deliberates: false,
 };
 
