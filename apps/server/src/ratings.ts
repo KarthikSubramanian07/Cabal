@@ -37,9 +37,14 @@ export const RATING_RULES = {
   minPlayers: 3,
   /** Two full game years (four movement phases) before a game is rated, so a draw cannot be farmed. */
   minMovementPhases: 4,
-  /** On the leaderboard: at least this many rated games and a deviation no wider than this. */
+  /**
+   * On the leaderboard: at least this many rated games and a deviation no wider than this. The
+   * board orders by `rating - 2 * rd`, so an uncertain rating already ranks low on its own; the
+   * floor only keeps off players the system knows next to nothing about. (A loser of a solo is
+   * paired only with the winner, so deviations fall slowly; 150 would take a dozen games.)
+   */
   establishedGames: 3,
-  establishedRd: 150,
+  establishedRd: 200,
 } as const;
 
 /** Bayesian priors: a newcomer starts at 90 percent reliable and 50 percent trusted. */
