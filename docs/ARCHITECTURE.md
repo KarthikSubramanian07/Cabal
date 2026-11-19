@@ -21,7 +21,7 @@ flowchart TB
       SM[Phase state machine]
       EngineS[cabal-engine.wasm\nadjudication + heuristic bot]
       SQL[(SQLite: seats, orders,\npress, pledges, phases, events)]
-      Alarm[Alarm: deadline]
+      Alarm[Alarm: deadline, reminder]
       WS --> SM --> EngineS --> SQL
       Alarm --> SM
     end
@@ -30,6 +30,8 @@ flowchart TB
     Queue[[Queue: cabal-agent-turns\nopt-in Claude seats]]
   end
 
+  PushSvc[(Browser push services\nFCM, Mozilla, Apple, WNS)]
+
   Client -->|same-origin HTTPS and WSS /api| Pages
   Pages -->|service binding SERVER| API
   API --> DO
@@ -37,6 +39,7 @@ flowchart TB
   DO -->|game over, seat taken| D1
   DO -->|Claude admission| Registry
   SM --> Queue --> Anthropic[(Anthropic API)]
+  DO -->|Web Push to away players| PushSvc
 ```
 
 Four principles:
@@ -160,7 +163,7 @@ stateDiagram-v2
 ```
 
 - Connections use the Durable Object WebSocket Hibernation API directly (`ctx.acceptWebSocket`, no framework). Each socket carries the seat it authenticated as in a serialised attachment, so it survives hibernation.
-- One alarm per object holds the phase deadline. On alarm: apply sealed defaults or holds for missing orders, adjudicate with the WASM engine, persist, broadcast, schedule the next alarm. The transaction is atomic inside the object.
+- One alarm per object serves every timer it has (`nextAlarmAt` in `deadlines.ts`): the phase deadline, the deadline reminder, a bounded pause, an AI turn running out, an adjudication retry, a lobby that never started and the index hand-off. On the deadline: apply sealed defaults or holds for missing orders, adjudicate with the WASM engine, persist, broadcast, schedule the next alarm. The transaction is atomic inside the object.
 - "Ready to advance": when all seated players mark ready, the deadline collapses to now.
 - Every adjudicated phase is an append-only row in `phases`, and every broadcast is an append-only row in `events` with a sequence number, so a reconnecting client asks for everything `since` its last `seq`. Replays are reads.
 
@@ -201,6 +204,21 @@ Identity is guest first. `POST /api/players` makes an account (a random id and a
 
 A signed-in player sends their secret as the bearer on create and join. The router resolves it and tells the room who the player is in the request body (rooms are reachable only through the router), so the seat binds to the player id: one seat per player per game, ever, and the seat token can be issued again on another device (`POST /api/games/:id/seat`). Anonymous play still works with a name and a seat token. Seat tokens never appear in URLs; a socket authenticates with its first `hello` frame.
 
+### 5.5 Notifications
+
+Web Push tells a signed-in player who is away from a game (no socket open for their seat) that it began, that a phase resolved and they have orders to write, that a private dispatch arrived, that their orders are due soon, and that it ended. A room collects these notices inside the same transaction as the change that caused them, so a rolled-back change tells nobody anything, and hands them to `notify.ts` once the change has committed (`ctx.waitUntil`). The deadline reminder is one more instant on the room's alarm: `PUSH_REMINDER_MINUTES` before the deadline, once per phase, in phases at least twice that long, for the players who can act and have filed nothing.
+
+- **Storage.** `push_subscriptions` (one row per browser, tied to the device session that subscribed it, so signing that device out forgets it by cascade; a player keeps five) and `notification_preferences` (one switch per kind) in D1, migration 0010.
+- **Delivery.** `push.ts` implements RFC 8291 message encryption (ECDH with the subscription key, HKDF with its auth secret, one AES-128-GCM record) and RFC 8292 VAPID (an ES256 JWT per push service, cached for eleven hours) with Web Crypto alone; npm `web-push` needs Node's `crypto` and `https`. A test reproduces RFC 8291's worked example byte for byte. Endpoints must be known push services over https, so the server never posts to an address a caller chose. A 404 or 410 deletes the subscription; other failures are counted and a subscription that fails twenty times in a row is dropped.
+- **Content.** A push decrypts to `{ kind, gameId, title, body, url, tag, sentAt }`: what happened and a link to the game, never orders, press text or anything sealed.
+- **Keys.** `VAPID_PUBLIC_KEY` is in `wrangler.jsonc`; the private key is the secret `VAPID_PRIVATE_KEY`. Without it push is off and no reminder is scheduled.
+
+### 5.6 Observability and metrics
+
+- **Logs.** One JSON object per line with `ts`, `level`, `event`, `service` (`worker`, `room`, `queue`) and `requestId`. The id is set where work enters (Cloudflare's ray id for HTTP, a fresh id for each socket frame, alarm and queue message), carried through every await by AsyncLocalStorage (`log.ts`), handed to a room in the `x-request-id` header and to its RPC methods as an argument, and returned to the client in `x-request-id`. Every HTTP request gets one `request` line with its route label, status and time. Logs never carry tokens, secrets, press text or addresses.
+- **Phase 1 metrics** (#57). The four success metrics of PLAN.md section 8 are events in D1 (`metric_events`, migration 0011), with no player, address or device in any row: a finished game is recorded by the index in the same batch as its own row; browsers send order round trips and landing-to-game times to `POST /api/metrics`, kept with the continent only; `scripts/report-datc.mjs` records the DATC case totals for a commit. `GET /api/metrics`, behind `ADMIN_TOKEN`, judges each against its target. No third-party analytics.
+- **Cold start** (#61). The engine logs, once per isolate, how long instantiation, the first game and the first adjudication took. `scripts/cold-start.mjs` measures them in fresh workerd processes and CI gates them; the numbers and how to read them in production are in [PERFORMANCE.md](PERFORMANCE.md#gameroom-cold-start).
+
 ## 6. Protocol
 
 The WebSocket protocol is specified in [PROTOCOL.md](PROTOCOL.md) and enforced with zod schemas in `@cabal/protocol`. Order text follows the MILA / Cicero notation (`A PAR - BUR`, `F NTH C A LON - BRE`, `A LON - BRE VIA`) so existing AI research tooling and saved games interoperate.
@@ -225,7 +243,7 @@ A Claude agent (`@cabal/agents`) is just another client. It receives the same st
 - `pnpm deploy:web` builds the engine and site and publishes `apps/web/dist` to Cloudflare Pages as `playcabal.pages.dev`.
 - `pnpm deploy:server` builds the engine and runs `wrangler deploy` for `apps/server`. Durable Object migrations are declared in `wrangler.jsonc`.
 - `pnpm deploy:all` does both (a bare `pnpm deploy` is a built-in pnpm command, not this script). Run it from an up to date `main` after CI is green.
-- CI (`.github/workflows/ci.yml`): Rust fmt, clippy, docs, tests and the DATC report; an adjudication benchmark gate; the wasm build with a gzip size budget; Node typecheck, lint, unit and workerd tests; Playwright; dependency and workflow audits; and a deploy dry run that bundles `cabal-server` with `wrangler deploy --dry-run` (no credentials) under a gzip size budget. The full deploy runbook is in [CONTRIBUTING.md](../CONTRIBUTING.md#deploying) and the decision in [ADR 0008](adr/0008-manual-wrangler-deploys.md).
+- CI (`.github/workflows/ci.yml`): Rust fmt, clippy, docs, tests and the DATC report; an adjudication benchmark gate; the wasm build with a gzip size budget; Node typecheck, lint, unit and workerd tests; Playwright; dependency and workflow audits; and a deploy dry run that bundles `cabal-server` with `wrangler deploy --dry-run` (no credentials) under a gzip size budget; and a GameRoom cold start gate (`cold-start` job) that measures fresh workerd processes on the base commit and on the change. The full deploy runbook is in [CONTRIBUTING.md](../CONTRIBUTING.md#deploying) and the decision in [ADR 0008](adr/0008-manual-wrangler-deploys.md).
 - Nightly (`stress.yml`): fuzzing, property tests with a larger case budget, and a bot arena: 300 seeded games between the three levels of the heuristic bot (`cabal arena`), failing on any illegal order, incomplete decision, self-contradicting order (a void support or convoy), panic, replay divergence or strength-order regression, with the summary and every saved game uploaded as an artifact. No model is called and no secret is needed.
 
 ## 10. Security and fairness
@@ -236,4 +254,5 @@ A Claude agent (`@cabal/agents`) is just another client. It receives the same st
 - Per-IP rate limits through Workers rate limiting bindings: game creation (`CREATE_LIMITER`), seat joins and seat recovery (`JOIN_LIMITER`), reads and socket upgrades (`READ_LIMITER`), and making or restoring accounts (`ACCOUNT_LIMITER`); changes to an account are limited per player (`PROFILE_LIMITER`).
 - Player secrets, seat tokens and recovery codes are stored only as hashes. A player secret that does not authenticate is refused, never treated as anonymous play.
 - Ratings count only games between signed-in humans: bots and anonymous seats are not opponents, unlisted games are not rated, a rated game must last two years and seat three distinct players, and a pledge counts towards a player's trust ledger only when it was made to another person.
+- Push subscriptions only reach known push services, and push payloads carry no orders, press text or tokens. Metrics events hold no personal data.
 - Multi-account heuristics and moderation hooks are not built and are not yet scheduled to an issue.

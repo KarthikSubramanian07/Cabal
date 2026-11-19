@@ -18,6 +18,9 @@ node packages/engine/bench/wasm-bench.mjs path/to/another/pkg
 
 # size, the way CI gates it
 gzip -c packages/engine/pkg/cabal_engine_bg.wasm | wc -c
+
+# the engine starting inside a GameRoom, in fresh workerd processes
+pnpm --filter @cabal/server cold-start -- --runs 7
 ```
 
 `wasm-bench.mjs` reports the fastest of 40 rounds for every call. On a shared
@@ -36,6 +39,7 @@ change. Cold start figures are the median of seven fresh Node processes.
 | Legal orders, all powers, fleet-heavy midgame, shared convoy search | `bench` job | same |
 | Engine wasm, gzip | `wasm` job, `WASM_SIZE_BUDGET_BYTES` | 409,000 bytes, about 6 percent above the build |
 | Worker bundle, gzip | `deploy-dry-run` job | 786,432 bytes (measured 755,828) |
+| GameRoom cold start, seven fresh workerd processes | `cold-start` job | each median under its ceiling in `apps/server/cold-start-budget.json`, and the engine's three parts, the first request and the first adjudication no more than 1.5 times the base commit's median plus 5 ms, same runner |
 
 The base commit and the change are benchmarked back to back on one runner,
 because shared runners differ from one another by far more than 30 percent. A
@@ -176,6 +180,65 @@ keep `opt-level = 3`.
 A function-level size profile (`twiggy`) shows no single large item: the
 biggest function is under 0.6 percent of the unstripped binary. An earlier
 experiment replacing stable sorts with unstable ones made the binary larger.
+
+## GameRoom cold start
+
+What a game pays the first time an isolate runs it: instantiating the engine's wasm module, building
+the room's first `Game`, and adjudicating its first phase. Issue #61.
+
+### How it is measured
+
+`apps/server/scripts/cold-start.mjs` starts a fresh `wrangler dev` for every run, so every run is a
+new workerd process with nothing loaded. It then goes the shortest way to a first adjudication
+through the public API only: `POST /api/games`, `POST /api/games/:id/start` with AI seats filling
+the table, a socket, `hello`, `ready`, and the first `results` frame. It times each request from
+outside and reads the engine's own three numbers from the structured lines the server logs once per
+isolate (`engine_ready`, `engine_first_game`, `engine_first_process`, see `apps/server/src/engine.ts`),
+so the measurement uses no private route. Seven runs; medians gate.
+
+| Step | What it covers |
+|---|---|
+| Engine instantiation | `ready(wasm)`: the `WebAssembly.Module` is precompiled by Wrangler, so this is instantiation and wasm-bindgen start-up |
+| First game | the room's first `new Game()` or `Game.resume()` |
+| First adjudication, engine only | the first `game.process()`, cold wasm code paths included |
+| First request | `POST /api/games` in a fresh process: Worker isolate, a new Durable Object, the three above minus the adjudication |
+| Start with AI seats | the bot ordering for six seats (its first run) |
+| Ready to results | the creator readies up; the room adjudicates and broadcasts |
+
+workerd's clock moves in whole milliseconds, so the engine's own figures are integers.
+
+### Numbers
+
+Apple M1, Node 24.14.0, engine 0.1.0, commit `a582be1`, a quiet machine, two runs:
+
+| Step | Median ms | Range |
+|---|---:|---|
+| Engine instantiation | 1.5 | 1 to 2 |
+| First game | 6 | 2 to 10 |
+| First adjudication, engine only | 9 | 7 to 11 |
+| First request: create a game | 176 | 143 to 210 |
+| Start with AI seats | 86 | 74 to 98 |
+| Ready to results | 78 | 78 |
+
+The same harness on the same laptop while dozens of other builds were running gave medians of 8, 10
+and 9 ms for the three engine parts and 1,175 ms for the first request: the engine barely moves under
+load, the request path (workerd, Durable Object creation, local SQLite) moves a lot. That is why CI
+compares the change with its base commit on one runner instead of with a number from elsewhere, and
+why the ceilings in `cold-start-budget.json` are about ten times a laptop's figures: they catch a
+start-up that has gone badly wrong, the comparison catches the gradual kind. The CI job writes its
+own table to the run summary and keeps the JSON of both runs as the `cold-start` artefact.
+
+Engine start-up is not the expensive part of a fresh room: together the three parts are about 15 ms
+of a first request that takes ten times that locally. The JavaScript bundle (zod above all) and
+Durable Object creation are larger, which is what the Worker bundle gate watches.
+
+### In production
+
+A deployed Worker's clock does not advance during pure computation (a Spectre mitigation), so the
+`engine_*` lines read near zero there. The production figures are the `cpuTime` and `wallTime`
+Workers Logs records for the invocation that carries an `engine_first_process` line (filter on
+`event`), and the client-side difference between a request to a fresh game code and to a warm one.
+These have not been recorded yet: they need a deploy that includes this harness and its log lines.
 
 ## Recorded baseline
 
