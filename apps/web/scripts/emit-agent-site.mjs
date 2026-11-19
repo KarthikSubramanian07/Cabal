@@ -130,6 +130,7 @@ function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHr
         <a class="brand" href="/" aria-label="Cabal home">${wordmarkSvg()}</a>
         <nav aria-label="Site">
           <a href="/games">Games</a>
+          <a href="/ledger">Ledger</a>
           <a href="/sandbox">Sandbox</a>
           <a href="/sandbox#how-to-play">How to play</a>
           <a href="/about"${current("/about")}>About</a>

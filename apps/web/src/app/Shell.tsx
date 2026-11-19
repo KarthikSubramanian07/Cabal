@@ -7,6 +7,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Wordmark } from "../brand/Wordmark.jsx";
 import { InstallButton } from "../pwa/InstallButton.jsx";
 import { UpdatePrompt } from "../pwa/UpdatePrompt.jsx";
+import { ProfileMenu } from "../profile/ProfileMenu.jsx";
 import { HowToPlay } from "./HowToPlay.jsx";
 import { useShortcuts } from "./prefs.js";
 import { Link, usePathname } from "./router.jsx";
@@ -69,6 +70,9 @@ export function Shell({ children }: { children: ReactNode }) {
           <Link href="/games" aria-current={route?.name === "games" ? "page" : undefined}>
             Games
           </Link>
+          <Link href="/ledger" aria-current={route?.name === "ledger" ? "page" : undefined}>
+            Ledger
+          </Link>
           <Link href="/sandbox" aria-current={route?.name === "sandbox" ? "page" : undefined}>
             Sandbox
           </Link>
@@ -88,6 +92,7 @@ export function Shell({ children }: { children: ReactNode }) {
             GitHub
           </a>
         </nav>
+        <ProfileMenu />
       </header>
 
       {children}
