@@ -141,7 +141,7 @@ export function HowToPlay({
           </p>
           <label className="setting">
             <input type="checkbox" checked={shortcuts} onChange={(e) => onShortcuts(e.target.checked)} />
-            Single-key shortcuts (<kbd>M</kbd> <kbd>S</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>D</kbd> <kbd>/</kbd>). Turn them off if
+            Single-key shortcuts (<kbd>M</kbd> <kbd>S</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>D</kbd> <kbd>/</kbd> <kbd>Space</kbd>). Turn them off if
             you use speech input or they get in your way.
           </label>
         </section>
@@ -164,6 +164,15 @@ export function HowToPlay({
             After every phase, Cabal shows each order with the reason it succeeded or failed. In multiplayer games a
             message can carry a sealed pledge to specific orders, and when the phase resolves every pledge is stamped
             kept or broken for the table to see.
+          </p>
+          <p>
+            Every resolved phase is kept. Step through them with the arrows above the orders, drag the scrubber, or
+            choose Replay
+            <span className="keys-only">
+              {" "}
+              (<kbd>Space</kbd>)
+            </span>{" "}
+            to watch the whole game play back, each phase inked in turn, at half, normal or double speed.
           </p>
         </section>
       </div>

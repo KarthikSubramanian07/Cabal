@@ -2,6 +2,8 @@ import type { CSSProperties } from "react";
 import type { PhaseRecord, PowerSummary } from "../game/useSandbox.js";
 import { type PhaseKind, describePhase, parseOrder, titleCase } from "../game/notation.js";
 import { receiptFor } from "../game/receipts.js";
+import { SPEEDS, type Speed, speedLabel } from "../game/replay.js";
+import { phaseLine } from "../game/describe.js";
 import { POWER_COLOR } from "../map/Board.jsx";
 
 export function PhaseHeader({ phase, status, viewing }: { phase: string; status: string; viewing: boolean }) {
@@ -242,35 +244,90 @@ export function PhaseStepper({
   viewing,
   livePhase,
   onView,
+  playing,
+  speed,
+  onPlay,
+  onPause,
+  onSpeed,
 }: {
   history: PhaseRecord[];
   viewing: number | null;
   livePhase: string;
+  /** A step, a jump or a scrub by the player. Playback pauses for it. */
   onView: (index: number | null) => void;
+  playing: boolean;
+  speed: Speed;
+  onPlay: () => void;
+  onPause: () => void;
+  onSpeed: (speed: Speed) => void;
 }) {
   if (history.length === 0) return null;
   const index = viewing ?? history.length;
   const go = (i: number) => onView(i >= history.length ? null : Math.max(0, i));
+  const name = (i: number) => (i >= history.length ? `${phaseLine(livePhase)}, now` : `${phaseLine(history[i]!.phase)} results`);
   return (
     <nav className="stepper" aria-label="Phase history">
-      <button type="button" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Previous phase">
-        ‹
-      </button>
-      <select
-        value={index}
-        onChange={(e) => go(Number(e.target.value))}
-        aria-label="Jump to phase"
-      >
-        {history.map((h, i) => (
-          <option key={h.phase + i} value={i}>
-            {h.phase} results
-          </option>
-        ))}
-        <option value={history.length}>{livePhase} (now)</option>
-      </select>
-      <button type="button" onClick={() => go(index + 1)} disabled={viewing === null} aria-label="Next phase">
-        ›
-      </button>
+      <div className="stepper-row">
+        <button
+          type="button"
+          className="replay"
+          onClick={playing ? onPause : onPlay}
+          aria-label={playing ? "Pause the replay" : viewing === null ? "Replay the game from the start" : "Replay from here"}
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            {playing ? (
+              <>
+                <rect x="3" y="2.5" width="3.4" height="11" />
+                <rect x="9.6" y="2.5" width="3.4" height="11" />
+              </>
+            ) : (
+              <path d="M4 2.2v11.6L13.6 8z" />
+            )}
+          </svg>
+          <span className="replay-label">{playing ? "Pause" : "Replay"}</span>
+        </button>
+        <button type="button" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Previous phase">
+          ‹
+        </button>
+        <select value={index} onChange={(e) => go(Number(e.target.value))} aria-label="Jump to phase">
+          {history.map((h, i) => (
+            <option key={h.phase + i} value={i}>
+              {h.phase} results
+            </option>
+          ))}
+          <option value={history.length}>{livePhase} (now)</option>
+        </select>
+        <button type="button" onClick={() => go(index + 1)} disabled={viewing === null} aria-label="Next phase">
+          ›
+        </button>
+      </div>
+      <div className="stepper-row scrub">
+        <input
+          type="range"
+          className="scrubber"
+          min={0}
+          max={history.length}
+          step={1}
+          value={index}
+          onChange={(e) => go(Number(e.target.value))}
+          aria-label="Scrub through the game"
+          aria-valuetext={name(index)}
+          style={{ "--at": `${(index / history.length) * 100}%` } as CSSProperties}
+        />
+        <div className="speeds" role="group" aria-label="Replay speed">
+          {SPEEDS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              aria-pressed={s === speed}
+              aria-label={`${speedLabel(s).short} ${speedLabel(s).long.toLowerCase()}`}
+              onClick={() => onSpeed(s)}
+            >
+              {speedLabel(s).short}
+            </button>
+          ))}
+        </div>
+      </div>
     </nav>
   );
 }
