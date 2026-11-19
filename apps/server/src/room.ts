@@ -83,7 +83,7 @@ import {
 import { gameIndex } from "./game-index.js";
 import { hashToken, mintToken, parseToken, randomId, sameHash } from "./tokens.js";
 import { countsForLedger } from "./ratings.js";
-import { judgeOrders, legalOrders } from "./validate.js";
+import { checkPledge, judgeOrders } from "./validate.js";
 
 type Status = "lobby" | "active" | "paused" | "finished" | "abandoned";
 
@@ -1685,7 +1685,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!seat || seat.eliminated === 1) return { code: "seat_inactive", message: "this seat cannot submit orders" };
     if (phase !== game.phase()) return { code: "stale_phase", message: `current phase is ${game.phase()}` };
     const kind = this.phaseKind();
-    const { accepted, verdicts } = judgeOrders(game, power, kind, orders, (text) => this.canonicalOwnOrder(text, kind, power));
+    const { accepted, verdicts } = judgeOrders(game, power, kind, orders);
     const rejected = verdicts.filter((v) => !v.ok).map((v) => ({ text: v.text, reason: v.reason }));
     // A Claude turn with nothing usable leaves the bot's orders standing.
     if (source === "claude" && accepted.length === 0) return { accepted, rejected, verdicts };
@@ -2030,21 +2030,15 @@ export class GameRoom extends DurableObject<Env> {
     let canonical: string[] | null = null;
     let seal: { nonce: string; commitment: string } | null = null;
     if (pledge) {
+      // A pledge is a promise about the pledger's own units, judged by the engine against the
+      // board: an order for a unit the pledger does not have would be stamped kept without ever
+      // being at risk. What comes back is the canonical text the receipt will be judged on.
       try {
-        canonical = pledge.orders.map((o) => this.canonicalOwnOrder(o, kind, from));
+        for (const o of pledge.orders) this.canonicalOwnOrder(o, kind, from);
+        canonical = checkPledge(this.game!, from, pledge.orders);
       } catch (e) {
         return { code: "bad_pledge", message: e instanceof Error ? e.message : String(e) };
       }
-      // A pledge is a promise about the pledger's own units. Syntax is not enough: an order for a
-      // unit the pledger does not have would be stamped kept without ever being at risk.
-      const legal = legalOrders(this.game!, from, kind, (text) => this.canonicalOwnOrder(text, kind, from));
-      const resolved = canonical.map((o) => legal.resolve(o));
-      const stranger = resolved.indexOf(null);
-      if (stranger >= 0) {
-        return { code: "bad_pledge", message: `${canonical[stranger]} is not an order one of your units can be given this phase` };
-      }
-      // On file under the same spelling the pledger's orders will have, so the receipt compares like with like.
-      canonical = resolved as string[];
       const nonce = pledge.nonce ?? randomNonce();
       seal = { nonce, commitment: pledgeCommit(canonical, nonce) };
       // A client that sealed the pledge itself must get back exactly the seal it made.
