@@ -74,9 +74,10 @@
   --space-10: 40px;
   --gutter: 18px;
 
-  /* ---- shape */
-  --radius: 4px;
-  --radius-sm: 3px;
+  /* ---- shape: square cornered, as docs/BRAND.md asks. Every corner reads these, so there is
+     one place to look; pieces and seals on the board are drawn shapes, not chrome. */
+  --radius: 0;
+  --radius-sm: 0;
   --hit: 44px;
 
   /* ---- motion: physical and deliberate. Everything is switched off under reduced motion. */

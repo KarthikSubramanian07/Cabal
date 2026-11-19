@@ -5,7 +5,7 @@ dialog.how {
   max-height: calc(100vh - 48px);
   padding: 0;
   border: 1px solid var(--ink);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--paper);
   color: var(--ink);
 }
