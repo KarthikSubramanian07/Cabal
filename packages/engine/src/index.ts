@@ -13,15 +13,21 @@ import init, * as wasm from "../pkg/cabal_engine.js";
 export type {
   BuildInfo,
   DislodgedInfo,
+  DislodgedRecord,
+  Divergence,
   Explanation,
   LegalOrders,
   MapInfo,
   OrderResult,
   OrdersByPower,
   PhaseOutcome,
+  PledgeRecord,
   PowerInfo,
+  PressMessage,
   ProvinceInfo,
+  ReplayReport,
   State,
+  StateExtras,
 } from "../pkg/cabal_engine.js";
 
 export { Game } from "../pkg/cabal_engine.js";
@@ -76,7 +82,27 @@ export const pledgeOpens = (
   nonceHex: string,
 ): boolean => wasm.pledgeOpens(commitment, orders, nonceHex);
 
-/** A receipt: `kept`, `broken` or `void`. */
+/**
+ * Replay a saved game (JSON text) and report every divergence from the record:
+ * orders, results, dislodgements, phase names, units, centres, retreats, builds
+ * and the outcome. `divergences` is empty when the engine reproduces the file.
+ * Throws only when the file cannot be replayed at all.
+ *
+ * This is the explicit check. Loading a game you trust does not need it:
+ * `Game.resume(saved)` and `Game.fromSnapshot(snapshot, saved)` adjudicate
+ * nothing from the past, so they keep working across engine upgrades.
+ */
+export const verifySaved = (
+  saved: string,
+  rulebook?: string,
+): wasm.ReplayReport => wasm.verifySaved(saved, rulebook);
+
+/**
+ * A receipt from order text alone: `kept`, `broken` or `void`. It cannot tell
+ * silence from having nothing to order, so an empty submission is `void`.
+ * With a game at hand use `game.pledgeReceipt(index, power, pledged, submitted)`,
+ * which judges against the board and calls that silence `broken`.
+ */
 export const pledgeReceipt = (
   pledged: string[],
   submitted: string[],

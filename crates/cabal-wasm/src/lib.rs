@@ -8,14 +8,18 @@
 use std::collections::HashMap;
 
 use cabal_engine::geo::{Map, Power, SupplyCenter, Terrain, UnitKind};
-use cabal_engine::json::{MilaState, SavedGame, province_code, state_from_mila, state_to_mila};
+use cabal_engine::json::{
+    MilaMessage, MilaState, SavedGame, SavedPledge, province_code, state_from_mila,
+    state_to_mila_with,
+};
 use cabal_engine::order::AnyOrder;
 use cabal_engine::outcome::{AdjustOutcome, RetreatOutcome};
 use cabal_engine::parse::parse;
 use cabal_engine::rulebook::Rulebook;
 use cabal_engine::state::PhaseKind;
 use cabal_engine::text::{
-    adjust_text, describe_outcome, order_text, outcome_code, retreat_text, unit_text,
+    adjust_text, describe_outcome, order_text, outcome_code, retreat_text, retreat_text_in,
+    unit_text,
 };
 use cabal_engine::{Game as EngineGame, PhaseResult, Status};
 use serde::{Deserialize, Serialize};
@@ -145,8 +149,33 @@ pub struct State {
     pub homes: HashMap<String, Vec<String>>,
     /// Retreat phase only: legal retreat destinations per dislodged unit.
     pub retreats: HashMap<String, HashMap<String, Vec<String>>>,
-    /// Adjustment phase only: build allowance and buildable home centres.
+    /// Adjustment phase only: build allowance and the centres open to a build
+    /// under the game's rulebook.
     pub builds: HashMap<String, BuildInfo>,
+    /// Retreat phase only: what makes the state lossless. Keep it when passing a
+    /// state back to `Game.fromState`; without it the restrictions are rebuilt
+    /// from `retreats`.
+    #[tsify(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cabal: Option<StateExtras>,
+}
+
+/// Where each dislodged unit was attacked from, and where standoffs occurred.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug, Default)]
+pub struct StateExtras {
+    pub dislodged: Vec<DislodgedRecord>,
+    /// Provinces left vacant by a standoff; closed to retreats.
+    pub standoffs: Vec<String>,
+}
+
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug, Default)]
+pub struct DislodgedRecord {
+    /// `A MUN`
+    pub unit: String,
+    /// Province the attacker came from; closed to this unit's retreat.
+    pub attacker_from: String,
+    /// The attacker arrived by convoy, so its origin is open after all.
+    pub by_convoy: bool,
 }
 
 #[derive(Tsify, Serialize, Deserialize, Clone, Debug, Default)]
@@ -180,6 +209,18 @@ impl From<MilaState> for State {
                     )
                 })
                 .collect(),
+            cabal: m.cabal.map(|c| StateExtras {
+                dislodged: c
+                    .dislodged
+                    .into_iter()
+                    .map(|d| DislodgedRecord {
+                        unit: d.unit,
+                        attacker_from: d.attacker_from,
+                        by_convoy: d.by_convoy,
+                    })
+                    .collect(),
+                standoffs: c.standoffs,
+            }),
         }
     }
 }
@@ -209,6 +250,18 @@ impl From<State> for MilaState {
                     )
                 })
                 .collect(),
+            cabal: s.cabal.map(|c| cabal_engine::json::StateExtras {
+                dislodged: c
+                    .dislodged
+                    .into_iter()
+                    .map(|d| cabal_engine::json::DislodgedRecord {
+                        unit: d.unit,
+                        attacker_from: d.attacker_from,
+                        by_convoy: d.by_convoy,
+                    })
+                    .collect(),
+                standoffs: c.standoffs,
+            }),
         }
     }
 }
@@ -251,10 +304,87 @@ pub struct PhaseOutcome {
     pub standoffs: Vec<String>,
     /// Units removed by the civil disorder rule (adjustment phases).
     pub civil_disorder: Vec<String>,
-    /// State after the phase, named with the next phase.
+    /// State after this phase, named with the phase that followed it.
     pub next: State,
-    /// `active`, `solo:<POWER>` or `draw`.
+    /// How the game stood after this phase: `active`, `solo:<POWER>` or `draw`.
+    /// Only the last phase of a finished game is anything but `active`.
     pub status: String,
+}
+
+/// A press message, as recorded in a saved game.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug, Default)]
+pub struct PressMessage {
+    pub sender: String,
+    /// A power name, or `ALL`.
+    pub recipient: String,
+    /// Phase the message was sent in; left empty, the current phase is used.
+    #[tsify(optional)]
+    #[serde(default)]
+    pub phase: String,
+    /// Any integer clock the host uses (milliseconds, seconds, a counter).
+    pub time_sent: u64,
+    pub message: String,
+}
+
+/// A pledge, as recorded in a saved game.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug, Default)]
+pub struct PledgeRecord {
+    /// Recording a pledge with the id of an earlier one replaces it.
+    pub id: String,
+    /// Phase the pledge binds (`S1901M`).
+    pub phase: String,
+    pub pledger: String,
+    /// A power name, or `ALL`.
+    pub audience: String,
+    pub sealed: bool,
+    /// Canonical order text.
+    pub orders: Vec<String>,
+    #[tsify(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commitment: Option<String>,
+    #[tsify(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+    /// `kept`, `broken` or `void`, once the phase is adjudicated.
+    #[tsify(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<String>,
+}
+
+/// One disagreement between a saved game and the engine, from `verifySaved`.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+pub struct Divergence {
+    /// The phase being adjudicated when the difference appeared.
+    pub phase: String,
+    /// `orders`, `results`, `dislodged`, `phase_name`, `units`, `centers`,
+    /// `retreats`, `builds`, `outcome` or `export`.
+    pub field: String,
+    /// The power, unit or order concerned.
+    pub subject: String,
+    /// What the file records.
+    pub expected: String,
+    /// What the engine produced.
+    pub got: String,
+}
+
+/// The result of replaying a saved game with `verifySaved`.
+#[derive(Tsify, Serialize, Deserialize, Clone, Debug)]
+#[tsify(missing_as_null)]
+pub struct ReplayReport {
+    pub id: String,
+    pub map: String,
+    /// Edition the replay ran under.
+    pub rulebook: String,
+    /// Engine version that recorded the game, when the file says.
+    pub recorded_by: Option<String>,
+    /// Engine version that replayed it.
+    pub engine: String,
+    /// Whether the file was held to the exact standard of Cabal-written files.
+    pub strict: bool,
+    /// Number of phases adjudicated.
+    pub phases: usize,
+    /// Empty when the engine reproduces the record.
+    pub divergences: Vec<Divergence>,
 }
 
 /// Why a movement phase resolved as it did, from `Game.explain`.
@@ -336,7 +466,13 @@ fn typed_orders(game: &EngineGame, orders: &OrdersByPower) -> Result<Vec<AnyOrde
     Ok(out)
 }
 
-fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOutcome {
+/// The outcome of adjudicated phase `index` (archived phases count first).
+fn outcome_of(game: &EngineGame, index: usize) -> Option<PhaseOutcome> {
+    let record = game.record_at(index)?;
+    let record: &cabal_engine::PhaseRecord = &record;
+    // the state this phase led to, not the state the game is in now
+    let after = game.state_after(index)?;
+    let last = index + 1 == game.phase_count();
     let map = game.map();
     let pos = &record.state.position;
     let power_name = |p: cabal_engine::Power| map.power(p).name.to_ascii_uppercase();
@@ -360,9 +496,8 @@ fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOut
                     reason: describe_outcome(map, out),
                 });
             }
-            // retreat options come from the state after the phase, cloned once per phase
+            // retreat options come from the state after the phase
             if !r.dislodged.is_empty() {
-                let after = game_state_after(game, record);
                 for d in &r.dislodged {
                     let options = cabal_engine::legal::legal_retreats(map, &after, d.unit.power)
                         .remove(&d.unit.province())
@@ -416,7 +551,7 @@ fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOut
                 results.push(OrderResult {
                     power: power_name(o.power),
                     unit,
-                    order: retreat_text(map, pos, o),
+                    order: retreat_text_in(map, &record.state, o),
                     ok,
                     code: code.to_string(),
                     reason,
@@ -443,15 +578,19 @@ fn outcome_of(game: &EngineGame, record: &cabal_engine::PhaseRecord) -> PhaseOut
             civil_disorder = r.civil_disorder.iter().map(|u| unit_text(map, u)).collect();
         }
     }
-    PhaseOutcome {
+    Some(PhaseOutcome {
         phase: record.state.phase.to_string(),
         results,
         dislodged,
         standoffs,
         civil_disorder,
-        next: state_to_mila(map, &game.state).into(),
-        status: status_text(map, game.status),
-    }
+        next: state_to_mila_with(map, &after, game.rulebook).into(),
+        status: if last {
+            status_text(map, game.status)
+        } else {
+            "active".to_string()
+        },
+    })
 }
 
 #[cfg(all(test, target_arch = "wasm32"))]
@@ -506,18 +645,6 @@ mod wasm_tests {
     }
 }
 
-/// The game state right after `record` (the current state when `record` is the last one).
-fn game_state_after(
-    game: &EngineGame,
-    record: &cabal_engine::PhaseRecord,
-) -> cabal_engine::GameState {
-    let idx = game.history.iter().position(|r| std::ptr::eq(r, record));
-    match idx {
-        Some(i) if i + 1 < game.history.len() => game.history[i + 1].state.clone(),
-        _ => game.state.clone(),
-    }
-}
-
 // ---------- Game ----------
 
 /// A game in progress. Holds the full phase history for replays and exports.
@@ -536,7 +663,9 @@ impl Game {
         })
     }
 
-    /// Resume from a state in MILA layout (no history).
+    /// Resume from a state in MILA layout (no history). A state from
+    /// `Game.state()` comes back exactly; one that lost its `cabal` extras on the
+    /// way keeps the retreat options it records.
     #[wasm_bindgen(js_name = fromState)]
     pub fn from_state(state: Ts<State>, rulebook: Option<String>) -> Result<Game, JsError> {
         let map = Map::standard();
@@ -548,14 +677,49 @@ impl Game {
         })
     }
 
-    /// Replay a MILA saved game (JSON text) through the engine.
+    /// Replay a MILA saved game (JSON text) through the engine, adjudicating
+    /// every phase again. Throws when the engine does not reproduce a recorded
+    /// position. The rulebook recorded in the file wins; `rulebook` is only the
+    /// fallback for files that name none.
+    ///
+    /// To continue a game you trust (your own storage), use `Game.resume` or
+    /// `Game.fromSnapshot`: they cannot fail because a ruling was corrected.
     #[wasm_bindgen(js_name = fromSaved)]
     pub fn from_saved(json: &str, rulebook: Option<String>) -> Result<Game, JsError> {
-        let saved: SavedGame =
-            serde_json::from_str(json).map_err(|e| JsError::new(&e.to_string()))?;
+        let saved = parse_saved(json)?;
         let inner = EngineGame::from_saved(&saved, rulebook_of(rulebook)?)
             .map_err(|e| JsError::new(&e.to_string()))?;
         Ok(Game { inner })
+    }
+
+    /// Continue a saved game (JSON text) without adjudicating anything: the last
+    /// recorded state becomes the current state and earlier phases are kept
+    /// verbatim as history. An engine upgrade can never make this fail.
+    pub fn resume(json: &str, rulebook: Option<String>) -> Result<Game, JsError> {
+        let saved = parse_saved(json)?;
+        let inner = EngineGame::resume(&saved, rulebook_of(rulebook)?)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(Game { inner })
+    }
+
+    /// Restore from `snapshot()` text. With `saved` (saved game JSON text) as
+    /// history, phases the snapshot covers are kept verbatim and only phases
+    /// recorded after it are adjudicated; without it the record starts empty.
+    #[wasm_bindgen(js_name = fromSnapshot)]
+    pub fn from_snapshot(snapshot: &str, saved: Option<String>) -> Result<Game, JsError> {
+        let snapshot: cabal_engine::snapshot::Snapshot =
+            serde_json::from_str(snapshot).map_err(|e| JsError::new(&e.to_string()))?;
+        let saved = saved.as_deref().map(parse_saved).transpose()?;
+        let inner = EngineGame::from_snapshot(&snapshot, saved.as_ref())
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(Game { inner })
+    }
+
+    /// The current state as lossless JSON text, constant in size: board, retreat
+    /// restrictions, rulebook, outcome. Persist it next to `toSaved` and restore
+    /// with `Game.fromSnapshot`.
+    pub fn snapshot(&self) -> Result<String, JsError> {
+        serde_json::to_string(&self.inner.snapshot()).map_err(|e| JsError::new(&e.to_string()))
     }
 
     pub fn phase(&self) -> String {
@@ -570,13 +734,19 @@ impl Game {
         status_text(self.inner.map(), self.inner.status)
     }
 
+    /// Number of adjudicated phases, including those restored as history.
     #[wasm_bindgen(js_name = historyLength)]
     pub fn history_length(&self) -> usize {
-        self.inner.history.len()
+        self.inner.phase_count()
     }
 
     pub fn state(&self) -> Result<Ts<State>, JsError> {
-        Ok(State::from(state_to_mila(self.inner.map(), &self.inner.state)).into_ts()?)
+        Ok(State::from(state_to_mila_with(
+            self.inner.map(),
+            &self.inner.state,
+            self.inner.rulebook,
+        ))
+        .into_ts()?)
     }
 
     /// Canonicalise movement orders against the actual board before submission.
@@ -653,7 +823,10 @@ impl Game {
                         .unwrap_or_default();
                     by_unit.insert(
                         unit,
-                        orders.iter().map(|o| retreat_text(map, pos, o)).collect(),
+                        orders
+                            .iter()
+                            .map(|o| retreat_text_in(map, &self.inner.state, o))
+                            .collect(),
                     );
                 }
             }
@@ -677,18 +850,17 @@ impl Game {
         self.inner
             .process(&typed)
             .map_err(|e| JsError::new(&e.to_string()))?;
-        let record = self.inner.history.last().expect("phase recorded");
-        Ok(outcome_of(&self.inner, record).into_ts()?)
+        let last = self.inner.phase_count() - 1;
+        let outcome = outcome_of(&self.inner, last).expect("phase recorded");
+        Ok(outcome.into_ts()?)
     }
 
-    /// Outcome of a past phase by index into the history.
+    /// Outcome of a past phase by index into the history. `next` and `status`
+    /// describe the game right after that phase, not as it stands now.
     pub fn outcome(&self, index: usize) -> Result<Ts<PhaseOutcome>, JsError> {
-        let record = self
-            .inner
-            .history
-            .get(index)
-            .ok_or_else(|| JsError::new("no such phase"))?;
-        Ok(outcome_of(&self.inner, record).into_ts()?)
+        let outcome =
+            outcome_of(&self.inner, index).ok_or_else(|| JsError::new("no such phase"))?;
+        Ok(outcome.into_ts()?)
     }
 
     /// Why the movement phase at `index` in the history resolved as it did: the
@@ -698,8 +870,7 @@ impl Game {
     pub fn explain(&self, index: usize) -> Result<Ts<Explanation>, JsError> {
         let record = self
             .inner
-            .history
-            .get(index)
+            .record_at(index)
             .ok_or_else(|| JsError::new("no such phase"))?;
         if !matches!(record.result, PhaseResult::Movement(_)) {
             return Err(JsError::new(&format!(
@@ -736,11 +907,171 @@ impl Game {
         serde_json::to_string(&self.inner.to_saved(id)).map_err(|e| JsError::new(&e.to_string()))
     }
 
-    /// End the game by agreement.
+    /// End the game by agreement. `members` are the powers sharing the draw;
+    /// left out, every power still on the board shares it.
     #[wasm_bindgen(js_name = declareDraw)]
-    pub fn declare_draw(&mut self) {
-        self.inner.declare_draw();
+    pub fn declare_draw(&mut self, members: Option<Vec<String>>) -> Result<(), JsError> {
+        match members {
+            None => self.inner.declare_draw(),
+            Some(names) => {
+                let map = self.inner.map();
+                let powers = names
+                    .iter()
+                    .map(|n| {
+                        map.find_power(n)
+                            .ok_or_else(|| JsError::new(&format!("unknown power {n}")))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.inner.declare_draw_among(&powers);
+            }
+        }
+        Ok(())
     }
+
+    /// The powers sharing the draw (full names), empty unless the game is drawn.
+    #[wasm_bindgen(js_name = drawMembers)]
+    pub fn draw_members(&self) -> Vec<String> {
+        let map = self.inner.map();
+        self.inner
+            .draw_members
+            .iter()
+            .map(|&p| map.power(p).name.to_ascii_uppercase())
+            .collect()
+    }
+
+    /// Name of the rulebook edition in play: `2023`, `1982`, `1971` or `dptg`.
+    pub fn rulebook(&self) -> String {
+        cabal_engine::json::edition_name(self.inner.rulebook).to_string()
+    }
+
+    /// Attach a press message to the current phase so it is saved with the game.
+    #[wasm_bindgen(js_name = recordMessage)]
+    pub fn record_message(&mut self, message: Ts<PressMessage>) -> Result<(), JsError> {
+        let m: PressMessage = message.to_rust()?;
+        self.inner.record_message(MilaMessage {
+            sender: m.sender,
+            recipient: m.recipient,
+            phase: m.phase,
+            time_sent: m.time_sent,
+            message: m.message,
+        });
+        Ok(())
+    }
+
+    /// Record a pledge so it is saved with the game. Recording one with the id
+    /// of an earlier pledge replaces it, which is how a receipt is added.
+    #[wasm_bindgen(js_name = recordPledge)]
+    pub fn record_pledge(&mut self, pledge: Ts<PledgeRecord>) -> Result<(), JsError> {
+        let p: PledgeRecord = pledge.to_rust()?;
+        let receipt = match p.receipt.as_deref() {
+            None => None,
+            Some("kept") => Some(cabal_engine::pledge::Receipt::Kept),
+            Some("broken") => Some(cabal_engine::pledge::Receipt::Broken),
+            Some("void") => Some(cabal_engine::pledge::Receipt::Void),
+            Some(other) => return Err(JsError::new(&format!("unknown receipt {other}"))),
+        };
+        self.inner.record_pledge(SavedPledge {
+            id: p.id,
+            phase: p.phase,
+            pledger: p.pledger,
+            audience: p.audience,
+            sealed: p.sealed,
+            orders: p.orders,
+            commitment: p.commitment,
+            nonce: p.nonce,
+            receipt,
+        });
+        Ok(())
+    }
+
+    /// Validate a pledge `power` wants to make in the current phase and return
+    /// its orders in canonical text. Throws when the pledge is empty, unreadable,
+    /// not a legal order, or about a unit `power` does not command.
+    #[wasm_bindgen(js_name = pledgeCheck)]
+    pub fn pledge_check(&self, power: &str, orders: Vec<String>) -> Result<Vec<String>, JsError> {
+        let map = self.inner.map();
+        let p = map
+            .find_power(power)
+            .ok_or_else(|| JsError::new(&format!("unknown power {power}")))?;
+        cabal_engine::pledge::check(map, &self.inner.state, p, &orders)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// The receipt for a pledge made by `power` in adjudicated phase `index`,
+    /// judged against the board that phase started from: `kept`, `broken` or
+    /// `void`. Submitting nothing while having units to order is `broken`;
+    /// `void` is for a pledge that never bound anything.
+    #[wasm_bindgen(js_name = pledgeReceipt)]
+    pub fn pledge_receipt(
+        &self,
+        index: usize,
+        power: &str,
+        pledged: Vec<String>,
+        submitted: Vec<String>,
+    ) -> Result<String, JsError> {
+        let map = self.inner.map();
+        let p = map
+            .find_power(power)
+            .ok_or_else(|| JsError::new(&format!("unknown power {power}")))?;
+        let record = self
+            .inner
+            .record_at(index)
+            .ok_or_else(|| JsError::new("no such phase"))?;
+        let receipt =
+            cabal_engine::pledge::receipt_for(map, &record.state, p, &pledged, &submitted);
+        Ok(receipt_text(receipt).to_string())
+    }
+}
+
+fn parse_saved(json: &str) -> Result<SavedGame, JsError> {
+    serde_json::from_str(json).map_err(|e| JsError::new(&e.to_string()))
+}
+
+fn receipt_text(receipt: cabal_engine::pledge::Receipt) -> &'static str {
+    match receipt {
+        cabal_engine::pledge::Receipt::Kept => "kept",
+        cabal_engine::pledge::Receipt::Broken => "broken",
+        cabal_engine::pledge::Receipt::Void => "void",
+    }
+}
+
+/// Replay a saved game (JSON text) and report every way the engine disagrees
+/// with it: orders, results, dislodgements, phase names, units, centres,
+/// retreats, builds and the outcome. An empty `divergences` list means the
+/// engine reproduces the record. Throws only when the file cannot be replayed
+/// at all. `rulebook` is the fallback for files that name none.
+#[wasm_bindgen(js_name = verifySaved)]
+pub fn verify_saved(json: &str, rulebook: Option<String>) -> Result<Ts<ReplayReport>, JsError> {
+    let saved = parse_saved(json)?;
+    let report = EngineGame::verify_saved(&saved, rulebook_of(rulebook)?)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    let field = |f: cabal_engine::verify::DivergenceField| {
+        serde_json::to_value(f)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default()
+    };
+    Ok(ReplayReport {
+        id: report.id,
+        map: report.map,
+        rulebook: report.rulebook,
+        recorded_by: report.recorded_by,
+        engine: report.engine,
+        strict: report.strict,
+        phases: report.phases,
+        divergences: report
+            .divergences
+            .into_iter()
+            .map(|d| Divergence {
+                phase: d.phase,
+                field: field(d.field),
+                subject: d.subject,
+                expected: d.expected,
+                got: d.got,
+            })
+            .collect(),
+    }
+    .into_ts()?)
 }
 
 // ---------- stateless helpers ----------
@@ -828,13 +1159,10 @@ pub fn pledge_opens(
     Ok(cabal_engine::pledge::opens(commitment, &orders, &nonce))
 }
 
-/// `kept`, `broken` or `void` (a *receipt*).
+/// `kept`, `broken` or `void` (a *receipt*), from order text alone. With no
+/// board it cannot tell silence from having nothing to order and calls an empty
+/// submission `void`; a host that has the game should use `Game.pledgeReceipt`.
 #[wasm_bindgen(js_name = pledgeReceipt)]
 pub fn pledge_receipt(pledged: Vec<String>, submitted: Vec<String>) -> String {
-    match cabal_engine::pledge::receipt(&pledged, &submitted) {
-        cabal_engine::pledge::Receipt::Kept => "kept",
-        cabal_engine::pledge::Receipt::Broken => "broken",
-        cabal_engine::pledge::Receipt::Void => "void",
-    }
-    .to_string()
+    receipt_text(cabal_engine::pledge::receipt(&pledged, &submitted)).to_string()
 }
