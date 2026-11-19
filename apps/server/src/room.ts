@@ -80,6 +80,7 @@ import {
   randomNonce,
 } from "./engine.js";
 import { gameIndex } from "./game-index.js";
+import { REQUEST_ID_HEADER, log, requestIdFrom, withLogContext } from "./log.js";
 import { hashToken, mintToken, parseToken, randomId, sameHash } from "./tokens.js";
 import { countsForLedger } from "./ratings.js";
 import { checkPledge, judgeOrders } from "./validate.js";
@@ -564,9 +565,12 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private log(event: string, fields: Record<string, unknown> = {}, level: "info" | "error" = "info"): void {
-    const line = JSON.stringify({ event, gameId: this.meta?.id ?? null, phase: this.game?.phase() ?? null, ...fields });
-    if (level === "error") console.error(line);
-    else console.info(line);
+    log(event, { gameId: this.meta?.id ?? null, phase: this.game?.phase() ?? null, ...fields }, level);
+  }
+
+  /** Run one piece of incoming work with its log lines tagged: the room, and the request behind it. */
+  private traced<T>(requestId: string, work: () => T): T {
+    return withLogContext({ service: "room", requestId }, work);
   }
 
   // ---------- transactions and the alarm ----------
@@ -692,7 +696,11 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
-  override async alarm(): Promise<void> {
+  override alarm(): Promise<void> {
+    return this.traced(requestIdFrom(null, "alarm"), () => this.onAlarm());
+  }
+
+  private async onAlarm(): Promise<void> {
     // The alarm that woke us is spent, whatever it was set to.
     this.armedAt = null;
     if (!this.meta || !this.game) return;
@@ -732,7 +740,11 @@ export class GameRoom extends DurableObject<Env> {
 
   // ---------- HTTP entry (called by the router) ----------
 
-  override async fetch(request: Request): Promise<Response> {
+  override fetch(request: Request): Promise<Response> {
+    return this.traced(requestIdFrom(request.headers.get(REQUEST_ID_HEADER)), () => this.handle(request));
+  }
+
+  private async handle(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
     try {
       if (request.method === "POST" && path === "/create") return await this.create(request);
@@ -1343,12 +1355,15 @@ export class GameRoom extends DurableObject<Env> {
     return ok;
   }
 
-  override async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
-    try {
-      await this.onFrame(ws, raw);
-    } finally {
-      if (this.meta) this.settle();
-    }
+  override webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
+    // Each frame is its own unit of work in the logs.
+    return this.traced(requestIdFrom(null, "ws"), async () => {
+      try {
+        await this.onFrame(ws, raw);
+      } finally {
+        if (this.meta) this.settle();
+      }
+    });
   }
 
   private async onFrame(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
@@ -1438,7 +1453,11 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
-  override async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+  override webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+    return this.traced(requestIdFrom(null, "ws"), async () => this.onSocketClose(ws, code, reason));
+  }
+
+  private onSocketClose(ws: WebSocket, code: number, reason: string): void {
     try {
       // 1005 and 1006 are reserved: they describe a close and may not be sent in one.
       ws.close(code === 1005 || code === 1006 ? 1000 : code, reason);
@@ -1448,8 +1467,8 @@ export class GameRoom extends DurableObject<Env> {
     this.socketGone(ws);
   }
 
-  override async webSocketError(ws: WebSocket): Promise<void> {
-    this.socketGone(ws);
+  override webSocketError(ws: WebSocket): Promise<void> {
+    return this.traced(requestIdFrom(null, "ws"), async () => this.socketGone(ws));
   }
 
   private socketGone(ws: WebSocket): void {
@@ -2995,7 +3014,11 @@ export class GameRoom extends DurableObject<Env> {
    * delivery of the same message must never become a second model call. A step that is refused
    * here was never sent to the model, so its reservation is released.
    */
-  agentBrief(power: PowerName, phase: string, step: Step = "order"): AgentBrief | null {
+  agentBrief(power: PowerName, phase: string, step: Step = "order", requestId?: string): AgentBrief | null {
+    return this.traced(requestIdFrom(requestId, "q"), () => this.briefFor(power, phase, step));
+  }
+
+  private briefFor(power: PowerName, phase: string, step: Step): AgentBrief | null {
     const meta = this.meta;
     const game = this.game;
     if (!meta || !game) return null;
@@ -3116,7 +3139,11 @@ export class GameRoom extends DurableObject<Env> {
    * of a decision is judged on its own and reported back, so a refused message or pledge never
    * costs the seat its orders. A step for a phase that has resolved is refused, never applied late.
    */
-  agentSubmit(power: PowerName, phase: string, step: Step, decision: AgentDecision | null, report: AgentReport): AgentOutcome {
+  agentSubmit(power: PowerName, phase: string, step: Step, decision: AgentDecision | null, report: AgentReport, requestId?: string): AgentOutcome {
+    return this.traced(requestIdFrom(requestId, "q"), () => this.submitFor(power, phase, step, decision, report));
+  }
+
+  private submitFor(power: PowerName, phase: string, step: Step, decision: AgentDecision | null, report: AgentReport): AgentOutcome {
     const meta = this.meta;
     const game = this.game;
     const outcome: AgentOutcome = { applied: false, reason: "", orders: { accepted: [], rejected: [] }, messages: [], pledge: null };

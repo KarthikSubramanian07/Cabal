@@ -2,8 +2,10 @@
 
 export const CORS: Record<string, string> = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, PATCH, OPTIONS",
+  "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
   "access-control-allow-headers": "content-type, authorization",
+  // So a client can quote the id of a request that went wrong.
+  "access-control-expose-headers": "x-request-id",
 };
 
 /** Request bodies are small JSON objects; anything larger is refused before parsing. */

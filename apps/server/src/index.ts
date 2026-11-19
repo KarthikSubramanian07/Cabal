@@ -36,8 +36,8 @@ import { consumeTurns } from "./agent-consumer.js";
 import { engineReady, version as engineVersion } from "./engine.js";
 import type { AgentTurn, Env } from "./env.js";
 import { copyRegistryOnce, gameIndex, indexBackend, registrySchema } from "./game-index.js";
-import { describeError, log } from "./log.js";
-import { gameCode, randomId } from "./tokens.js";
+import { REQUEST_ID_HEADER, currentRequestId, describeError, log, requestIdFrom, withLogContext } from "./log.js";
+import { gameCode } from "./tokens.js";
 import { CORS, json, limited, readJson, tooMany, withCors } from "./http.js";
 import { playerRoute, resolvePlayer } from "./players.js";
 
@@ -45,6 +45,14 @@ export { GameRoom } from "./room.js";
 export { Registry } from "./registry.js";
 
 const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|seat|start|substitute|replay|ledger|press|ws))?$/;
+
+/** A request to a room, carrying the current request id so the room's log lines share it. */
+function roomFetch(stub: { fetch(request: Request): Promise<Response> }, path: string, init: RequestInit | Request = {}): Promise<Response> {
+  const request = new Request(`https://room${path}`, init);
+  const id = currentRequestId();
+  if (id) request.headers.set(REQUEST_ID_HEADER, id);
+  return stub.fetch(request);
+}
 
 const signedOut = () => withCors(json({ error: "that player secret is not valid; sign in again or play without it", code: "signed_out" }, 401));
 
@@ -126,7 +134,7 @@ async function route(request: Request, env: Env): Promise<Response> {
     const settings = resolveSettings(body.data.settings);
     const id = gameCode();
     const stub = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(id));
-    const res = await stub.fetch("https://room/create", {
+    const res = await roomFetch(stub, "/create", {
       method: "POST",
       body: JSON.stringify({ id, name: body.data.name, settings, player }),
     });
@@ -167,19 +175,19 @@ async function route(request: Request, env: Env): Promise<Response> {
       if (!player && !body.data.name) return withCors(json({ error: "a name is required to play without signing in" }, 400));
       // The room is told who the player is in the body; a player secret is never handed to a room.
       const headers = player ? {} : authorization;
-      return withCors(await stub.fetch("https://room/join", { method: "POST", headers, body: JSON.stringify({ ...body.data, player }) }));
+      return withCors(await roomFetch(stub, "/join", { method: "POST", headers, body: JSON.stringify({ ...body.data, player }) }));
     }
     if (action === "seat" && request.method === "POST") {
       if (await limited(env.JOIN_LIMITER, request, "seat")) return tooMany();
       const who = await resolvePlayer(request, env);
       if (who === "invalid" || who === "none") return signedOut();
-      return withCors(await stub.fetch("https://room/seat", { method: "POST", body: JSON.stringify({ player: { id: who.player.id, handle: who.player.handle } }) }));
+      return withCors(await roomFetch(stub, "/seat", { method: "POST", body: JSON.stringify({ player: { id: who.player.id, handle: who.player.handle } }) }));
     }
     if (action === "substitute" && request.method === "POST") {
       if (await limited(env.JOIN_LIMITER, request, "substitute")) return tooMany();
       const body = SubstituteInviteRequest.safeParse(await readJson(request));
       if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
-      return withCors(await stub.fetch("https://room/substitute", { method: "POST", headers: authorization, body: JSON.stringify(body.data) }));
+      return withCors(await roomFetch(stub, "/substitute", { method: "POST", headers: authorization, body: JSON.stringify(body.data) }));
     }
     // Everything below can wake a room and load the engine, so it shares one per-address limit.
     if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
@@ -188,19 +196,19 @@ async function route(request: Request, env: Env): Promise<Response> {
       if (url.searchParams.has("token")) {
         return withCors(json({ error: "send the seat token in a hello frame, not in the URL" }, 400));
       }
-      return stub.fetch("https://room/ws", request);
+      return roomFetch(stub, "/ws", request);
     }
     if (action === "start" && request.method === "POST") {
-      return withCors(await stub.fetch("https://room/start", { method: "POST", headers: authorization }));
+      return withCors(await roomFetch(stub, "/start", { method: "POST", headers: authorization }));
     }
     // Reads that depend on who is asking take the seat token as a bearer header, never in the URL.
-    if (action === "replay" && request.method === "GET") return withCors(await stub.fetch("https://room/replay", { headers: authorization }));
-    if (action === "ledger" && request.method === "GET") return withCors(await stub.fetch("https://room/ledger", { headers: authorization }));
+    if (action === "replay" && request.method === "GET") return withCors(await roomFetch(stub, "/replay", { headers: authorization }));
+    if (action === "ledger" && request.method === "GET") return withCors(await roomFetch(stub, "/ledger", { headers: authorization }));
     if (action === "press" && request.method === "GET") {
       if (url.searchParams.has("token")) return withCors(json({ error: "send the seat token as a bearer header, not in the URL" }, 400));
-      return withCors(await stub.fetch(`https://room/press${url.search}`, { headers: authorization }));
+      return withCors(await roomFetch(stub, `/press${url.search}`, { headers: authorization }));
     }
-    if (!action && request.method === "GET") return withCors(await stub.fetch("https://room/summary"));
+    if (!action && request.method === "GET") return withCors(await roomFetch(stub, "/summary"));
   }
   return withCors(json({ error: "not found" }, 404));
 }
@@ -212,27 +220,43 @@ function routeLabel(request: Request): string {
 }
 
 export default {
-  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
-    try {
-      // The games index moved from the Registry to D1: its rows are copied across once, in the background.
-      const copy = copyRegistryOnce(env);
-      if (copy && ctx) ctx.waitUntil(copy.catch((error) => log("registry_copy_failed", describeError(error), "error")));
-      return await route(request, env);
-    } catch (error) {
-      // The error boundary: whatever broke, the caller gets JSON with CORS and the log gets one line.
-      const requestId = request.headers.get("cf-ray") ?? randomId(8);
-      log("unhandled_error", { requestId, route: routeLabel(request), build: buildId(env), ...describeError(error) }, "error");
-      if (request.headers.get("upgrade") === "websocket") return new Response(null, { status: 500 });
-      return withCors(json({ error: "internal error", requestId }, 500));
-    }
+  fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+    // Cloudflare's ray id names the request in its own dashboards too; locally a fresh id stands in.
+    const requestId = requestIdFrom(request.headers.get("cf-ray"));
+    return withLogContext({ service: "worker", requestId }, () => serve(request, env, ctx, requestId));
   },
-  async queue(batch: MessageBatch<AgentTurn>, env: Env): Promise<void> {
-    try {
-      await consumeTurns(batch, env);
-    } catch (error) {
-      // Rethrown so the queue retries the batch; logged so the failure has a name.
-      log("queue_failed", { queue: batch.queue, messages: batch.messages.length, ...describeError(error) }, "error");
-      throw error;
-    }
+  queue(batch: MessageBatch<AgentTurn>, env: Env): Promise<void> {
+    return withLogContext({ service: "queue", requestId: requestIdFrom(null, "q") }, async () => {
+      try {
+        await consumeTurns(batch, env);
+      } catch (error) {
+        // Rethrown so the queue retries the batch; logged so the failure has a name.
+        log("queue_failed", { queue: batch.queue, messages: batch.messages.length, ...describeError(error) }, "error");
+        throw error;
+      }
+    });
   },
 } satisfies ExportedHandler<Env, AgentTurn>;
+
+async function serve(request: Request, env: Env, ctx: ExecutionContext | undefined, requestId: string): Promise<Response> {
+  const started = Date.now();
+  let res: Response;
+  try {
+    // The games index moved from the Registry to D1: its rows are copied across once, in the background.
+    const copy = copyRegistryOnce(env);
+    if (copy && ctx) ctx.waitUntil(copy.catch((error) => log("registry_copy_failed", describeError(error), "error")));
+    res = await route(request, env);
+  } catch (error) {
+    // The error boundary: whatever broke, the caller gets JSON with CORS and the log gets one line.
+    log("unhandled_error", { route: routeLabel(request), build: buildId(env), ...describeError(error) }, "error");
+    if (request.headers.get("upgrade") === "websocket") return new Response(null, { status: 500 });
+    res = withCors(json({ error: "internal error", requestId }, 500));
+  }
+  // One access line per request: the route as a label, never a path with a code or a query in it.
+  log("request", { route: routeLabel(request), status: res.status, ms: Date.now() - started });
+  // A socket upgrade is answered as the room made it; every other answer names its request.
+  if (res.status === 101 || res.webSocket) return res;
+  const named = new Response(res.body, res);
+  named.headers.set(REQUEST_ID_HEADER, requestId);
+  return named;
+}
