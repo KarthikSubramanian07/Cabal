@@ -165,6 +165,11 @@ describe("retreats and adjustments", () => {
     }
   });
 
+  it("stands a dislodged piece clear of the one that took its province", () => {
+    const [x, y] = standAside([0, 0], r);
+    expect(Math.hypot(x, y)).toBeGreaterThan(2 * r);
+  });
+
   it("names the one unit that began a movement phase in a province", () => {
     const { input, marks } = phase({ FRANCE: ["A PAR - BUR"], GERMANY: ["A MUN - RUH"] });
     const c = choreograph(input, marks, { point, r });

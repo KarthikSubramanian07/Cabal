@@ -122,9 +122,13 @@ export interface Geometry {
   routes?: ReadonlyMap<string, readonly string[]> | undefined;
 }
 
-/** Where a dislodged piece stands: up and to the right of the province it lost. */
+/**
+ * Where a dislodged piece stands: up and to the right of the province it lost, just clear of
+ * the piece that took it (centres a little over two radii apart), so both read at any zoom.
+ */
+export const STAND_ASIDE = 1.45;
 export function standAside(at: Point, r: number): Point {
-  return [at[0] + r * 1.15, at[1] - r * 1.15];
+  return [at[0] + r * STAND_ASIDE, at[1] - r * STAND_ASIDE];
 }
 
 /**
