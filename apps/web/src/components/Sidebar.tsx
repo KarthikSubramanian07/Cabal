@@ -199,7 +199,7 @@ export function Results({ record, names }: { record: PhaseRecord; names?: Names 
             {titleCase(power)}
           </h3>
           {list.map((r, i) => {
-            const receipt = receiptFor(r, record.phase, names);
+            const receipt = receiptFor(r, record.phase, names, record.outcome.results);
             return (
               <div className={`receipt ${receipt.tone}`} key={`${r.order}-${i}`} data-code={r.code}>
                 <span className="mark" aria-hidden="true">

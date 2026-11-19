@@ -39,6 +39,71 @@ function expectHuman(text: string) {
   expect(text).toMatch(/^[A-Z].*\.$/);
 }
 
+describe("receipts that look at the rest of the phase", () => {
+  const move = (unit: string, dest: string, ok: boolean, reason: string): OrderResult => ({
+    power: "X",
+    unit,
+    order: `${unit} - ${dest}`,
+    ok,
+    code: ok ? "ok" : "bounce",
+    reason,
+  });
+  const support = (unit: string, target: string, dest: string, ok = true): OrderResult => ({
+    power: "X",
+    unit,
+    order: `${unit} S ${target} - ${dest}`,
+    ok,
+    code: ok ? "ok" : "cut",
+    reason: ok ? "" : "support cut by TYR",
+  });
+
+  it("does not say a unit held its ground when it tried to leave and bounced back", () => {
+    // A BRE - PAR meets A PAR, which was ordered to Burgundy and bounced there with Munich.
+    const attack = move("A BRE", "PAR", false, "repelled by PAR");
+    const all = [attack, move("A PAR", "BUR", false, "bounced with MUN"), move("A MUN", "BUR", false, "bounced with PAR")];
+    const detail = receiptFor(attack, "S1901M", names, all).detail;
+    expect(detail).toBe("The unit in Paris failed to move out, and the attack was not strong enough to dislodge it.");
+    expect(detail).not.toMatch(/held/);
+  });
+
+  it("says a unit stayed put when it was not ordered away", () => {
+    const attack = move("A BRE", "PAR", false, "repelled by PAR");
+    const hold: OrderResult = { power: "X", unit: "A PAR", order: "A PAR H", ok: true, code: "ok", reason: "" };
+    expect(receiptFor(attack, "S1901M", names, [attack, hold]).detail).toBe(
+      "The unit in Paris stayed put, and the attack was not strong enough to dislodge it.",
+    );
+    expect(receiptFor(attack, "S1901M", names).detail).toContain("stayed put");
+  });
+
+  it("tells a tie from losing to a stronger move", () => {
+    const par = move("A PAR", "BUR", false, "bounced with MUN");
+    const mun = move("A MUN", "BUR", false, "bounced with PAR");
+    expect(receiptFor(par, "S1901M", names, [par, mun]).detail).toBe(
+      "Bounced with the unit from Munich: equal strength, so nobody got in.",
+    );
+    // Three into Burgundy: Paris alone, Munich and Tyrolia each with one support.
+    const tyr = move("A TYR", "BUR", false, "bounced with MUN");
+    const lone = move("A PAR", "BUR", false, "bounced with MUN, TYR");
+    const all = [lone, mun, tyr, support("A RUH", "A MUN", "BUR"), support("A PIE", "A TYR", "BUR")];
+    expect(receiptFor(lone, "S1901M", names, all).detail).toBe(
+      "Bounced by the units from Munich and Tyrolia, which had more support.",
+    );
+    // A cut support does not count.
+    const cut = [par, mun, support("A RUH", "A MUN", "BUR", false)];
+    expect(receiptFor(par, "S1901M", names, cut).detail).toContain("equal strength");
+  });
+
+  it("stays non-committal when the supports do not add up to an answer", () => {
+    const par = move("A PAR", "BUR", false, "bounced with MUN");
+    const mun = move("A MUN", "BUR", false, "bounced with PAR");
+    // On this count Paris is the stronger, yet it bounced: a rule the tally does not know.
+    const all = [par, mun, support("A GAS", "A PAR", "BUR")];
+    expect(receiptFor(par, "S1901M", names, all).detail).toBe(
+      "Bounced with the unit from Munich, which had at least as much strength.",
+    );
+  });
+});
+
 describe("receiptFor", () => {
   it("says nothing more about an order that worked", () => {
     expect(receiptFor(result("moves", "ok", true), "S1901M")).toEqual({ tone: "ok", verdict: "Succeeded", detail: "" });

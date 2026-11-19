@@ -5,7 +5,7 @@
  * new falls back to readable words, never to a raw enum name.
  */
 import type { OrderResult } from "../engine.js";
-import { type PhaseKind, phaseKind } from "./notation.js";
+import { type PhaseKind, parseOrder, parseUnit, phaseKind, provinceOf } from "./notation.js";
 
 export interface Receipt {
   /** `ok` succeeded, `fail` did not, `neutral` is a disband the player asked for. */
@@ -95,11 +95,54 @@ function illegal(kind: PhaseKind, reason: string): string {
   return table[reason] ?? sentence(`Not a legal order: ${wordsFromCode(reason)}`);
 }
 
+/** How hard a move pushed: itself plus every support for it that was not cut or wasted. */
+function moveStrength(move: OrderResult, all: readonly OrderResult[]): number | null {
+  const order = parseOrder(move.order);
+  if (order?.type !== "move") return null;
+  let strength = 1;
+  for (const r of all) {
+    if (!r.ok) continue;
+    const s = parseOrder(r.order);
+    if (s?.type !== "support-move") continue;
+    if (s.target.province === order.unit.province && provinceOf(s.dest) === provinceOf(order.dest)) strength += 1;
+  }
+  return strength;
+}
+
+function resultAt(all: readonly OrderResult[], province: string): OrderResult | undefined {
+  return all.find((r) => parseUnit(r.unit || r.order)?.province === province.trim());
+}
+
+/**
+ * How a bounce went. The engine has one word for a tie and for losing to a stronger move,
+ * so the supports that counted are added up from the phase's other results. When the sums
+ * do not settle it (a rule this tally does not know), the wording stays non-committal.
+ */
+function bounceDetail(result: OrderResult, rivals: string[], who: string, all: readonly OrderResult[] | undefined): string {
+  const units = rivals.length > 1 ? "units" : "unit";
+  const mine = all ? moveStrength(result, all) : null;
+  const theirs = all ? rivals.map((code) => {
+    const r = resultAt(all, code);
+    return r ? moveStrength(r, all) : null;
+  }) : [];
+  if (mine !== null && theirs.length > 0 && theirs.every((t): t is number => t !== null)) {
+    const strongest = Math.max(...theirs);
+    if (strongest === mine && theirs.every((t) => t === mine)) {
+      return `Bounced with the ${units} from ${who}: equal strength, so nobody got in.`;
+    }
+    if (theirs.every((t) => t > mine)) {
+      return `Bounced by the ${units} from ${who}, which had more support.`;
+    }
+  }
+  return `Bounced with the ${units} from ${who}, which had at least as much strength.`;
+}
+
 /**
  * Turn one engine result into a receipt. `names` (the board's provinces) turns codes into
- * place names; without it the three-letter codes are kept.
+ * place names; without it the three-letter codes are kept. `all` is every result of the same
+ * phase: with it a receipt can say what the other unit was doing.
  */
-export function receiptFor(result: OrderResult, phase: string, names?: Names): Receipt {
+export function receiptFor(result: OrderResult, phase: string, names?: Names, all?: readonly OrderResult[]): Receipt {
   const kind = phaseKind(phase);
   const reason = result.reason.trim();
   if (result.ok) return { tone: "ok", verdict: "Succeeded", detail: "" };
@@ -133,12 +176,22 @@ export function receiptFor(result: OrderResult, phase: string, names?: Names): R
       tone: "fail",
       verdict: "Bounced",
       detail: who
-        ? `Bounced with the ${who.includes(" and ") || who.includes(",") ? "units" : "unit"} from ${who}, which had at least as much strength.`
+        ? bounceDetail(result, (m[1] ?? "").split(",").map((c) => c.trim()).filter(Boolean), who, all)
         : "Bounced: it did not have the strength to get in.",
     };
   }
   if ((m = /^repelled by (\w+)/.exec(reason))) {
-    return { tone: "fail", verdict: "Repelled", detail: `The unit in ${place(names, m[1]!)} held its ground.` };
+    // "Held its ground" would be wrong for a unit that tried to leave and bounced back.
+    const there = all ? resultAt(all, m[1]!) : undefined;
+    const tried = there && !there.ok && parseOrder(there.order)?.type === "move";
+    const where = place(names, m[1]!);
+    return {
+      tone: "fail",
+      verdict: "Repelled",
+      detail: tried
+        ? `The unit in ${where} failed to move out, and the attack was not strong enough to dislodge it.`
+        : `The unit in ${where} stayed put, and the attack was not strong enough to dislodge it.`,
+    };
   }
   if ((m = /^lost head-to-head with (\w+)/.exec(reason))) {
     return {
