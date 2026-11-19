@@ -12,7 +12,7 @@
  *   GET  /api/games/:id/ledger        pledge totals per power and every resolved pledge the caller may read
  *   GET  /api/games/:id/press         one page of press history (`before`, `with`, `limit`)
  *   GET  /api/games/:id/ws            WebSocket; a player then sends `hello { token }`
- *   GET  /health                      liveness, engine version, build id, index reachability
+ *   GET  /health                      liveness, engine version, build id, index reachability (503 when the index is down or behind)
  *   GET  /api/push/key                the VAPID public key a browser subscribes with (null when push is off)
  *   POST /api/metrics                 anonymous timings from a browser; GET (admin) the phase 1 metrics
  *   POST /api/metrics/datc            admin: record the DATC totals for a commit
@@ -38,7 +38,7 @@ import {
 import { consumeTurns } from "./agent-consumer.js";
 import { engineReady, version as engineVersion } from "./engine.js";
 import type { AgentTurn, Env } from "./env.js";
-import { copyRegistryOnce, gameIndex, indexBackend, registrySchema } from "./game-index.js";
+import { D1_SCHEMA_REQUIRED, copyRegistryOnce, gameIndex, indexBackend, registrySchema } from "./game-index.js";
 import { REQUEST_ID_HEADER, currentRequestId, describeError, log, requestIdFrom, withLogContext } from "./log.js";
 import { gameCode } from "./tokens.js";
 import { CORS, json, limited, readJson, tooMany, withCors } from "./http.js";
@@ -103,8 +103,11 @@ async function health(env: Env): Promise<HealthResponse> {
     ]);
     probed = { at: Date.now(), index: indexSchema, registry, stores: [env.DB, env.REGISTRY] };
   }
+  // The index is what every game and account needs: unreachable, or a D1 schema behind this build,
+  // and the deployment is not healthy. The Registry only keeps the Claude budget.
+  const indexOk = backend === "none" || (probed!.index !== null && (backend !== "d1" || probed!.index >= D1_SCHEMA_REQUIRED));
   return {
-    ok: true,
+    ok: indexOk,
     protocol: PROTOCOL_VERSION,
     engine: engineVersion(),
     build: buildId(env),
@@ -121,7 +124,8 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (url.pathname === "/health") {
     // Unauthenticated and it reaches the one index object, so it is limited like any other read.
     if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
-    return withCors(json(await health(env)));
+    const report = await health(env);
+    return withCors(json(report, report.ok ? 200 : 503));
   }
 
   if (url.pathname === "/api/push/key" && request.method === "GET") {

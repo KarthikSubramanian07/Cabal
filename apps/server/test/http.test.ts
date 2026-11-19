@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { type GameListing, type GameRecord, GameSummary, HealthResponse, PROTOCOL_VERSION } from "@cabal/protocol";
 import { version as engineVersion } from "@cabal/engine";
 import worker from "../src/index.js";
-import { gameIndex } from "../src/game-index.js";
+import { D1_SCHEMA_REQUIRED, gameIndex } from "../src/game-index.js";
 import { MIGRATIONS } from "../src/registry.js";
 import { Client, D1_SCHEMA, create, deadlineIn, join, nextIp, serverEnv, start, summary, until, untilIndexed } from "./helpers.js";
 
@@ -114,6 +114,10 @@ describe("listing games", () => {
 });
 
 describe("health and failure", () => {
+  it("needs exactly the schema the newest migration file makes", () => {
+    expect(D1_SCHEMA_REQUIRED).toBe(D1_SCHEMA);
+  });
+
   it("reports the engine version, the build and whether the index answers", async () => {
     const health = HealthResponse.parse(await (await get("/health")).json());
     expect(health).toMatchObject({
@@ -149,9 +153,18 @@ describe("health and failure", () => {
       ...serverEnv,
       DB: { prepare: () => ({ first: async () => Promise.reject(new Error("down")) }) } as never,
     });
-    expect(((await d1Down.json()) as HealthResponse).index).toEqual({ backend: "d1", reachable: false, schema: null });
+    expect(d1Down.status).toBe(503);
+    expect(await d1Down.json()).toMatchObject({ ok: false, index: { backend: "d1", reachable: false, schema: null } });
+    // A database that answers but is behind this build (deployed before its migrations) is not healthy either.
+    const behind = await worker.fetch(new Request("http://cabal/health"), {
+      ...serverEnv,
+      DB: { prepare: () => ({ first: async () => ({ name: `${String(D1_SCHEMA_REQUIRED - 1).padStart(4, "0")}_metrics.sql` }) }) } as never,
+    });
+    expect(behind.status).toBe(503);
+    expect(await behind.json()).toMatchObject({ ok: false, index: { backend: "d1", reachable: true, schema: D1_SCHEMA_REQUIRED - 1 } });
     const noD1 = await worker.fetch(new Request("http://cabal/health"), { ...serverEnv, DB: undefined as never });
     expect(((await noD1.json()) as HealthResponse).index).toEqual({ backend: "registry", reachable: true, schema: MIGRATIONS.at(-1)!.version });
+    expect(noD1.status).toBe(200);
     error.mockRestore();
   });
 

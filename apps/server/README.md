@@ -29,7 +29,7 @@ One Worker, two Durable Object classes, one D1 database and one Queue.
 
 ## Cloudflare resources
 
-Everything is declared in `wrangler.jsonc` for the owner's account. Durable Object classes are created by the `migrations` tags. The D1 schema is the numbered files in `migrations/`: apply them with `pnpm --filter @cabal/server db:migrate` (remote, before deploying a build that needs them) or `db:migrate:local` (done for you by `pnpm dev`); the test suite applies them to its own local database. The Registry applies files 1 to 5 to itself and no further. Never edit a migration that has shipped.
+Everything is declared in `wrangler.jsonc` for the owner's account. Durable Object classes are created by the `migrations` tags. The D1 schema is the numbered files in `migrations/`: apply them with `pnpm --filter @cabal/server db:migrate` (remote; `pnpm deploy:server` and `deploy:all` run it before `wrangler deploy`, so a build never goes out ahead of its schema, and `/health` answers 503 if it somehow does) or `db:migrate:local` (done for you by `pnpm dev`); the test suite applies them to its own local database. The Registry applies files 1 to 5 to itself and no further. Never edit a migration that has shipped.
 
 | Binding | Kind | Notes |
 |---|---|---|
