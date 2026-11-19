@@ -190,7 +190,7 @@ export async function summary(db: D1Database, from: number, to: number): Promise
     unit: "ms (median)",
     samples: landing.length,
     lastAt: landing[0]?.at ?? null,
-    detail: { ...(landingStats ? { stats: landingStats } : {}) },
+    detail: landingStats ? { stats: landingStats } : {},
   });
 
   const rtt = await events(db, "order_rtt", from, to);
