@@ -7,7 +7,7 @@ use cabal_bot::{Decision, Level, decide};
 use cabal_engine::adjudicate::adjustment::allowance;
 use cabal_engine::geo::{Map, Power, Region, UnitKind};
 use cabal_engine::legal::{legal_adjustments, legal_movement, legal_retreats};
-use cabal_engine::order::{AdjustCommand, AnyOrder, Unit};
+use cabal_engine::order::{AdjustCommand, AnyOrder, Command, Order, Unit};
 use cabal_engine::outcome::{AdjustOutcome, OrderOutcome, RetreatOutcome};
 use cabal_engine::rulebook::Rulebook;
 use cabal_engine::state::{GameState, Phase, PhaseKind, Position};
@@ -128,6 +128,7 @@ pub fn assert_sound(state: &GameState, p: Power, d: &Decision, what: &str) {
                     order_text(map, pos, o)
                 );
             }
+            assert_consistent(d, what);
         }
         PhaseKind::Retreat => {
             let legal = legal_retreats(map, state, p);
@@ -196,6 +197,65 @@ pub fn assert_sound(state: &GameState, p: Power, d: &Decision, what: &str) {
                     "{what}: waived a build it could have made"
                 );
             }
+        }
+    }
+}
+
+/// Panic unless a movement decision is internally consistent: no order that
+/// contradicts another of the same power, nothing the validator had to replace,
+/// and every support the intent reports is one the orders really contain and
+/// the supported unit (when it is the bot's own) really benefits from.
+pub fn assert_consistent(d: &Decision, what: &str) {
+    let mine: Vec<Order> = d
+        .orders
+        .iter()
+        .filter_map(|o| match o {
+            AnyOrder::Movement(o) => Some(*o),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        cabal_bot::contradictions(&mine),
+        0,
+        "{what}: orders contradict each other: {mine:?}"
+    );
+    assert_eq!(
+        d.intent.rejected, 0,
+        "{what}: the planner proposed an order the validator refused"
+    );
+    let supports = mine
+        .iter()
+        .filter(|o| {
+            matches!(
+                o.command,
+                Command::SupportHold { .. } | Command::SupportMove { .. }
+            )
+        })
+        .count();
+    assert_eq!(
+        d.intent.supports.len(),
+        supports,
+        "{what}: the intent must report every support, and only real ones"
+    );
+    for s in &d.intent.supports {
+        let order = mine.iter().find(|o| o.unit == s.unit).map(|o| o.command);
+        let matches = match (order, s.dest) {
+            (Some(Command::SupportMove { target, dest, .. }), Some(x)) => {
+                target == s.target && dest == x
+            }
+            (Some(Command::SupportHold { target }), None) => target == s.target,
+            _ => false,
+        };
+        assert!(matches, "{what}: intent support {s:?} is not in the orders");
+        if let Some(theirs) = mine.iter().find(|o| o.unit == s.target) {
+            let going = match theirs.command {
+                Command::Move { dest, .. } => Some(dest),
+                _ => None,
+            };
+            assert_eq!(
+                going, s.dest,
+                "{what}: {s:?} supports something not ordered"
+            );
         }
     }
 }
