@@ -77,7 +77,6 @@ import {
   canonicalOrder,
   engineReady,
   pledgeCommit,
-  pledgeReceipt,
   randomNonce,
 } from "./engine.js";
 import { gameIndex } from "./game-index.js";
@@ -2721,9 +2720,12 @@ export class GameRoom extends DurableObject<Env> {
         phase,
       )
       .toArray();
+    // Judged by the engine against the board the phase started from: silence while having units
+    // to order breaks a pledge. A phase resolved by the hold-everything fallback binds nobody.
+    const phaseIndex = this.game!.historyLength() - 1;
     for (const p of pledges) {
       const pledged = JSON.parse(p.orders_json) as string[];
-      const receipt = pledgeReceipt(pledged, heldEverything ? [] : (orders[p.pledger] ?? []));
+      const receipt = heldEverything ? "void" : (this.game!.pledgeReceipt(phaseIndex, p.pledger, pledged, orders[p.pledger] ?? []) as Receipt);
       this.sql.exec("UPDATE pledges SET receipt = ? WHERE id = ?", receipt, p.id);
       // The receipt reveals the nonce, so the audience can open the commitment and check it themselves.
       const frame: ServerMessage = { t: "pledge.receipt", p: { pledgeId: p.id, receipt, revealed: pledged, nonce: p.nonce } };
