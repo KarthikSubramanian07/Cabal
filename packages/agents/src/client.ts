@@ -14,22 +14,9 @@
  */
 import { Game, type MapInfo, mapInfo } from "@cabal/engine";
 import type { PressView, ServerMessage, StateView } from "@cabal/protocol";
-import type { Usage } from "./cost.js";
-import type { Decision, Played, Player, Validated } from "./player.js";
+import type { Played, Player } from "./player.js";
 import { type Step, phaseKind } from "./prompt.js";
-
-export interface DecisionInfo {
-  step: Step;
-  orders: string[];
-  dropped: Validated["dropped"];
-  /** True when the model failed and the built-in decision (holds) was used. */
-  fallback: boolean;
-  decision: Decision;
-  model: string | null;
-  usage: Usage | null;
-  costMicros: number;
-  prompt: string;
-}
+import { type DecisionRecord, decisionRecord } from "./record.js";
 
 export interface AgentClientOptions {
   /** e.g. wss://cabal-server.example.workers.dev */
@@ -37,8 +24,8 @@ export interface AgentClientOptions {
   gameId: string;
   token: string;
   player: Player;
-  /** Called with every decision for logs and evals. */
-  onDecision?: (phase: string, info: DecisionInfo) => void;
+  /** Called with every decision for logs and evals: one decisions-log entry per step. */
+  onDecision?: (record: DecisionRecord) => void;
   /** WebSocket constructor; defaults to the global one. */
   WebSocketImpl?: typeof WebSocket;
   /** False plays every phase in one step, without the opening round of press. Default true. */
@@ -187,17 +174,7 @@ export class AgentClient {
   }
 
   private report(phase: string, played: Played): void {
-    this.opts.onDecision?.(phase, {
-      step: played.step,
-      orders: played.validated.orders,
-      dropped: played.validated.dropped,
-      fallback: played.fallback,
-      decision: played.decision,
-      model: played.model,
-      usage: played.usage,
-      costMicros: played.costMicros,
-      prompt: played.prompt,
-    });
+    this.opts.onDecision?.(decisionRecord(phase, this.opts.player.power, played));
   }
 
   private sendPress(played: Played): void {

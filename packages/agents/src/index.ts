@@ -1,4 +1,4 @@
-export { AgentClient, type AgentClientOptions, type DecisionInfo } from "./client.js";
+export { AgentClient, type AgentClientOptions } from "./client.js";
 export {
   PRICES,
   type Price,
@@ -48,3 +48,4 @@ export {
   systemPrompt,
   userPrompt,
 } from "./prompt.js";
+export { type DecisionRecord, decisionRecord } from "./record.js";
