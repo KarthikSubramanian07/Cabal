@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { type ContainerLike, type RegistrationLike, type WorkerLike, createUpdater } from "./register.js";
+import { type ContainerLike, type RegistrationLike, type WorkerLike, connect, createUpdater } from "./register.js";
 
 class FakeWorker implements WorkerLike {
   state = "installing";
@@ -91,5 +91,59 @@ describe("the update prompt", () => {
     expect(updater.get().waiting).toBe(true);
     updater.dismiss();
     expect(updater.get().waiting).toBe(false);
+  });
+});
+
+describe("connecting the worker", () => {
+  function deps(register: ContainerLike["register"]) {
+    const container = new FakeContainer();
+    container.register.mockImplementation(register);
+    const updater = createUpdater(container, vi.fn());
+    const watch = vi.spyOn(updater, "watch");
+    const checks: (() => void)[] = [];
+    const warn = vi.fn();
+    return {
+      container,
+      watch,
+      checks,
+      warn,
+      deps: { container, updater, every: (check: () => void) => checks.push(check), onVisible: (check: () => void) => checks.push(check), warn },
+    };
+  }
+
+  it("watches the registration and checks it for updates", async () => {
+    const reg = new FakeRegistration();
+    const t = deps(async () => reg);
+    await connect(t.deps);
+    expect(t.watch).toHaveBeenCalledWith(reg);
+    for (const check of t.checks) check();
+    expect(reg.update).toHaveBeenCalledTimes(2);
+    expect(t.warn).not.toHaveBeenCalled();
+  });
+
+  it("takes a registration that resolves to nothing as no worker, without throwing", async () => {
+    // Playwright's blocked service worker resolves register() to undefined; reading `.waiting`
+    // from it used to throw "Cannot read properties of undefined (reading 'waiting')".
+    const t = deps(async () => undefined as unknown as RegistrationLike);
+    await expect(connect(t.deps)).resolves.toBeUndefined();
+    expect(t.watch).not.toHaveBeenCalled();
+    expect(t.checks).toHaveLength(0);
+    expect(t.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("survives a registration without update()", async () => {
+    const reg = new FakeRegistration() as Partial<FakeRegistration>;
+    delete reg.update;
+    const t = deps(async () => reg as RegistrationLike);
+    await connect(t.deps);
+    expect(() => t.checks.forEach((check) => check())).not.toThrow();
+  });
+
+  it("says why when the browser refuses", async () => {
+    const t = deps(async () => {
+      throw new Error("denied");
+    });
+    await expect(connect(t.deps)).resolves.toBeUndefined();
+    expect(t.warn).toHaveBeenCalledWith(expect.stringContaining("could not be set up"), expect.any(Error));
   });
 });

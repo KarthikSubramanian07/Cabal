@@ -109,18 +109,36 @@ export interface ConnectDeps {
   warn: (message: string, error?: unknown) => void;
 }
 
-/** Register the worker and watch it for updates. */
+/**
+ * Register the worker and watch it for updates. Never rejects: the site works without a worker.
+ *
+ * `register()` is meant to resolve to a registration, but a browser that blocks service workers
+ * (Playwright's `serviceWorkers: "block"`, some privacy modes) can resolve it to nothing at all.
+ * That is treated as no worker, not as a registration to read.
+ */
 export async function connect({ container, updater, every, onVisible, warn }: ConnectDeps): Promise<void> {
-  let registration: RegistrationLike;
+  let registration: RegistrationLike | null | undefined;
   try {
     registration = await container.register("/sw.js", { scope: "/", updateViaCache: "none" });
   } catch (error) {
-    // The site works without it; say why offline play is missing for whoever is looking.
+    // Say why offline play is missing for whoever is looking.
     warn("Cabal: the offline copy could not be set up.", error);
     return;
   }
+  if (!registration || typeof registration !== "object") {
+    warn("Cabal: the browser did not set up the offline copy.");
+    return;
+  }
   updater.watch(registration);
-  const check = () => void registration.update().catch(() => undefined);
+  const reg = registration;
+  const check = () => {
+    if (typeof reg.update !== "function") return;
+    try {
+      void Promise.resolve(reg.update()).catch(() => undefined);
+    } catch {
+      // A registration that has gone away; the next visit registers again.
+    }
+  };
   every(check, CHECK_MS);
   onVisible(check);
 }
