@@ -478,6 +478,16 @@
     min-height: var(--hit);
   }
 
+  .stepper .replay,
+  .stepper .speeds button {
+    width: auto;
+    min-width: var(--hit);
+  }
+
+  .scrubber {
+    height: var(--hit);
+  }
+
   .stepper select {
     min-height: var(--hit);
     font-size: 16px; /* below this iOS zooms the page when the control is focused */

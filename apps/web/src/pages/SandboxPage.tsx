@@ -42,6 +42,8 @@ import { ImportError } from "../game/persist.js";
 import { type Suggestion, normaliseTyped, routeTyped } from "../game/typed.js";
 import { type OpenedGame, type Sandbox, powerWithOrders, useSandbox } from "../game/useSandbox.js";
 import { Board, type DrawnOrder, POWER_COLOR } from "../map/Board.jsx";
+import { resultsTiming } from "../map/motion.js";
+import { type Speed, advance, dwell, playFrom } from "../game/replay.js";
 
 interface Picker {
   x: number;
@@ -99,6 +101,14 @@ function Table({ sb }: { sb: Sandbox }) {
   /** The army whose move by convoy was just written: its carrying fleets are offered under the map. */
   const [route, setRoute] = useState<{ power: string; unit: string } | null>(null);
   const [viewing, setViewing] = useState<number | null>(null);
+  /** The phase history is being played back (see game/replay.ts). */
+  const [replaying, setReplaying] = useState(false);
+  const [speed, setSpeed] = useState<Speed>(1);
+  /** Show a phase (or the live one) because the player asked: any playback stops there. */
+  const view = useCallback((index: number | null) => {
+    setReplaying(false);
+    setViewing(index);
+  }, []);
   const [announcement, setAnnouncement] = useState("");
   const [sheet, setSheet] = useState(false);
   const [confirmNew, setConfirmNew] = useState(false);
@@ -145,7 +155,7 @@ function Table({ sb }: { sb: Sandbox }) {
 
   // An undo, a new game or an import can leave `viewing` pointing past the end of the history.
   useEffect(() => {
-    if (viewing !== null && viewing >= sb.history.length) setViewing(null);
+    if (viewing !== null && viewing >= sb.history.length) view(null);
   }, [viewing, sb.history.length]);
   const record = viewing !== null ? sb.history[viewing] : undefined;
   /** The live phase is on the board and can take orders. */
@@ -217,12 +227,21 @@ function Table({ sb }: { sb: Sandbox }) {
     setRoute(null);
   }, []);
 
+  /** Play the history back from here, or from the first phase when the live one is shown. */
+  const play = useCallback(() => {
+    const from = playFrom(viewing, sb.history.length);
+    if (from === null) return;
+    cancel();
+    setViewing(from);
+    setReplaying(true);
+  }, [viewing, sb.history.length, cancel]);
+
   const adjudicate = useCallback(() => {
     const given = new Set(Object.values(sb.orders).flatMap((o) => Object.values(o)));
     const outcome = sb.adjudicate();
     cancel();
     if (outcome) {
-      setViewing(sb.history.length);
+      view(sb.history.length);
       announce(describeOutcome(outcome, given));
     }
   }, [sb, cancel, announce]);
@@ -230,7 +249,7 @@ function Table({ sb }: { sb: Sandbox }) {
   const undo = useCallback(() => {
     sb.undo();
     // Back to the live phase: left on a results index, the board would ignore every click.
-    setViewing(null);
+    view(null);
     cancel();
     announce("Last phase undone.");
   }, [sb, cancel, announce]);
@@ -282,7 +301,7 @@ function Table({ sb }: { sb: Sandbox }) {
 
   const startNew = useCallback(() => {
     sb.reset();
-    setViewing(null);
+    view(null);
     setConfirmNew(false);
     setImportError(null);
     setActive("FRANCE");
@@ -332,19 +351,24 @@ function Table({ sb }: { sb: Sandbox }) {
       // Enter and Space belong to whatever button or link has focus.
       const onControl = Boolean(el.closest("button, a, [role='button']"));
       if (key === "escape") return cancel();
+      // Space plays and pauses the history, unless it belongs to a focused control.
+      if (key === " " && !onControl && sb.history.length > 0 && shortcutsEnabled()) {
+        e.preventDefault();
+        return replaying ? setReplaying(false) : play();
+      }
       if (viewing !== null) {
         if ((key === "enter" && !onControl) || key === "arrowright") {
           e.preventDefault();
-          setViewing(viewing + 1 >= sb.history.length ? null : viewing + 1);
+          view(viewing + 1 >= sb.history.length ? null : viewing + 1);
         } else if (key === "arrowleft" && viewing > 0) {
-          setViewing(viewing - 1);
+          view(viewing - 1);
         }
         return;
       }
       // Stepping back into the history must not swallow an order half written, and belongs to
       // the board: with focus on a button or a link the arrow keys are not ours to take.
       if (key === "arrowleft" && !onControl && sb.history.length > 0 && draft.step === "idle" && !picker) {
-        return setViewing(sb.history.length - 1);
+        return view(sb.history.length - 1);
       }
       // Single-key shortcuts can be switched off (WCAG 2.1.4) in How to play.
       if (!shortcutsEnabled()) return;
@@ -362,7 +386,7 @@ function Table({ sb }: { sb: Sandbox }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [ctx, draft, picker, mode, apply, cancel, viewing, sb]);
+  }, [ctx, draft, picker, mode, apply, cancel, viewing, sb, view, replaying, play]);
 
   // Keyboard path: after a choice, a shortcut or a cancel, focus the first new choice (or the
   // coast picker) instead of leaving focus on a button that no longer exists.
@@ -451,6 +475,22 @@ function Table({ sb }: { sb: Sandbox }) {
         .map((r) => ({ power: r.power, text: r.order, ok: r.ok }))
     : Object.entries(sb.orders).flatMap(([power, entries]) => Object.values(entries).map((text) => ({ power, text })));
 
+  // Playback: each phase stays up while its results ink in and then long enough to read.
+  const resultsMs = record ? resultsTiming(drawn).total : 0;
+  useEffect(() => {
+    if (!replaying) return;
+    if (viewing === null) {
+      setReplaying(false);
+      return;
+    }
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const timer = window.setTimeout(
+      () => setViewing(advance(viewing, sb.history.length)),
+      dwell(resultsMs, speed, reduced),
+    );
+    return () => window.clearTimeout(timer);
+  }, [replaying, viewing, speed, resultsMs, sb.history.length]);
+
   const selectedProvince = draft.step === "idle" ? null : parseUnit(draft.unit)?.province ?? null;
   const activeSummary = sb.powers.find((p) => p.power === active);
   const orderableUnits = Object.keys(sb.legal[active] ?? {}).filter((u) => u !== "");
@@ -527,7 +567,7 @@ function Table({ sb }: { sb: Sandbox }) {
   const loadImport = (pending: { name: string; game: OpenedGame }) => {
     pending.game.load();
     setPendingImport(null);
-    setViewing(null);
+    view(null);
     cancel();
     announce(`Game loaded from ${pending.name}: ${phaseLine(pending.game.phase)}.`);
   };
@@ -786,7 +826,13 @@ function Table({ sb }: { sb: Sandbox }) {
 
           <div className="sheet-body" id="sheet-body">
             <PhaseHeader phase={record ? record.phase : sb.phase} status={sb.status} viewing={Boolean(record)} />
-            <PhaseStepper history={sb.history} viewing={viewing} livePhase={sb.phase} onView={setViewing} />
+            <PhaseStepper history={sb.history} viewing={viewing} livePhase={sb.phase} onView={view}
+              playing={replaying}
+              speed={speed}
+              onPlay={play}
+              onPause={() => setReplaying(false)}
+              onSpeed={setSpeed}
+            />
 
             {record ? (
               <Results record={record} names={sb.board.provinces} />
@@ -847,7 +893,7 @@ function Table({ sb }: { sb: Sandbox }) {
 
           <div className="actions">
             {record ? (
-              <button type="button" className="btn primary" onClick={() => setViewing(last ? null : viewing! + 1)}>
+              <button type="button" className="btn primary" onClick={() => view(last ? null : viewing! + 1)}>
                 {last ? continueLabel(sb.phase) : "Next phase"}
               </button>
             ) : (
