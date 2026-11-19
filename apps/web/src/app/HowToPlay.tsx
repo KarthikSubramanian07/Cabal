@@ -77,8 +77,20 @@ export function HowToPlay({
                     {" "}
                     (<kbd>C</kbd>)
                   </span>
-                  , click the army, then where it lands. An army that could either walk or sail gets a By convoy
-                  switch on its order.
+                  , click the army, then where it lands.
+                </td>
+              </tr>
+              <tr>
+                <th>By convoy</th>
+                <td>
+                  To send an army by sea, click it and choose By convoy
+                  <span className="keys-only">
+                    {" "}
+                    (<kbd>V</kbd>)
+                  </span>{" "}
+                  before its destination; only the coasts a fleet can reach are lit. Then pick the fleets that carry
+                  it from the list under the map. An order already written can be switched with its By convoy
+                  button.
                 </td>
               </tr>
               <tr>
@@ -110,7 +122,7 @@ export function HowToPlay({
             </tbody>
           </table>
           <p className="fine">
-            Only legal orders are offered. Units without an order hold. The Move, Support, Convoy and Hold buttons
+            Only legal orders are offered. Units without an order hold. The Move, Support, Convoy, By convoy and Hold buttons
             are under the map. On a touch screen, pinch to zoom and drag to move the map. Your game is saved on this
             device as you play.
           </p>
@@ -120,7 +132,7 @@ export function HowToPlay({
           </p>
           <label className="setting">
             <input type="checkbox" checked={shortcuts} onChange={(e) => onShortcuts(e.target.checked)} />
-            Single-key shortcuts (<kbd>M</kbd> <kbd>S</kbd> <kbd>C</kbd> <kbd>H</kbd> <kbd>D</kbd>). Turn them off if
+            Single-key shortcuts (<kbd>M</kbd> <kbd>S</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>D</kbd>). Turn them off if
             you use speech input or they get in your way.
           </label>
         </section>
