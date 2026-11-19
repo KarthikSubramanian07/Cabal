@@ -6,7 +6,7 @@
  * Pure functions over a small context so every path is unit tested. Nothing is
  * composed that the engine did not list as legal.
  */
-import { type PhaseKind, parseOrder, parseUnit, provinceOf, titleCase } from "./notation.js";
+import { type PhaseKind, forUnit, parseOrder, parseUnit, provinceOf, titleCase } from "./notation.js";
 
 export type Mode = "move" | "via-convoy" | "support" | "convoy";
 
@@ -266,7 +266,11 @@ function adjustmentClick(ctx: ComposeContext, draft: Draft, province: string): S
   // The power the player is working on wins; only then anybody else with something to do here.
   const chosen = found.find((f) => f.power === ctx.active) ?? found[0];
   if (!chosen) return say(draft, `No build or disband is possible in ${province}.`);
-  const { power, options } = chosen;
+  return adjustmentStep(ctx, draft, chosen.power, province, chosen.options);
+}
+
+/** A build or disband in `province`, capped at what `power` is owed; a menu when there is a choice. */
+function adjustmentStep(ctx: ComposeContext, draft: Draft, power: string, province: string, options: string[]): Step {
   const isDisband = parseOrder(options[0]!)?.type === "disband";
   const key = `${isDisband ? "D" : "B"}:${province}`;
   // Changing an order already written for this province is always allowed; a new one must fit the allowance.
@@ -286,4 +290,38 @@ function adjustmentClick(ctx: ComposeContext, draft: Draft, province: string): S
     draft: IDLE,
     effect: { kind: "choose", power, key, title: `${isDisband ? "Disband" : "Build"} in ${province}`, options },
   };
+}
+
+/**
+ * An order typed in MILA (already made canonical by the engine) for `power`, checked against the
+ * same legal list the map uses, and keyed the way a click would key it. A move typed without
+ * `VIA` that only a convoy could make is written as the convoy. Never composes an order the map
+ * could not.
+ */
+export function typedOrder(ctx: ComposeContext, power: string, text: string): Step {
+  const parsed = parseOrder(text);
+  if (!parsed) return say(IDLE, `${text} is not an order Cabal can read.`);
+  if (ctx.phase === "A") {
+    if (parsed.type === "waive") {
+      if ((ctx.allowance?.[power] ?? 0) <= 0) return say(IDLE, `${titleCase(power)} has no build to waive.`);
+      if (adjustmentsLeft(ctx, power) === 0) {
+        return say(IDLE, `${titleCase(power)} has written every build it is owed. Remove one to waive it.`);
+      }
+      return orderStep(power, nextWaiveKey(ctx.orders?.[power] ?? {}), "WAIVE");
+    }
+    if (parsed.type !== "build" && parsed.type !== "disband") {
+      return say(IDLE, "Only builds, disbands and waives are ordered in winter.");
+    }
+    if (!(ctx.legal[power]?.[""] ?? []).includes(text)) return say(IDLE, `${text} is not a legal order this phase.`);
+    return adjustmentStep(ctx, IDLE, power, parsed.unit.province, [text]);
+  }
+  if (parsed.type === "waive") return say(IDLE, "Builds are only waived in winter.");
+  const unit = Object.keys(ctx.legal[power] ?? {}).find((u) => u && parseUnit(u)?.province === parsed.unit.province);
+  if (!unit) {
+    return say(IDLE, ctx.phase === "R" ? `${parsed.unit.unit} has no retreat to make.` : `${parsed.unit.unit} cannot be ordered.`);
+  }
+  const written = forUnit(text, unit);
+  const options = legalFor(ctx, power, unit);
+  const match = options.find((o) => o === written) ?? options.find((o) => o === `${written} VIA`);
+  return match ? orderStep(power, unit, match) : say(IDLE, `${written} is not a legal order this phase.`);
 }
