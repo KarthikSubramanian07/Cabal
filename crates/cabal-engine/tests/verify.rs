@@ -69,19 +69,23 @@ fn a_clean_report_counts_the_phases() {
 
 #[test]
 fn tampered_orders_are_reported() {
-    // The record claims an order the engine would never have adjudicated as
-    // written: an illegal move is recorded by Cabal as the hold it became.
-    let mut saved = recorded();
+    // The record claims a hold where an illegal move was thrown out. Cabal
+    // records what was submitted, so a hold cannot carry the `void` result.
+    let map = cabal_engine::geo::Map::standard();
+    let mut game = Game::new(map, Rulebook::default());
+    let illegal = cabal_engine::parse::parse(map, "FRA: A PAR - MOS")
+        .unwrap()
+        .to_movement(None)
+        .unwrap();
+    game.process_movement(&[illegal]);
+    let mut saved = game.to_saved("tampered");
+    assert!(verify(&saved).is_clean());
     let orders = saved.phases[0].orders.get_mut("FRANCE").unwrap();
+    assert!(orders.contains(&"A PAR - MOS".to_string()));
     orders.retain(|o| !o.starts_with("A PAR"));
-    orders.push("A PAR - MOS".into());
+    orders.push("A PAR H".into());
     let report = verify(&saved);
-    assert_reported(
-        &report,
-        DivergenceField::Orders,
-        "S1901M",
-        &["S1901M", "F1901M"],
-    );
+    assert_reported(&report, DivergenceField::Results, "S1901M", &["S1901M"]);
 
     // a different legal order shows up in what it did to the board
     let mut saved = recorded();

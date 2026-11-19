@@ -198,14 +198,17 @@ fn retreat_text_of(map: &Map, me: String, order: &RetreatOrder) -> String {
 
 /// Canonical adjustment order text, e.g. `A PAR B`, `F BRE D`, `WAIVE`.
 pub fn adjust_text(map: &Map, position: &Position, order: &AdjustOrder) -> String {
+    // A build without a kind and a disband of a province with no unit are
+    // written without the unit letter (`BUL D`), which the parser reads back
+    // as the same order. Every text this returns can be parsed again.
+    let with_kind = |kind: Option<UnitKind>, region: Region, verb: char| match kind {
+        Some(k) => format!("{} {} {verb}", k.letter(), map.region_name(region)),
+        None => format!("{} {verb}", map.region_name(region)),
+    };
     match order.command {
-        AdjustCommand::Build { kind, region } => {
-            let k = kind.map(|k| k.letter()).unwrap_or('?');
-            format!("{k} {} B", map.region_name(region))
-        }
+        AdjustCommand::Build { kind, region } => with_kind(kind, region, 'B'),
         AdjustCommand::Disband { unit } => {
-            let k = kind_at(position, unit).map(|k| k.letter()).unwrap_or('?');
-            format!("{k} {} D", map.region_name(Region::land(unit)))
+            with_kind(kind_at(position, unit), Region::land(unit), 'D')
         }
         AdjustCommand::Waive => "WAIVE".to_string(),
     }

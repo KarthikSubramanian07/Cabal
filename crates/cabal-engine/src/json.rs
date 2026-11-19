@@ -533,11 +533,33 @@ pub(crate) fn phase_to_mila(map: &Map, rulebook: Rulebook, record: &PhaseRecord)
     let mut results: BTreeMap<String, Vec<String>> = BTreeMap::new();
     match &record.result {
         PhaseResult::Movement(r) => {
+            // What was asked for and never took effect is recorded as it was
+            // submitted: an order thrown out as illegal, every line of a
+            // duplicate, an order for a rival's unit or for an empty province.
+            // Writing the hold the unit fell back to instead would make the
+            // record say something that was never ordered, and a replay of it
+            // could not reach the same ruling.
+            let thrown_out = |province: ProvinceId| {
+                r.outcome_at(province)
+                    .is_none_or(|out| matches!(out, OrderOutcome::Illegal { .. }))
+            };
+            for any in &record.orders {
+                let AnyOrder::Movement(o) = any else { continue };
+                let owner = pos.unit_at(o.unit).map(|u| u.power);
+                if owner != Some(o.power) || thrown_out(o.unit) {
+                    orders
+                        .entry(power_name(map, o.power))
+                        .or_default()
+                        .push(order_text(map, pos, o));
+                }
+            }
             for (o, out) in r.orders.iter().zip(&r.outcomes) {
-                orders
-                    .entry(power_name(map, o.power))
-                    .or_default()
-                    .push(order_text(map, pos, o));
+                if !matches!(out, OrderOutcome::Illegal { .. }) {
+                    orders
+                        .entry(power_name(map, o.power))
+                        .or_default()
+                        .push(order_text(map, pos, o));
+                }
                 if let Some(u) = pos.unit_at(o.unit) {
                     let mut codes = result_codes(out);
                     // a move that failed and whose unit was then dislodged is both
@@ -550,11 +572,47 @@ pub(crate) fn phase_to_mila(map: &Map, rulebook: Rulebook, record: &PhaseRecord)
             }
         }
         PhaseResult::Retreat(r) => {
+            // As for movement: what never took effect is recorded as submitted.
+            // That is an order for a rival's dislodged unit (ignored) and every
+            // line when the owner ordered a unit twice (it disbands).
+            let owner_of = |province: ProvinceId| {
+                record
+                    .state
+                    .dislodged
+                    .iter()
+                    .find(|d| d.unit.province() == province)
+                    .map(|d| d.unit.power)
+            };
+            let own_orders = |province: ProvinceId| {
+                let owner = owner_of(province);
+                record
+                    .orders
+                    .iter()
+                    .filter(|any| {
+                        matches!(any, AnyOrder::Retreat(o)
+                            if o.unit == province && Some(o.power) == owner)
+                    })
+                    .count()
+            };
+            for any in &record.orders {
+                let AnyOrder::Retreat(o) = any else { continue };
+                let Some(owner) = owner_of(o.unit) else {
+                    continue; // not dislodged: the resolver lists it as a stray
+                };
+                if owner != o.power || own_orders(o.unit) > 1 {
+                    orders
+                        .entry(power_name(map, o.power))
+                        .or_default()
+                        .push(retreat_text_in(map, &record.state, o));
+                }
+            }
             for (o, out) in r.orders.iter().zip(&r.outcomes) {
-                orders
-                    .entry(power_name(map, o.power))
-                    .or_default()
-                    .push(retreat_text_in(map, &record.state, o));
+                if own_orders(o.unit) <= 1 {
+                    orders
+                        .entry(power_name(map, o.power))
+                        .or_default()
+                        .push(retreat_text_in(map, &record.state, o));
+                }
                 let unit = record
                     .state
                     .dislodged
@@ -574,14 +632,24 @@ pub(crate) fn phase_to_mila(map: &Map, rulebook: Rulebook, record: &PhaseRecord)
                     .entry(power_name(map, o.power))
                     .or_default()
                     .push(text.clone());
-                // MILA keys adjustment results by the order's first two
-                // words: the unit for builds and disbands, `WAIVE` for waives.
+                // MILA keys adjustment results by the unit for builds and
+                // disbands (the order without its verb) and by `WAIVE` for waives.
                 let key = text
-                    .split_whitespace()
-                    .take(2)
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                results.insert(key, adjustment_result_codes(out));
+                    .strip_suffix(" B")
+                    .or_else(|| text.strip_suffix(" D"))
+                    .unwrap_or(&text)
+                    .to_string();
+                // Several orders can share a key (every waive does, and so do
+                // two orders for one site). The entry then carries each distinct
+                // code once, sorted, so it does not depend on the order the
+                // orders arrived in and a replay writes the same entry.
+                let entry = results.entry(key).or_default();
+                for code in adjustment_result_codes(out) {
+                    if !entry.contains(&code) {
+                        entry.push(code);
+                    }
+                }
+                entry.sort();
             }
             // MILA turns civil disorder into ordinary disband orders, so the
             // forced removals succeed with the empty OK code.
