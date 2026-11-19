@@ -1018,8 +1018,12 @@ export const MetricSample = z.discriminatedUnion("metric", [
 ]);
 export type MetricSample = z.infer<typeof MetricSample>;
 
-/** `POST /api/metrics`: up to 50 samples, as `navigator.sendBeacon` would send them. */
-export const MetricsBeacon = z.object({ samples: z.array(MetricSample).min(1).max(50) });
+/**
+ * `POST /api/metrics`: up to 10 samples, as `navigator.sendBeacon` would send them. A browser
+ * should gather samples and send one beacon when the page is hidden, not one per sample: an
+ * address may send 6 a minute.
+ */
+export const MetricsBeacon = z.object({ samples: z.array(MetricSample).min(1).max(10) });
 export type MetricsBeacon = z.infer<typeof MetricsBeacon>;
 
 /** `POST /api/metrics/datc` (admin): the totals `cabal datc` printed for a commit. */

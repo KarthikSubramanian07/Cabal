@@ -224,7 +224,8 @@ describe("notifications and metrics", () => {
     for (const bad of [{ samples: [] }, { samples: [{ metric: "order_rtt", ms: -1 }] }, { samples: [{ metric: "order_rtt", ms: 61_000 }] }, { samples: [{ metric: "datc", ms: 1 }] }]) {
       expect(MetricsBeacon.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
     }
-    expect(MetricsBeacon.safeParse({ samples: Array.from({ length: 51 }, () => ({ metric: "order_rtt", ms: 1 })) }).success).toBe(false);
+    expect(MetricsBeacon.safeParse({ samples: Array.from({ length: 10 }, () => ({ metric: "order_rtt", ms: 1 })) }).success).toBe(true);
+    expect(MetricsBeacon.safeParse({ samples: Array.from({ length: 11 }, () => ({ metric: "order_rtt", ms: 1 })) }).success).toBe(false);
   });
 
   it("names the commit a DATC report is for", () => {
