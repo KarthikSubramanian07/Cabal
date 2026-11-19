@@ -122,3 +122,16 @@ export function parseOrder(text: string): ParsedOrder | null {
 export function provinceOf(region: string): string {
   return region.slice(0, 3);
 }
+
+/**
+ * Make an order name the unit it is for. In a retreat phase the engine writes the order
+ * with the kind of whatever now stands in the province (the attacker), so a dislodged fleet's
+ * retreat reads `A TRI R ALB`. The unit key and `OrderResult.unit` are right; this puts
+ * them back on the front of the text. The engine accepts either spelling.
+ */
+export function forUnit(text: string, unit: string): string {
+  const mine = parseUnit(unit);
+  const written = parseUnit(text);
+  if (!mine || !written || written.province !== mine.province || written.unit === mine.unit) return text;
+  return mine.unit + text.trim().slice(written.unit.length);
+}

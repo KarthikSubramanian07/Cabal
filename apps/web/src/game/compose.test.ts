@@ -10,7 +10,7 @@ import {
   setMode,
   viaAlternative,
 } from "./compose.js";
-import { continueLabel, describePhase, parseOrder, phaseKind, resolveLabel } from "./notation.js";
+import { continueLabel, describePhase, forUnit, parseOrder, phaseKind, resolveLabel } from "./notation.js";
 
 const movement: ComposeContext = {
   phase: "M",
@@ -272,5 +272,19 @@ describe("phase buttons", () => {
     expect(continueLabel("F1901R")).toBe("Continue to Fall 1901 retreats");
     expect(continueLabel("W1901A")).toBe("Continue to Winter 1901 builds");
     expect(continueLabel("COMPLETED")).toBe("See the final position");
+  });
+});
+
+describe("forUnit", () => {
+  it("puts the right unit on the front of an order written with another kind", () => {
+    expect(forUnit("A TRI R ALB", "F TRI")).toBe("F TRI R ALB");
+    expect(forUnit("A TRI D", "F TRI")).toBe("F TRI D");
+    expect(forUnit("A STP R FIN", "F STP/SC")).toBe("F STP/SC R FIN");
+  });
+
+  it("leaves a correct order, and an order for somewhere else, alone", () => {
+    expect(forUnit("F TRI R ALB", "F TRI")).toBe("F TRI R ALB");
+    expect(forUnit("A VIE R BOH", "F TRI")).toBe("A VIE R BOH");
+    expect(forUnit("WAIVE", "F TRI")).toBe("WAIVE");
   });
 });

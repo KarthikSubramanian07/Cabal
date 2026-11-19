@@ -9,7 +9,7 @@ import { Game, type PhaseOutcome, type State, engineReady } from "../engine.js";
 import { type Board, loadBoard } from "../map/boardData.js";
 import { type OrderBook, eraseOrder, flatten, keepLegal, toBook, waiveBuild, writeOrder } from "./book.js";
 import type { Piece } from "./compose.js";
-import { POWER_NAMES, type PhaseKind, parseUnit, phaseKind } from "./notation.js";
+import { POWER_NAMES, type PhaseKind, forUnit, parseUnit, phaseKind } from "./notation.js";
 import { ImportError, clearSave, parseSavedGame, readSave, writeSave } from "./persist.js";
 import { type TrackedHistory, trackUnits } from "./unitIds.js";
 
@@ -75,6 +75,18 @@ export type SandboxLoad =
   | { status: "error"; error: Error; retry: () => void }
   | { status: "ready"; sandbox: Sandbox };
 
+/** Retreat results name the unit that retreated (see `forUnit`). */
+export function tidyOutcome(outcome: PhaseOutcome): PhaseOutcome {
+  if (phaseKind(outcome.phase) !== "R") return outcome;
+  return { ...outcome, results: outcome.results.map((r) => (r.unit ? { ...r, order: forUnit(r.order, r.unit) } : r)) };
+}
+
+/** Legal orders by unit, with retreat orders naming the unit they belong to. */
+export function tidyLegal(byUnit: Record<string, string[]>, kind: PhaseKind): Record<string, string[]> {
+  if (kind !== "R") return byUnit;
+  return Object.fromEntries(Object.entries(byUnit).map(([unit, options]) => [unit, options.map((o) => forUnit(o, unit))]));
+}
+
 interface Loaded {
   game: Game;
   history: PhaseRecord[];
@@ -96,7 +108,7 @@ function loadSaved(json: string): Loaded {
     phase: p.name,
     state: p.state as State,
     orders: toBook(p.orders ?? {}, phaseKind(p.name)),
-    outcome: game.outcome(i),
+    outcome: tidyOutcome(game.outcome(i)),
   }));
   return { game, history };
 }
@@ -106,7 +118,7 @@ function replay(records: PhaseRecord[], origin: State): Loaded {
   const history: PhaseRecord[] = [];
   for (const r of records) {
     const state = game.state();
-    const outcome = game.process(game.normaliseOrders({ orders: flatten(r.orders) }));
+    const outcome = tidyOutcome(game.process(game.normaliseOrders({ orders: flatten(r.orders) })));
     history.push({ phase: r.phase, state, orders: r.orders, outcome });
   }
   return { game, history };
@@ -175,7 +187,7 @@ export function useSandbox(): SandboxLoad {
     if (status === "active") {
       for (const power of POWER_NAMES) {
         const l = game.legal(power);
-        legal[power] = l.by_unit;
+        legal[power] = tidyLegal(l.by_unit, kind);
         allowance[power] = l.allowance;
       }
     }
@@ -274,7 +286,7 @@ export function useSandbox(): SandboxLoad {
 
   const adjudicate = useCallback((): PhaseOutcome | null => {
     if (!game || !snapshot || snapshot.status !== "active") return null;
-    const outcome = game.process(game.normaliseOrders({ orders: flatten(orders) }));
+    const outcome = tidyOutcome(game.process(game.normaliseOrders({ orders: flatten(orders) })));
     setHistory((h) => [...h, { phase: snapshot.phase, state: snapshot.state, orders, outcome }]);
     setOrders({});
     setResumed(null);

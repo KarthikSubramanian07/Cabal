@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Game, type PhaseOutcome, type State, ready } from "@cabal/engine";
 import { beforeAll, describe, expect, it } from "vitest";
+import { forUnit } from "./notation.js";
 import { trackUnits, unitKey } from "./unitIds.js";
 
 beforeAll(async () => {
@@ -90,5 +91,25 @@ describe("trackUnits", () => {
     // Undoing the last phase is the same as tracking the shorter history.
     const undone = trackUnits(a.history.slice(0, 1), a.history[1]!.state);
     expect(undone.live).toEqual(a.tracked.phases[1]);
+  });
+});
+
+describe("retreat orders after a mixed attack", () => {
+  it("can be written for the unit that was dislodged, whatever stands in its province now", () => {
+    const game = new Game();
+    game.process({ orders: { ITALY: ["A VEN - TYR", "A ROM - VEN"] } });
+    game.process({ orders: { ITALY: ["A VEN - TRI", "A TYR S A VEN - TRI"] } });
+    const legal = game.legal("AUSTRIA").by_unit;
+    expect(Object.keys(legal)).toEqual(["F TRI"]);
+    // The fleet was dislodged by an army, and the engine words its options with the army's letter.
+    // The client rewrites them for the fleet; the engine must go on accepting that spelling.
+    const options = legal["F TRI"]!.map((o) => forUnit(o, "F TRI"));
+    expect(options).toContain("F TRI R ALB");
+    expect(options).toContain("F TRI D");
+    expect(options.every((o) => o.startsWith("F TRI "))).toBe(true);
+    const outcome = game.process(game.normaliseOrders({ orders: { AUSTRIA: ["F TRI D"] } }));
+    expect(outcome.results[0]).toMatchObject({ unit: "F TRI", code: "disband" });
+    expect(forUnit(outcome.results[0]!.order, outcome.results[0]!.unit)).toBe("F TRI D");
+    expect(outcome.next.units["AUSTRIA"]).toEqual(["A BUD", "A VIE"]);
   });
 });
