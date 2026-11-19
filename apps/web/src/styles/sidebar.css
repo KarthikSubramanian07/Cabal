@@ -275,6 +275,17 @@ table.powers td.done {
   background: var(--ink-2);
 }
 
+/* Brass marks the one thing to do next. */
+.btn.brass {
+  background: var(--brass);
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.btn.brass:hover {
+  background: color-mix(in srgb, var(--brass) 85%, var(--ink));
+}
+
 .btn.small {
   padding: 5px 9px;
   border-color: var(--rule);

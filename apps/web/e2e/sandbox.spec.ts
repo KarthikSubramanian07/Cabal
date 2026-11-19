@@ -100,6 +100,8 @@ test.describe("classic board", () => {
 
   test("explains how to play", async ({ page }) => {
     await ready(page);
+    const menu = page.getByRole("button", { name: "Menu" });
+    if (await menu.isVisible()) await menu.click();
     await page.getByRole("button", { name: "How to play" }).click();
     const dialog = page.getByRole("dialog", { name: "How to play" });
     await expect(dialog).toBeVisible();

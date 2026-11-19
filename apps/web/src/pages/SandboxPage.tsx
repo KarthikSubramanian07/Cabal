@@ -1,7 +1,7 @@
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { HowToPlay } from "./components/HowToPlay.jsx";
-import { OrderList, PhaseHeader, PhaseStepper, PowerTable, Results } from "./components/Sidebar.jsx";
-import { Wordmark } from "./Wordmark.jsx";
+import { PageLoading } from "../app/PageLoading.jsx";
+import { useShortcuts } from "../app/prefs.js";
+import { OrderList, PhaseHeader, PhaseStepper, PowerTable, Results } from "../components/Sidebar.jsx";
 import {
   type ComposeContext,
   type Draft,
@@ -11,7 +11,7 @@ import {
   disbandSelected,
   holdSelected,
   setMode,
-} from "./game/compose.js";
+} from "../game/compose.js";
 import {
   choicePrompt,
   choicesFor,
@@ -20,20 +20,10 @@ import {
   describeOutcome,
   phaseLine,
   statusLine,
-} from "./game/describe.js";
-import { describePhase, parseOrder, parseUnit, provinceOf, titleCase } from "./game/notation.js";
-import { useSandbox } from "./game/useSandbox.js";
-import { Board, type DrawnOrder } from "./map/Board.jsx";
-
-const SHORTCUTS_KEY = "cabal.shortcuts";
-
-function readShortcuts(): boolean {
-  try {
-    return localStorage.getItem(SHORTCUTS_KEY) !== "off";
-  } catch {
-    return true;
-  }
-}
+} from "../game/describe.js";
+import { describePhase, parseOrder, parseUnit, provinceOf, titleCase } from "../game/notation.js";
+import { useSandbox } from "../game/useSandbox.js";
+import { Board, type DrawnOrder } from "../map/Board.jsx";
 
 interface Picker {
   x: number;
@@ -46,31 +36,21 @@ interface Picker {
 
 const IDLE: Draft = { step: "idle" };
 
-export function App() {
+export default function SandboxPage() {
   const sb = useSandbox();
   const [draft, setDraft] = useState<Draft>(IDLE);
   const [active, setActive] = useState("FRANCE");
   const [message, setMessage] = useState<string | null>(null);
   const [picker, setPicker] = useState<Picker | null>(null);
   const [viewing, setViewing] = useState<number | null>(null);
-  const [help, setHelp] = useState(false);
   const [announcement, setAnnouncement] = useState("");
-  const [shortcuts, setShortcutsState] = useState(readShortcuts);
+  const [shortcuts] = useShortcuts();
   const boardWrap = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const choicesRef = useRef<HTMLElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   /** Set when a keyboard choice (or Escape) removed the focused button, so focus moves on. */
   const refocus = useRef(false);
-
-  const setShortcuts = useCallback((on: boolean) => {
-    setShortcutsState(on);
-    try {
-      localStorage.setItem(SHORTCUTS_KEY, on ? "on" : "off");
-    } catch {
-      // storage can be unavailable (private windows); the choice still holds for this visit
-    }
-  }, []);
 
   const announce = useCallback((text: string) => {
     // Clearing first makes a repeated message announce again.
@@ -251,14 +231,7 @@ export function App() {
   }, [sb, draft]);
 
   if (!sb) {
-    return (
-      <div className="app loading">
-        <TopBar onHelp={() => setHelp(true)} />
-        <main className="loading-body">
-          <p>Setting up the board.</p>
-        </main>
-      </div>
-    );
+    return <PageLoading />;
   }
 
   const record = viewing !== null ? sb.history[viewing] : undefined;
@@ -337,12 +310,7 @@ export function App() {
   };
 
   return (
-    <div className="app">
-      <a className="skip-link" href="#main">
-        Skip to the board
-      </a>
-      <TopBar onHelp={() => setHelp(true)} />
-
+    <>
       <main className="table" id="main" tabIndex={-1}>
         <h1 className="sr-only">Cabal Diplomacy sandbox</h1>
         <div className="board-wrap" ref={boardWrap}>
@@ -570,41 +538,10 @@ export function App() {
         </aside>
       </main>
 
-      <footer className="footer">
-        <span>Sandbox: every power is yours to order.</span>
-        <span>Adjudicated in your browser by a Rust engine that passes all 171 DATC cases.</span>
-        <span>Board drawn from Natural Earth.</span>
-        <a href="/about">About</a>
-        <a href="/contact">Contact</a>
-        <a href="/privacy">Privacy</a>
-        <a href="/llms.txt">llms.txt</a>
-        <a href="https://github.com/KarthikSubramanian07/Cabal">Source</a>
-      </footer>
-
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {announcement}
       </div>
 
-      <HowToPlay open={help} onClose={() => setHelp(false)} shortcuts={shortcuts} onShortcuts={setShortcuts} />
-    </div>
-  );
-}
-
-function TopBar({ onHelp }: { onHelp: () => void }) {
-  return (
-    <header className="topbar">
-      <a className="brand" href="/" aria-label="Cabal home">
-        <Wordmark height={22} color="var(--bone)" />
-      </a>
-      <nav>
-        <span className="nav-current">Sandbox</span>
-        <button type="button" onClick={onHelp}>
-          How to play
-        </button>
-        <a href="/about">About</a>
-        <a href="/contact">Contact</a>
-        <a href="https://github.com/KarthikSubramanian07/Cabal">GitHub</a>
-      </nav>
-    </header>
+    </>
   );
 }
