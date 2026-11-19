@@ -20,19 +20,35 @@ import {
   type ClientMessage,
   type CreateGameRequest,
   CreateGameResponse,
+  type DatcReport,
   GameListing,
   GameRecord,
   GameSummary,
   HealthResponse,
   type JoinGameRequest,
   JoinGameResponse,
+  LeaderboardResponse,
   LedgerResponse,
+  MeResponse,
+  type MetricSample,
+  MetricsSummary,
+  MyGamesResponse,
+  NotificationPreferences,
+  NotificationsResponse,
+  PlayerProfile,
+  PlayerSession,
   type PledgeInput,
   type PowerName,
   PressPage,
+  PushKeyResponse,
+  type PushSubscriptionRequest,
   type Recipient,
+  RecoveryCodeResponse,
+  SeatTokenResponse,
   ServerMessage,
   SubstituteInviteResponse,
+  TrustLeaderboardResponse,
+  type UpdateNotificationPreferences,
 } from "./index.js";
 import { z } from "zod";
 
@@ -582,7 +598,7 @@ export function createApi(options: ApiOptions = {}) {
   const base = (options.baseUrl ?? "").replace(/\/$/, "");
   const doFetch = options.fetch ?? ((input: string, init?: RequestInit) => fetch(input, init));
 
-  async function call<S extends z.ZodType>(schema: S, method: "GET" | "POST", path: string, opts: { token?: string; body?: unknown } = {}): Promise<z.infer<S>> {
+  async function call<S extends z.ZodType>(schema: S, method: "GET" | "POST" | "PATCH" | "DELETE", path: string, opts: { token?: string; body?: unknown } = {}): Promise<z.infer<S>> {
     const headers: Record<string, string> = {};
     if (opts.token) headers.authorization = `Bearer ${opts.token}`;
     if (opts.body !== undefined) headers["content-type"] = "application/json";
@@ -605,10 +621,17 @@ export function createApi(options: ApiOptions = {}) {
     return pairs.length === 0 ? "" : `?${pairs.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join("&")}`;
   };
 
+  const page = (p: { offset?: number; limit?: number }) => query({ offset: p.offset, limit: p.limit });
+  /** A player secret, when one is given, as the bearer. */
+  const as = (secret?: string) => (secret ? { token: secret } : {});
+
   return {
     health: () => call(HealthResponse, "GET", "/health"),
-    createGame: (body: z.input<typeof CreateGameRequest>) => call(CreateGameResponse, "POST", "/api/games", { body }),
-    joinGame: (gameId: string, body: JoinGameRequest) => call(JoinGameResponse, "POST", `/api/games/${gameId}/join`, { body }),
+    /** With a player secret the creator sits under their handle and `name` may be left out. */
+    createGame: (body: z.input<typeof CreateGameRequest>, secret?: string) => call(CreateGameResponse, "POST", "/api/games", { body, ...as(secret) }),
+    joinGame: (gameId: string, body: JoinGameRequest, secret?: string) => call(JoinGameResponse, "POST", `/api/games/${gameId}/join`, { body, ...as(secret) }),
+    /** A signed-in player's own seat token again, for another device. */
+    seatToken: (gameId: string, secret: string) => call(SeatTokenResponse, "POST", `/api/games/${gameId}/seat`, { token: secret }),
     startGame: (gameId: string, token: string) => call(GameSummary, "POST", `/api/games/${gameId}/start`, { token }),
     inviteSubstitute: (gameId: string, token: string, power: PowerName) =>
       call(SubstituteInviteResponse, "POST", `/api/games/${gameId}/substitute`, { token, body: { power } }),
@@ -624,6 +647,42 @@ export function createApi(options: ApiOptions = {}) {
     replay: (gameId: string, token?: string) => call(z.record(z.string(), z.unknown()), "GET", `/api/games/${gameId}/replay`, token ? { token } : {}),
     press: (gameId: string, page: { before?: number; with?: Recipient; limit?: number } = {}, token?: string) =>
       call(PressPage, "GET", `/api/games/${gameId}/press${query(page)}`, token ? { token } : {}),
+
+    // ---------- players ----------
+
+    /** A guest account on this device. Keep `secret`: it is shown once. */
+    createPlayer: (handle?: string) => call(PlayerSession, "POST", "/api/players", { body: handle === undefined ? {} : { handle } }),
+    /** Restore an account on this device from its recovery code. */
+    recoverPlayer: (code: string) => call(PlayerSession, "POST", "/api/players/recover", { body: { code } }),
+    profile: (handle: string) => call(PlayerProfile, "GET", `/api/players/${encodeURIComponent(handle)}`),
+    me: (secret: string) => call(MeResponse, "GET", "/api/me", { token: secret }),
+    rename: (secret: string, handle: string) => call(MeResponse, "PATCH", "/api/me", { token: secret, body: { handle } }),
+    /** A new recovery code, shown once; the previous one stops working. */
+    issueRecoveryCode: (secret: string) => call(RecoveryCodeResponse, "POST", "/api/me/recovery", { token: secret }),
+    logout: (secret: string, everywhere = false) => call(z.null(), "POST", "/api/me/logout", { token: secret, body: { everywhere } }),
+    myGames: (secret: string) => call(MyGamesResponse, "GET", "/api/me/games", { token: secret }).then((r) => r.games),
+    leaderboard: (p: { offset?: number; limit?: number } = {}) => call(LeaderboardResponse, "GET", `/api/leaderboard${page(p)}`),
+    trustLedger: (p: { offset?: number; limit?: number } = {}) => call(TrustLeaderboardResponse, "GET", `/api/ledger${page(p)}`),
+
+    // ---------- notifications ----------
+
+    /** The key `pushManager.subscribe` takes as `applicationServerKey`; null where push is off. */
+    pushKey: () => call(PushKeyResponse, "GET", "/api/push/key").then((r) => r.publicKey),
+    /** Register this device for push: pass `subscription.toJSON()`. */
+    subscribePush: (secret: string, subscription: PushSubscriptionRequest) => call(z.object({ devices: z.number().int() }), "POST", "/api/me/push", { token: secret, body: subscription }),
+    unsubscribePush: (secret: string, endpoint: string) => call(z.null(), "DELETE", "/api/me/push", { token: secret, body: { endpoint } }),
+    notifications: (secret: string) => call(NotificationsResponse, "GET", "/api/me/notifications", { token: secret }),
+    setNotifications: (secret: string, change: UpdateNotificationPreferences) =>
+      call(NotificationsResponse, "PATCH", "/api/me/notifications", { token: secret, body: change }).then((r) => NotificationPreferences.parse(r.preferences)),
+
+    // ---------- metrics ----------
+
+    /** Report timings this browser measured. Anonymous; see the privacy page. */
+    sendMetrics: (samples: MetricSample[]) => call(z.null(), "POST", "/api/metrics", { body: { samples } }),
+    /** Admin only: the phase 1 metrics over the last `days` days. */
+    metrics: (adminToken: string, days?: number) => call(MetricsSummary, "GET", `/api/metrics${query({ days })}`, { token: adminToken }),
+    /** Admin only: record the DATC totals for a commit. */
+    reportDatc: (adminToken: string, report: DatcReport) => call(z.object({ recorded: z.boolean() }), "POST", "/api/metrics/datc", { token: adminToken, body: report }),
   };
 }
 

@@ -628,8 +628,8 @@ describe("adjudication", () => {
     expect(await phaseCount(ann.gameId)).toBe(1);
     expect((await summary(ann.gameId)).phase).toBe("F1901M");
     expect(await seatOf(ann.gameId, ann.power)).toMatchObject({ missed: 1 });
-    // Applied exactly once: one receipt (void, since Ann ordered nothing), one miss, one phase row.
-    expect(await sql<{ receipt: string | null }>(ann.gameId, "SELECT receipt FROM pledges")).toEqual([{ receipt: "void" }]);
+    // Applied exactly once: one receipt (broken, since Ann had units and ordered nothing), one miss, one phase row.
+    expect(await sql<{ receipt: string | null }>(ann.gameId, "SELECT receipt FROM pledges")).toEqual([{ receipt: "broken" }]);
     expect((await a.next("results")).p.phase).toBe("S1901M");
   });
 

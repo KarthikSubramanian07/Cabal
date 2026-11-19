@@ -4,7 +4,12 @@ import { PageLoading } from "../app/PageLoading.jsx";
 import { StatusPage } from "../app/StatusPage.jsx";
 import { shortcutsEnabled } from "../app/prefs.js";
 import { OrderEntry, type WriteResult } from "../components/OrderEntry.jsx";
-import { OrderList, PhaseHeader, PhaseStepper, PowerTable, Results } from "../components/Sidebar.jsx";
+import { OrderList, PhaseHeader, PhaseStepper, PowerTable, Results, whyKey } from "../components/Sidebar.jsx";
+import { type Why, explainPhase, indexOfUnit, whyOf, whyOfResult } from "../game/explain/explain.js";
+import { useWhatIf } from "../game/explain/whatIf.js";
+import { trackUnits } from "../game/unitIds.js";
+import { deck } from "../sound/deck.js";
+import type { OrderResult, PhaseOutcome, State } from "../engine.js";
 import {
   type ComposeContext,
   type Draft,
@@ -40,10 +45,11 @@ import {
 } from "../game/notation.js";
 import { ImportError } from "../game/persist.js";
 import { type Suggestion, normaliseTyped, routeTyped } from "../game/typed.js";
-import { type OpenedGame, type Sandbox, powerWithOrders, useSandbox } from "../game/useSandbox.js";
-import { Board, type DrawnOrder, POWER_COLOR } from "../map/Board.jsx";
-import { resultsTiming } from "../map/motion.js";
-import { type Speed, advance, dwell, playFrom } from "../game/replay.js";
+import { type OpenedGame, type PhaseRecord, type Sandbox, powerWithOrders, useSandbox } from "../game/useSandbox.js";
+import { Board, type DrawnOrder, type Ghost, POWER_COLOR, type Resolution } from "../map/Board.jsx";
+import { resolutionLength } from "../motion/choreography.js";
+import { prefersReducedMotion } from "../motion/useReducedMotion.js";
+import { type Speed, READ_MS, advance, dwell, playFrom } from "../game/replay.js";
 
 interface Picker {
   x: number;
@@ -141,17 +147,7 @@ function Table({ sb }: { sb: Sandbox }) {
     window.setTimeout(() => setAnnouncement(text), 50);
   }, []);
 
-  const ctx = useMemo<ComposeContext>(
-    () => ({
-      phase: sb.kind,
-      pieces: sb.pieces,
-      legal: sb.legal,
-      active,
-      allowance: sb.allowance,
-      orders: sb.orders,
-    }),
-    [sb.kind, sb.pieces, sb.legal, sb.allowance, sb.orders, active],
-  );
+
 
   // An undo, a new game or an import can leave `viewing` pointing past the end of the history.
   useEffect(() => {
@@ -161,13 +157,46 @@ function Table({ sb }: { sb: Sandbox }) {
   /** The live phase is on the board and can take orders. */
   const playing = !record && sb.status === "active";
 
+  /**
+   * What if: a sketch of orders for any powers, judged as it is written, that never touches the
+   * game. While it is open the composer writes into the sketch instead of the real orders.
+   */
+  const whatIf = useWhatIf(sb.state, sb.kind);
+  const sketching = whatIf.on && playing;
+  const book = sketching ? whatIf.orders : sb.orders;
+  const writeOrder = sketching ? whatIf.setOrder : sb.setOrder;
+  const eraseOrder = sketching ? whatIf.removeOrder : sb.removeOrder;
+  /** The sketch played out on the board, by a key that changes with each play. */
+  const [sketchPlay, setSketchPlay] = useState<number | null>(null);
+  useEffect(() => setSketchPlay(null), [whatIf.orders]);
+  // A new phase (or a game loaded) leaves the sketch behind.
+  useEffect(() => {
+    whatIf.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sb.phase, sb.history.length]);
+  /** The receipt whose "why" panel is open. */
+  const [whyOpen, setWhyOpen] = useState<string | null>(null);
+  useEffect(() => setWhyOpen(null), [viewing, whatIf.on]);
+
+  const ctx = useMemo<ComposeContext>(
+    () => ({
+      phase: sb.kind,
+      pieces: sb.pieces,
+      legal: sb.legal,
+      active,
+      allowance: sb.allowance,
+      orders: book,
+    }),
+    [sb.kind, sb.pieces, sb.legal, sb.allowance, book, active],
+  );
   const apply = useCallback(
     (step: Step, client?: { x: number; y: number }) => {
       setDraft(step.draft);
       if (step.draft.step !== "idle") setActive(step.draft.power);
       const effect = step.effect;
       if (effect.kind === "order") {
-        sb.setOrder(effect.power, effect.key, effect.text);
+        writeOrder(effect.power, effect.key, effect.text);
+        deck.play("quill");
         setActive(effect.power);
         setMessage(null);
         // A move by convoy goes nowhere without fleets: offer the ones that could carry it.
@@ -203,7 +232,7 @@ function Table({ sb }: { sb: Sandbox }) {
         setMessage(null);
       }
     },
-    [sb, announce, setActive],
+    [writeOrder, announce, setActive],
   );
 
   const onProvince = useCallback(
@@ -268,7 +297,7 @@ function Table({ sb }: { sb: Sandbox }) {
     (inputs: string[]): WriteResult => {
       const result: WriteResult = { written: [], refused: [] };
       // Later orders in one batch must see the earlier ones, for the winter allowance.
-      const orders = Object.fromEntries(Object.entries(sb.orders).map(([p, o]) => [p, { ...o }]));
+      const orders = Object.fromEntries(Object.entries(book).map(([p, o]) => [p, { ...o }]));
       let last: string | null = null;
       for (const input of inputs) {
         // Arrows and words first, so `A BER->KIE` reads as the player meant it.
@@ -284,19 +313,20 @@ function Table({ sb }: { sb: Sandbox }) {
           continue;
         }
         const { key, text } = step.effect;
-        sb.setOrder(power, key, text);
+        writeOrder(power, key, text);
         orders[power] = { ...orders[power], [key]: text };
         result.written.push(text);
         last = power;
       }
       if (last) {
+        deck.play("quill");
         setActive(last);
         setRoute(null);
         setDraft(IDLE);
       }
       return result;
     },
-    [sb, ctx, active, setActive],
+    [sb, ctx, active, setActive, book, writeOrder],
   );
 
   const startNew = useCallback(() => {
@@ -473,31 +503,122 @@ function Table({ sb }: { sb: Sandbox }) {
     ? record.outcome.results
         .filter((r) => given!.has(r.order) || (!r.ok && parseOrder(r.order)?.type !== "hold"))
         .map((r) => ({ power: r.power, text: r.order, ok: r.ok }))
-    : Object.entries(sb.orders).flatMap(([power, entries]) => Object.values(entries).map((text) => ({ power, text })));
+    : Object.entries(book).flatMap(([power, entries]) =>
+        Object.values(entries).map((text): DrawnOrder => {
+          // A sketch is judged as it is written: each order carries its predicted result.
+          const predicted = sketching ? whatIf.prediction?.outcome.results.find((r) => r.power === power && r.order === text) : undefined;
+          return predicted ? { power, text, ok: predicted.ok } : { power, text };
+        }),
+      );
+  const prediction = sketching ? whatIf.prediction : null;
+  /** Where the sketch would leave the units that move: dashed pieces on the board. */
+  const ghosts = useMemo<Ghost[]>(() => {
+    if (!prediction) return [];
+    const list: Ghost[] = [];
+    for (const r of prediction.outcome.results) {
+      const o = parseOrder(r.order);
+      if (r.ok && (o?.type === "move" || o?.type === "retreat")) list.push({ power: r.power, kind: o.unit.kind, region: o.dest });
+    }
+    return list;
+  }, [prediction]);
 
-  // Playback: each phase stays up while its results ink in and then long enough to read.
-  const resultsMs = record ? resultsTiming(drawn).total : 0;
+  /** The phase on show, to be played on the board: its pieces march from where they stood. */
+  const resolution = useMemo<Resolution | undefined>(
+    () =>
+      sketchPlay !== null && prediction
+        ? playedSketch(sketchPlay, sb.history, sb.state, prediction.outcome)
+        : record && viewing !== null
+        ? {
+            key: `${viewing}-${record.phase}`,
+            phase: record.phase,
+            before: record.state,
+            after: record.outcome.next,
+            results: record.outcome.results,
+            beforeIds: sb.units.phases[viewing],
+            afterIds: sb.units.phases[viewing + 1] ?? sb.units.live,
+          }
+        : undefined,
+    [record, viewing, sb.units, sketchPlay, prediction, sb.state],
+  );
+  /** The phase whose choreography has finished (or was skipped). */
+  const [settled, setSettled] = useState<string | null>(null);
+
+  // Playback: each phase plays out on the board, then stays up long enough to read.
   useEffect(() => {
     if (!replaying) return;
-    if (viewing === null) {
+    if (viewing === null || !resolution) {
       setReplaying(false);
       return;
     }
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-    const timer = window.setTimeout(
-      () => setViewing(advance(viewing, sb.history.length)),
-      dwell(resultsMs, speed, reduced),
-    );
+    const next = () => setViewing(advance(viewing, sb.history.length));
+    if (settled === resolution.key) {
+      const timer = window.setTimeout(next, Math.round(READ_MS / speed));
+      return () => window.clearTimeout(timer);
+    }
+    // Should the board never report back (drawn off screen), move on after the time it would take.
+    const reduced = prefersReducedMotion();
+    const timer = window.setTimeout(next, dwell(resolutionLength(resolution, drawn, reduced), speed, reduced) + 1500);
     return () => window.clearTimeout(timer);
-  }, [replaying, viewing, speed, resultsMs, sb.history.length]);
+    // `drawn` follows `resolution`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replaying, viewing, speed, settled, resolution, sb.history.length]);
 
+  // Why an order failed: the engine's account of the phase on show (or of the sketch).
+  const explanation = useMemo(() => (record ? explainPhase(record) : null), [record]);
+  const explainResult = useCallback(
+    (all: readonly OrderResult[], phase: string, ex: typeof explanation) =>
+      (r: OrderResult): Why | null => {
+        if (ex) {
+          const i = indexOfUnit(ex, r.power, r.unit);
+          if (i >= 0) return whyOf(ex, i, sb.board.provinces);
+        }
+        return whyOfResult(r, phase, sb.board.provinces, all);
+      },
+    [sb.board.provinces],
+  );
+  const explainShown = record ? explainResult(record.outcome.results, record.phase, explanation) : null;
+  const explainSketch = prediction ? explainResult(prediction.outcome.results, sb.phase, prediction.explanation) : null;
+  /** The panel open now, so the board can pick out the units behind it. */
+  const openWhy = useMemo(() => {
+    if (!whyOpen) return null;
+    const results = record ? record.outcome.results : prediction?.outcome.results;
+    const r = results?.find((x, i) => whyKey(x, i) === whyOpen);
+    const fn = record ? explainShown : explainSketch;
+    return r && fn ? fn(r) : null;
+  }, [whyOpen, record, prediction, explainShown, explainSketch]);
+
+  /** Open a sketch from the orders written so far; close it; or make it the real orders. */
+  const toggleWhatIf = () => {
+    if (whatIf.on) {
+      whatIf.stop();
+      announce("What if closed. The orders you had written are as they were.");
+    } else {
+      cancel();
+      whatIf.start(sb.orders);
+      announce("What if: sketch orders for any power and see how the phase would resolve. Nothing is sent and the game does not change.");
+    }
+  };
+  const keepSketch = () => {
+    sb.clearOrders();
+    for (const [power, entries] of Object.entries(whatIf.orders)) {
+      for (const [key, text] of Object.entries(entries)) sb.setOrder(power, key, text);
+    }
+    whatIf.stop();
+    announce("The sketched orders are now your orders.");
+  };
+
+  /** The power table counts the orders on the table: the sketch's while one is open. */
+  const tablePowers = useMemo(
+    () => (sketching ? sb.powers.map((p) => ({ ...p, given: Object.keys(whatIf.orders[p.power] ?? {}).length })) : sb.powers),
+    [sketching, sb.powers, whatIf.orders],
+  );
   const selectedProvince = draft.step === "idle" ? null : parseUnit(draft.unit)?.province ?? null;
   const activeSummary = sb.powers.find((p) => p.power === active);
   const orderableUnits = Object.keys(sb.legal[active] ?? {}).filter((u) => u !== "");
   /** The selected army could be carried by sea, so By convoy is on offer. */
   const convoyable = playing && draft.step === "unit" && canGoByConvoy(ctx, draft.power, draft.unit);
   /** The move by convoy whose fleets are on offer, while it is still written that way. */
-  const routeOrder = playing && route && draft.step === "idle" ? sb.orders[route.power]?.[route.unit] : undefined;
+  const routeOrder = playing && route && draft.step === "idle" ? book[route.power]?.[route.unit] : undefined;
   const carriers = routeOrder?.endsWith(" VIA") ? carryingFleets(ctx, routeOrder) : [];
   const choices = playing ? choicesFor(ctx, draft, active, orderableUnits, targets, sb.board.provinces) : [];
   const choose = (code: string) => {
@@ -601,6 +722,10 @@ function Table({ sb }: { sb: Sandbox }) {
       const failed = record.outcome.results.filter((r) => !r.ok && r.code !== "disband").length;
       return failed ? `${failed} ${failed === 1 ? "order" : "orders"} failed` : "Every order succeeded";
     }
+    if (sketching) {
+      const n = Object.values(whatIf.orders).reduce((sum, o) => sum + Object.keys(o).length, 0);
+      return `What if: ${n} ${n === 1 ? "order" : "orders"} sketched`;
+    }
     if (sb.status !== "active") return statusLine(sb.status) ?? "Game over";
     if (!activeSummary || activeSummary.due === 0) return `${titleCase(active)}: nothing to order`;
     return `${titleCase(active)}: ${Math.min(activeSummary.given, activeSummary.due)} of ${activeSummary.due} ${
@@ -624,8 +749,13 @@ function Table({ sb }: { sb: Sandbox }) {
             selected={record ? null : selectedProvince}
             targets={record ? undefined : targets}
             hot={playing ? hot : undefined}
-            standoffs={record?.outcome.standoffs}
-            results={record ? `${viewing}-${record.phase}` : undefined}
+            standoffs={record?.outcome.standoffs ?? prediction?.outcome.standoffs}
+            sketch={sketching}
+            ghosts={sketching && sketchPlay === null ? ghosts : undefined}
+            highlight={openWhy?.highlight}
+            resolution={resolution}
+            rate={replaying ? speed : 1}
+            onSettled={setSettled}
             ids={record ? sb.units.phases[viewing!] : sb.units.live}
             focus={focus}
             focusKey={refocus}
@@ -685,7 +815,8 @@ function Table({ sb }: { sb: Sandbox }) {
                     const from = picker.openedBy;
                     const sameSpot = from !== null && Math.hypot(e.clientX - from.x, e.clientY - from.y) < 16;
                     if (sameSpot && e.timeStamp - picker.openedAt < 700) return;
-                    sb.setOrder(picker.power, picker.key, o);
+                    writeOrder(picker.power, picker.key, o);
+                    deck.play("quill");
                     setActive(picker.power);
                     setPicker(null);
                     if (o.endsWith(" VIA")) setRoute({ power: picker.power, unit: picker.key });
@@ -741,6 +872,13 @@ function Table({ sb }: { sb: Sandbox }) {
                 Disband <kbd>D</kbd>
               </button>
             ) : null}
+            {/* Offered between orders, not while one is half written: the toolbar keeps one row
+                on a phone, so the map does not resize under the finger mid-order. */}
+            {playing && draft.step === "idle" && !picker ? (
+              <button type="button" className="tool what-if" aria-pressed={whatIf.on} onClick={toggleWhatIf}>
+                What if
+              </button>
+            ) : null}
             {draft.step !== "idle" || picker ? (
               <button type="button" className="tool" onClick={cancel} data-vanishes>
                 Cancel <kbd>Esc</kbd>
@@ -765,8 +903,8 @@ function Table({ sb }: { sb: Sandbox }) {
                     aria-pressed={c.given}
                     aria-label={c.given ? `${c.unit} carries it; remove the convoy order` : `Order ${c.order}`}
                     onClick={() => {
-                      if (c.given) sb.removeOrder(c.power, c.unit);
-                      else sb.setOrder(c.power, c.unit, c.order);
+                      if (c.given) eraseOrder(c.power, c.unit);
+                      else writeOrder(c.power, c.unit, c.order);
                       announce(c.given ? `${c.unit} no longer convoys.` : describeOrder(c.order));
                     }}
                   >
@@ -835,12 +973,57 @@ function Table({ sb }: { sb: Sandbox }) {
             />
 
             {record ? (
-              <Results record={record} names={sb.board.provinces} />
+              <Results
+                record={record}
+                names={sb.board.provinces}
+                explain={explainShown ?? undefined}
+                open={whyOpen}
+                onOpen={setWhyOpen}
+              />
             ) : (
               <>
+                {sketching ? (
+                  <section className="what-if-panel" aria-labelledby="what-if-title">
+                    <h2 id="what-if-title">
+                      <span className="what-if-stamp">What if</span>
+                    </h2>
+                    <p className="hint">
+                      Sketch orders for any power, on the map or below. The prediction is the engine&apos;s own; nothing is sent
+                      and the game does not change.
+                    </p>
+                    <div className="row-actions">
+                      <button
+                        type="button"
+                        className="btn small"
+                        disabled={!prediction}
+                        onClick={() => setSketchPlay((n) => (n ?? 0) + 1)}
+                      >
+                        Play it out
+                      </button>
+                      <button type="button" className="btn small" onClick={keepSketch}>
+                        Use these orders
+                      </button>
+                      <button type="button" className="btn small" onClick={toggleWhatIf}>
+                        Discard
+                      </button>
+                    </div>
+                    {prediction ? (
+                      <Results
+                        record={{ phase: sb.phase, orders: whatIf.orders, outcome: prediction.outcome }}
+                        names={sb.board.provinces}
+                        explain={explainSketch ?? undefined}
+                        open={whyOpen}
+                        onOpen={setWhyOpen}
+                        label="Predicted results"
+                      />
+                    ) : (
+                      <p className="hint">These orders cannot be judged together yet.</p>
+                    )}
+                  </section>
+                ) : null}
                 <section>
                   <PowerTable
-                    powers={sb.powers}
+                    powers={tablePowers}
                     active={active}
                     kind={sb.kind}
                     onSelect={(power) => {
@@ -855,19 +1038,19 @@ function Table({ sb }: { sb: Sandbox }) {
                     power={active}
                     kind={sb.kind}
                     units={orderableUnits}
-                    orders={sb.orders[active] ?? {}}
+                    orders={book[active] ?? {}}
                     allowance={activeSummary?.allowance ?? 0}
-                    onRemove={(key) => sb.removeOrder(active, key)}
+                    onRemove={(key) => eraseOrder(active, key)}
                     alternative={(text) => viaAlternative(ctx, active, text)}
                     onReplace={(key, text) => {
-                      sb.setOrder(active, key, text);
+                      writeOrder(active, key, text);
                       setRoute(text.endsWith(" VIA") ? { power: active, unit: key } : null);
                       announce(describeOrder(text));
                     }}
                   />
                   <div className="row-actions">
                     {sb.kind === "M" ? (
-                      <button type="button" className="btn small" onClick={() => sb.holdAll(active)}>
+                      <button type="button" className="btn small" onClick={() => (sketching ? whatIf.holdAll(active, orderableUnits) : sb.holdAll(active))}>
                         Hold the rest
                       </button>
                     ) : null}
@@ -876,12 +1059,12 @@ function Table({ sb }: { sb: Sandbox }) {
                         type="button"
                         className="btn small"
                         onClick={() => sb.waive(active)}
-                        disabled={(activeSummary?.given ?? 0) >= (activeSummary?.allowance ?? 0)}
+                        disabled={sketching ||(activeSummary?.given ?? 0) >= (activeSummary?.allowance ?? 0)}
                       >
                         Waive a build
                       </button>
                     ) : null}
-                    <button type="button" className="btn small" onClick={() => sb.clearOrders(active)}>
+                    <button type="button" className="btn small" onClick={() => (sketching ? whatIf.clearOrders(active) : sb.clearOrders(active))}>
                       Clear
                     </button>
                   </div>
@@ -897,9 +1080,15 @@ function Table({ sb }: { sb: Sandbox }) {
                 {last ? continueLabel(sb.phase) : "Next phase"}
               </button>
             ) : (
-              <button type="button" className="btn primary" onClick={adjudicate} disabled={sb.status !== "active"}>
-                {resolveLabel(sb.phase)}
-              </button>
+              sketching ? (
+                <button type="button" className="btn primary" onClick={toggleWhatIf}>
+                  Leave what if
+                </button>
+              ) : (
+                <button type="button" className="btn primary" onClick={adjudicate} disabled={sb.status !== "active"}>
+                  {resolveLabel(sb.phase)}
+                </button>
+              )
             )}
           </div>
 
@@ -964,4 +1153,20 @@ function Table({ sb }: { sb: Sandbox }) {
       </ConfirmDialog>
     </>
   );
+}
+
+/** A sketch played out: the live position, and where the predicted outcome leaves it. */
+function playedSketch(n: number, history: readonly PhaseRecord[], state: State, outcome: PhaseOutcome): Resolution {
+  const after = outcome.next;
+  // The same ids the board already uses for the live position, carried one phase on.
+  const ids = trackUnits([...history, { state, outcome }], after);
+  return {
+    key: `what-if-${n}`,
+    phase: state.name,
+    before: state,
+    after,
+    results: outcome.results,
+    beforeIds: ids.phases[history.length],
+    afterIds: ids.live,
+  };
 }

@@ -6,6 +6,31 @@
   min-height: 100%;
 }
 
+/*
+ * On a desktop the sidebar is a column of its own: it scrolls by itself, and the phase's main
+ * action is pinned to its foot. A what-if with its predicted receipts, or an open Why?, then
+ * never pushes the main action below the fold, and reaching the order list never scrolls the
+ * board and its prediction out of view. (Phones dock it as a sheet in responsive.css.)
+ */
+@media (min-width: 1001px) {
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: calc(100dvh - var(--topbar-h));
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .sidebar .actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    border-top: 1px solid var(--ink);
+    background: var(--paper);
+  }
+}
+
 /* The sheet handle is for phones (responsive.css); on a desktop the sidebar is always open. */
 .sheet-bar {
   display: none;
@@ -143,6 +168,96 @@
 
 .stepper .replay:hover {
   background: var(--ink-2);
+}
+
+/* The timeline the scrubber runs along: a tick per phase, a glyph where something happened,
+   the year under each spring. Drawn behind the slider to the same geometry (ReplayScrubber.tsx). */
+.timeline {
+  --scrub-h: 26px;
+  --track-y: calc(12px + var(--scrub-h) / 2);
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  padding: 12px 0 12px;
+}
+
+.timeline .scrubber {
+  position: relative;
+  z-index: 1;
+  height: var(--scrub-h);
+}
+
+.timeline-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.timeline-phase {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+}
+
+.timeline-phase .tick {
+  position: absolute;
+  left: -0.5px;
+  top: calc(var(--track-y) - 6px);
+  width: 1px;
+  height: 12px;
+  background: var(--ink-4);
+}
+
+.timeline-phase.kind-M .tick {
+  height: 14px;
+  top: calc(var(--track-y) - 7px);
+  background: var(--ink-2);
+}
+
+.timeline-phase .glyph {
+  position: absolute;
+  left: -4px;
+  top: calc(var(--track-y) - 23px);
+  fill: none;
+  stroke: var(--ink-2);
+  stroke-width: 1.5;
+  stroke-linecap: square;
+  overflow: visible;
+}
+
+.timeline-phase .glyph.dislodged,
+.timeline-phase .glyph.eliminated {
+  stroke: var(--vermilion-deep);
+}
+
+.timeline-phase .glyph.captures {
+  fill: var(--brass);
+  stroke: var(--brass-ink);
+  stroke-width: 1;
+}
+
+.timeline-phase .glyph.builds {
+  fill: var(--ink-2);
+  stroke-width: 1;
+}
+
+.timeline-phase .glyph.ended {
+  fill: var(--ink);
+  stroke: var(--ink);
+  stroke-width: 1;
+}
+
+.timeline-phase .year {
+  position: absolute;
+  top: calc(var(--track-y) + 8px);
+  left: 0;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--ink-3);
 }
 
 /* The scrubber: a ruled track filled with brass up to the phase on the board, a square seal for a thumb. */
@@ -613,4 +728,184 @@ table.powers td.done {
 
 .order-entry-note.alert {
   color: var(--vermilion-deep);
+}
+
+/*
+ * Why did this fail. A failed receipt offers "Why?"; the umpire's ledger opens under it, in
+ * the flow of the sidebar (never a dialog), while the board picks out the units behind it.
+ */
+.receipt .why-toggle {
+  grid-column: 2;
+  justify-self: start;
+  margin-top: 3px;
+  min-height: 24px;
+  padding: 1px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  font: 600 var(--text-xs) / 1.4 var(--font-ui);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.receipt .why-toggle:hover {
+  border-color: var(--ink-4);
+}
+
+.receipt .why-toggle[aria-expanded="true"] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bone);
+}
+
+.why-panel {
+  grid-column: 1 / -1;
+  margin: 8px 0 6px;
+  padding: 10px 12px 8px;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  font-size: var(--text-sm);
+}
+
+.why-sentence {
+  margin: 0 0 8px;
+  color: var(--ink);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+/* The verdict, set like a rubber stamp in the margin of the sentence. */
+.why-stamp {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 6px;
+  border: 1.5px solid var(--vermilion-deep);
+  color: var(--vermilion-deep);
+  font: 600 10.5px / 1.6 var(--font-ui);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  transform: rotate(-2deg);
+}
+
+.why-stamp.ok {
+  border-color: var(--kept);
+  color: var(--kept);
+}
+
+.why-ledger {
+  width: 100%;
+  margin: 0 0 8px;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.why-ledger th,
+.why-ledger td {
+  padding: 4px 0;
+  border-top: 1px solid var(--rule);
+  text-align: left;
+  font-weight: 400;
+  vertical-align: middle;
+}
+
+.why-ledger th {
+  color: var(--ink-3);
+  width: 46%;
+}
+
+.why-ledger tr.mine th {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.why-ledger td:last-child {
+  text-align: right;
+}
+
+.tally {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tally svg line {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.tally-n {
+  min-width: 1ch;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.why-list {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.why-list li {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  padding: 2px 0;
+  color: var(--ink-2);
+}
+
+.why-list li.plain {
+  grid-template-columns: 1fr;
+}
+
+.why-list .glyph {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.why-list li.counted .glyph {
+  color: var(--kept);
+}
+
+.why-list li.lost .glyph {
+  color: var(--vermilion-deep);
+}
+
+.why-note,
+.why-cycle p {
+  margin: 0 0 8px;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.why-cycle ol {
+  margin: 0 0 4px;
+  padding-left: 20px;
+}
+
+/* What if: the sketch's own section, stamped like the board. */
+.what-if-panel {
+  border-bottom: 1px solid var(--rule);
+}
+
+.what-if-panel h2 {
+  margin: 0 0 6px;
+}
+
+.what-if-stamp {
+  display: inline-block;
+  padding: 2px 10px 1px;
+  border: 2px solid var(--brass-ink);
+  color: var(--brass-ink);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  transform: rotate(-2deg);
+}
+
+.what-if-panel .results {
+  margin: 8px -18px 0;
+  border-top: 1px solid var(--rule);
 }

@@ -49,40 +49,59 @@ test.describe("phase results are inked in", () => {
     await ready(page);
     await bounceInBurgundy(page);
     const names = await adjudicateAndWatch(page);
-    await expect(page.locator("svg.board .order-marks.results")).toBeVisible();
+    await expect(page.locator("svg.board-live .order-marks.results")).toBeVisible();
     expect(names).toContain("ink-draw");
     expect(names).toContain("stamp-thud");
     expect(names).toContain("result-fade");
     // The moves wait for nothing here (no supports), but each one starts a beat after the last.
     const delays = await page
-      .locator("svg.board .order-marks.results g.order.move")
+      .locator("svg.board-live .order-marks.results g.order.move")
       .evaluateAll((els) => els.map((el) => (el as SVGElement).style.getPropertyValue("--delay")));
     expect(new Set(delays).size).toBe(delays.length);
 
     await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished)));
     expect(await resultAnimations(page)).toEqual([]);
-    const stamps = page.locator("svg.board .fail-mark .stamp");
+    const stamps = page.locator("svg.board-live .fail-mark .stamp");
     await expect(stamps).toHaveCount(2);
     for (const opacity of await stamps.evaluateAll((els) => els.map((el) => getComputedStyle(el).opacity))) {
       expect(opacity).toBe("1");
     }
   });
 
-  test("under reduced motion every mark is simply there", async ({ page }) => {
+  test("under reduced motion nothing travels: marks are simply there and pieces dissolve", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await ready(page);
     await bounceInBurgundy(page);
-    expect(await adjudicateAndWatch(page)).toEqual([]);
-    await expect(page.locator("svg.board .order-marks.results")).toBeVisible();
-    await expect(page.locator("svg.board .fail-mark .stamp")).toHaveCount(2);
-    await expect(page.locator("svg.board path.standoff")).toHaveCount(1);
+    // No CSS animation runs (no drawing, no stamping); what does run only fades.
+    expect((await adjudicateAndWatch(page)).filter(Boolean)).toEqual([]);
+    const properties = await page.evaluate(() =>
+      document.getAnimations().flatMap((a) =>
+        ((a.effect as KeyframeEffect | null)?.getKeyframes() ?? []).flatMap((k) =>
+          Object.keys(k).filter((p) => !["offset", "easing", "composite", "computedOffset"].includes(p)),
+        ),
+      ),
+    );
+    expect(new Set(properties.map((p) => (p === "transform" ? "transform" : p)))).not.toContain("strokeDashoffset");
+    // A transform may be listed, but a piece only changes place while it is invisible.
+    const travels = await page.evaluate(() =>
+      document.getAnimations().some((a) => {
+        const frames = (a.effect as KeyframeEffect | null)?.getKeyframes() ?? [];
+        return frames.some(
+          (k, i) => i > 0 && String(k.transform) !== String(frames[i - 1]!.transform) && Number(frames[i - 1]!.opacity) > 0 && Number(k.opacity) > 0,
+        );
+      }),
+    );
+    expect(travels).toBe(false);
+    await expect(page.locator("svg.board-live .order-marks.results")).toBeVisible();
+    await expect(page.locator("svg.board-live .fail-mark .stamp")).toHaveCount(2);
+    await expect(page.locator("svg.board-live path.standoff")).toHaveCount(1);
   });
 
   test("orders being written are not animated", async ({ page }) => {
     await ready(page);
     await tap(page, "PAR");
     await tap(page, "BUR");
-    await expect(page.locator("svg.board .order-marks g.order")).toHaveCount(1);
+    await expect(page.locator("svg.board-live .order-marks g.order")).toHaveCount(1);
     expect(await resultAnimations(page)).toEqual([]);
   });
 });

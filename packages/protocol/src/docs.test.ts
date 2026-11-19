@@ -14,10 +14,25 @@ import {
   GameSettings,
   GameSummary,
   HealthResponse,
+  LeaderboardResponse,
   LedgerEntry,
   LedgerResponse,
+  MeResponse,
+  MetricLine,
+  MetricsSummary,
+  MyGame,
+  NotificationPreferences,
+  NotificationsResponse,
+  PlayerProfile,
+  PlayerResult,
+  RatingView,
+  ReliabilityView,
+  TrustLeaderboardResponse,
+  TrustView,
   PROTOCOL_VERSION,
   PressPage,
+  PushPayload,
+  PushSubscriptionRequest,
   ReplayExtension,
   SeatView,
   ServerMessage,
@@ -120,6 +135,44 @@ describe("docs/PROTOCOL.md", () => {
     expect(keys(/A finished game is `(\{[^}]*\})`/.exec(http)![1]!)).toEqual(shapeKeys(GameRecord));
   });
 
+  it("documents every player route and the shape of a profile, the boards and a player's games", () => {
+    const http = section("HTTP");
+    for (const route of ["`POST /api/players`", "`POST /api/players/recover`", "`GET /api/players/:handle`", "`GET /api/me`", "`PATCH /api/me`", "`POST /api/me/recovery`", "`POST /api/me/logout`", "`GET /api/me/games`", "`GET /api/leaderboard`", "`GET /api/ledger`"]) {
+      expect(http, route).toContain(route);
+    }
+    const row = (path: string) => table(http).find((cells) => cells[0] === path)![1]!;
+    expect(keys(row("`GET /api/leaderboard`"))).toEqual(shapeKeys(LeaderboardResponse));
+    expect(keys(row("`GET /api/leaderboard`").slice(row("`GET /api/leaderboard`").indexOf("each")))).toEqual(shapeKeys(LeaderboardResponse.shape.entries.element));
+    expect(keys(row("`GET /api/ledger`"))).toEqual(shapeKeys(TrustLeaderboardResponse));
+    expect(keys(row("`GET /api/me/games`").slice(row("`GET /api/me/games`").indexOf(" as ")))).toEqual(shapeKeys(MyGame));
+    const players = section("Players");
+    expect(keys(/is `(\{[^}]*\})`:/.exec(players)![1]!)).toEqual(shapeKeys(PlayerProfile));
+    const fields = table(players).map((cells) => code(cells[0]!)).sort();
+    expect(fields).toEqual(shapeKeys(PlayerProfile));
+    const cell = (name: string) => table(players).find((cells) => code(cells[0]!) === name)![1]!;
+    expect(keys(cell("rating"))).toEqual(shapeKeys(RatingView));
+    expect(keys(cell("reliability"))).toEqual(shapeKeys(ReliabilityView));
+    expect(keys(cell("trust"))).toEqual(shapeKeys(TrustView));
+    expect(keys(cell("recent"))).toEqual(shapeKeys(PlayerResult));
+    expect(keys(/plus `account: (\{[^}]*\})`/.exec(row("`GET /api/me`"))![1]!)).toEqual(shapeKeys(MeResponse.shape.account));
+  });
+
+  it("documents push, notification switches and the metrics routes, and the shape of each", () => {
+    const http = section("HTTP");
+    for (const route of ["`GET /api/push/key`", "`POST /api/me/push`", "`DELETE /api/me/push`", "`GET /api/me/notifications`", "`PATCH /api/me/notifications`", "`POST /api/metrics`", "`GET /api/metrics`", "`POST /api/metrics/datc`"]) {
+      expect(http, route).toContain(route);
+    }
+    const row = (path: string) => table(http).find((cells) => cells[0] === path)![1]!;
+    expect(keys(row("`POST /api/me/push`"))).toEqual(shapeKeys(PushSubscriptionRequest));
+    expect(keys(row("`GET /api/me/notifications`"))).toEqual(shapeKeys(NotificationsResponse));
+    expect(keys(row("`PATCH /api/me/notifications`"))).toEqual(shapeKeys(NotificationPreferences));
+    expect(keys(row("`GET /api/metrics`"))).toEqual(shapeKeys(MetricsSummary));
+    expect(keys(row("`GET /api/metrics`").slice(row("`GET /api/metrics`").indexOf("each metric")))).toEqual(shapeKeys(MetricLine));
+    const notifications = section("Notifications");
+    expect(table(notifications).map((cells) => code(cells[0]!)).sort()).toEqual(shapeKeys(NotificationPreferences));
+    expect(keys(/decrypts to `(\{[^}]*\})`/.exec(notifications)![1]!)).toEqual(shapeKeys(PushPayload));
+  });
+
   it("lists exactly the error codes the room sends and the verdict codes the judge gives", () => {
     const sent = new Set([...room.matchAll(/code: "([a-z_]+)"/g)].map((m) => m[1]!));
     // Reported to the Claude consumer over the private binding; never sent to a client.
@@ -134,6 +187,6 @@ describe("docs/PROTOCOL.md", () => {
   });
 
   it("never mentions a frame or field that no longer exists", () => {
-    for (const gone of ["pledge.verdict", "`verdict`", "explanations", "/api/players"]) expect(doc).not.toContain(gone);
+    for (const gone of ["pledge.verdict", "`verdict`", "explanations"]) expect(doc).not.toContain(gone);
   });
 });

@@ -35,7 +35,7 @@ test.describe("saving and loading", () => {
     const receipts = page.getByLabel("Adjudication results").locator(".receipt code");
     await expect(receipts).toHaveCount(1);
     await closeSheet(page);
-    await expect(page.locator("svg.board .order.hold")).toHaveCount(0);
+    await expect(page.locator("svg.board-live .order.hold")).toHaveCount(0);
 
     await page.reload();
     await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
@@ -45,7 +45,7 @@ test.describe("saving and loading", () => {
     await expect(receipts).toHaveCount(1);
     await expect(receipts).toContainText("A PAR - BUR");
     await closeSheet(page);
-    await expect(page.locator("svg.board .order.hold")).toHaveCount(0);
+    await expect(page.locator("svg.board-live .order.hold")).toHaveCount(0);
   });
 
   test("undo after a reload brings back only what was written", async ({ page }) => {
@@ -212,7 +212,7 @@ test.describe("saving and loading", () => {
     });
     await ready(page);
     await expect(page.locator(".resume")).toHaveCount(0);
-    await expect(page.locator("svg.board g.unit")).toHaveCount(22);
+    await expect(page.locator("svg.board-live g.unit")).toHaveCount(22);
   });
 
   test("a corrupt save does not stop the board from loading", async ({ page }) => {
@@ -230,7 +230,7 @@ test.describe("saving and loading", () => {
       );
     });
     await ready(page);
-    await expect(page.locator("svg.board g.unit")).toHaveCount(22);
+    await expect(page.locator("svg.board-live g.unit")).toHaveCount(22);
     await expect(page.locator(".resume")).toHaveCount(0);
   });
 
@@ -272,7 +272,7 @@ test.describe("saving and loading", () => {
     await input.setInputFiles({ name: "other.json", mimeType: "application/json", buffer: Buffer.from('{"hello":"world"}') });
     await expect(error.locator("p")).toHaveText("That file is not a Cabal game export. It has no phases in it.");
     // The board is untouched.
-    await expect(page.locator("svg.board g.unit")).toHaveCount(22);
+    await expect(page.locator("svg.board-live g.unit")).toHaveCount(22);
     await expect(primary(page)).toHaveText("Adjudicate Spring 1901");
   });
 });
@@ -288,7 +288,7 @@ test.describe("when the board cannot load", () => {
     await page.unroute("**/*.wasm");
     await page.getByRole("button", { name: "Try again" }).click();
     await expect(page.locator("svg.board")).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator("svg.board g.unit")).toHaveCount(22);
+    await expect(page.locator("svg.board-live g.unit")).toHaveCount(22);
   });
 
   test("a failed map download gets the same treatment", async ({ page }) => {

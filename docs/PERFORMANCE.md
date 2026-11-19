@@ -18,6 +18,9 @@ node packages/engine/bench/wasm-bench.mjs path/to/another/pkg
 
 # size, the way CI gates it
 gzip -c packages/engine/pkg/cabal_engine_bg.wasm | wc -c
+
+# the engine starting inside a GameRoom, in fresh workerd processes
+pnpm --filter @cabal/server cold-start -- --runs 7
 ```
 
 `wasm-bench.mjs` reports the fastest of 40 rounds for every call. On a shared
@@ -35,7 +38,8 @@ change. Cold start figures are the median of seven fresh Node processes.
 | Legal orders, all powers, fleet-heavy midgame, one power at a time | `bench` job | same |
 | Legal orders, all powers, fleet-heavy midgame, shared convoy search | `bench` job | same |
 | Engine wasm, gzip | `wasm` job, `WASM_SIZE_BUDGET_BYTES` | 409,000 bytes, about 6 percent above the build |
-| Worker bundle, gzip | `deploy-dry-run` job | 786,432 bytes (measured 755,828) |
+| Worker bundle, gzip | `deploy-dry-run` job | 851,968 bytes, 832 KiB (measured 785,082) |
+| GameRoom cold start, seven fresh workerd processes | `cold-start` job | each median under its ceiling in `apps/server/cold-start-budget.json`, and the engine's three parts, the first request and the first adjudication no more than 1.5 times the base commit's median plus 5 ms, same runner |
 
 The base commit and the change are benchmarked back to back on one runner,
 because shared runners differ from one another by far more than 30 percent. A
@@ -139,7 +143,7 @@ with the parser that is already in the binary.
 
 The engine is most of the Worker's upload, so its growth moved the Worker
 bundle from 642,074 to 755,828 bytes gzip and past the 655,360 budget that job
-had; the budget is now 786,432. No optimisation level brings the bundle back
+had; the budget became 786,432 (and later 851,968, below). No optimisation level brings the bundle back
 under the old figure (`"z"` saves about 72 KB of the 87 KB needed and costs the
 most speed), so this is a real cost of the new API, paid in isolate start-up,
 and the first thing to revisit if issue #61's workerd measurements say start-up
@@ -177,9 +181,116 @@ A function-level size profile (`twiggy`) shows no single large item: the
 biggest function is under 0.6 percent of the unstripped binary. An earlier
 experiment replacing stable sorts with unstable ones made the binary larger.
 
+## GameRoom cold start
+
+What a game pays the first time an isolate runs it: instantiating the engine's wasm module, building
+the room's first `Game`, and adjudicating its first phase. Issue #61.
+
+### How it is measured
+
+`apps/server/scripts/cold-start.mjs` starts a fresh `wrangler dev` for every run, so every run is a
+new workerd process with nothing loaded. It then goes the shortest way to a first adjudication
+through the public API only: `POST /api/games`, `POST /api/games/:id/start` with AI seats filling
+the table, a socket, `hello`, `ready`, and the first `results` frame. It times each request from
+outside and reads the engine's own three numbers from the structured lines the server logs once per
+isolate (`engine_ready`, `engine_first_game`, `engine_first_process`, see `apps/server/src/engine.ts`),
+so the measurement uses no private route. Seven runs; medians gate.
+
+| Step | What it covers |
+|---|---|
+| Engine instantiation | `ready(wasm)`: the `WebAssembly.Module` is precompiled by Wrangler, so this is instantiation and wasm-bindgen start-up |
+| First game | the room's first `new Game()` or `Game.resume()` |
+| First adjudication, engine only | the first `game.process()`, cold wasm code paths included |
+| First request | `POST /api/games` in a fresh process: Worker isolate, a new Durable Object, the three above minus the adjudication |
+| Start with AI seats | the bot ordering for six seats (its first run) |
+| Ready to results | the creator readies up; the room adjudicates and broadcasts |
+
+workerd's clock moves in whole milliseconds, so the engine's own figures are integers.
+
+### Numbers
+
+Medians of seven fresh workerd processes, engine 0.1.0, Node 24.14.0, on this change (`e3e5b93`):
+
+| Step | Apple M1, quiet | Range | GitHub runner (ubuntu-latest) | Range |
+|---|---:|---|---:|---|
+| Engine instantiation | 1 | 1 to 2 | 1 | 0 to 1 |
+| First game | 3 | 2 to 3 | 1 | 1 |
+| First adjudication, engine only | 8 | 7 to 11 | 2 | 2 to 4 |
+| First request: create a game | 89 | 84 to 238 | 49 | 44 to 115 |
+| Start with AI seats | 83 | 65 to 103 | 43 | 41 to 68 |
+| Ready to results | 59 | 47 to 76 | 31 | 30 to 41 |
+
+All figures in milliseconds. The runner figures are from the `cold-start` job of PR #84's CI run;
+each run of the job prints its own table in the run summary and keeps the JSON as the `cold-start`
+artefact.
+
+The same harness on the same laptop while dozens of other builds were running gave medians of 8, 10
+and 9 ms for the three engine parts and 1,175 ms for the first request: the engine barely moves under
+load, the request path (workerd, Durable Object creation, local SQLite) moves a lot. That is why CI
+compares the change with its base commit on one runner instead of with a number from elsewhere, and
+why the ceilings in `cold-start-budget.json` sit far above these figures: they catch a start-up that
+has gone badly wrong, the comparison with the base commit catches the gradual kind. Until `main`
+carries the harness, the job has no base to compare with and only the ceilings apply.
+
+### The Worker bundle budget
+
+Guest identity, ratings, Web Push and the phase 1 metrics (PR #84) took the Worker bundle from
+755,828 to 785,082 bytes gzip (`index.js` 400,859, the engine wasm 384,223), 1,350 bytes under the
+786,432 budget. The budget is now 851,968 bytes (832 KiB), within the 1 MiB the owner allows,
+because the cold start figures above were measured on this bundle and show it is not where a fresh
+room's time goes: the engine's three parts take about 4 ms on the CI runner and the first request
+about 50. The new code is plain TypeScript (Web Crypto for push, SQL for the index), and none of it
+runs before the first request that needs it.
+
+Measured again on the raised budget's own commit (`ebfc46e`, 783,818 bytes gzip by the CI job's
+count), seven fresh workerd processes on the CI runner, medians in milliseconds: engine
+instantiation 1, first game 1, first adjudication 2, first request 59, start with AI seats 45, ready
+to results 44. The engine figures are unchanged; the request figures are inside the runner's spread
+(the first request ranged from 45 to 197 across the seven runs).
+
+Engine start-up is not the expensive part of a fresh room: together the three parts are about 12 ms
+of a first request that takes about 90 locally. The JavaScript bundle (zod above all) and
+Durable Object creation are larger, which is what the Worker bundle gate watches.
+
+### In production
+
+A deployed Worker's clock does not advance during pure computation (a Spectre mitigation), so the
+`engine_*` lines read near zero there. The production figures are the `cpuTime` and `wallTime`
+Workers Logs records for the invocation that carries an `engine_first_process` line (filter on
+`event`), and the client-side difference between a request to a fresh game code and to a warm one.
+These have not been recorded yet: they need a deploy that includes this harness and its log lines.
+
 ## Recorded baseline
 
 `crates/cabal-engine/benches/baseline.json` holds the numbers
 `tools/check-bench-regression.py` falls back to when it is run without a
 same-machine baseline. They are for local sanity checks only; CI never
 compares against them.
+
+## Board motion (web, November 2026)
+
+A resolved phase plays on the board: pieces march, bounce, are knocked aside and are built, the
+order marks ink in and failures are stamped. The budget is 60 frames a second on a mid-range
+phone, with no layout thrash. `apps/web/scripts/motion-perf.mjs` measures it: a Pixel 7 page in
+headless Chromium, the CPU throttled through the DevTools protocol, a busy spring phase (twenty
+orders across all seven powers, with bounces, a support and a standoff), frames timed with
+`requestAnimationFrame` from the frame after the click to 2.6 seconds.
+
+| Run (2026-11-19, Apple Silicon, headless Chromium 158) | fps | median frame | p95 frame | frames over 25 ms | forced layouts |
+|---|---|---|---|---|---|
+| 4x CPU throttling | 57.5 | 16.7 ms | 16.8 ms | 3 of 116 | |
+| No throttling, traced | 56.5 | 16.7 ms | 16.8 ms | 2 of 96 | 0 |
+| 4x CPU throttling, reduced motion | 54 | 16.7 ms | 16.7 ms | 2 of 108 | |
+
+What made it fast:
+
+- Pieces and marks live on their own composited layer (`svg.board-live`) over the map, so a
+  frame repaints a few dozen small shapes, never the 380 KB of province outlines.
+- Pieces move by Web Animations on `transform` and `opacity` only. The SVG still lays out its own
+  small subtree each frame (about 0.7 ms at 4x throttling); nothing reads layout from script while
+  they run, and the trace shows no forced layouts.
+- Each mark's ink mask covers only the mark. The first version gave every mask the whole board,
+  one full-size offscreen surface per order: the same phase ran at 12.7 fps at 4x throttling,
+  with a 95th percentile frame of 217 ms.
+- The click that adjudicates costs one long frame (about 170 ms at 4x throttling: the engine,
+  React rendering the results and the choreography being planned). Everything after it is steady.
