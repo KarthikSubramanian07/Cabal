@@ -44,6 +44,10 @@ export interface ClaudeBrainOptions {
   apiKey?: string;
   model?: string;
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  /** Request timeout in milliseconds (the SDK default is ten minutes). */
+  timeoutMs?: number;
+  /** SDK retries on 408, 409, 429 and 5xx (the SDK default is 2). */
+  maxRetries?: number;
   client?: Anthropic;
 }
 
@@ -54,8 +58,14 @@ export class ClaudeBrain implements Brain {
   private effort: NonNullable<ClaudeBrainOptions["effort"]>;
 
   constructor(opts: ClaudeBrainOptions = {}) {
-    this.client = opts.client ?? new Anthropic(opts.apiKey ? { apiKey: opts.apiKey } : undefined);
-    this.model = opts.model ?? "claude-opus-5";
+    this.client =
+      opts.client ??
+      new Anthropic({
+        ...(opts.apiKey ? { apiKey: opts.apiKey } : {}),
+        ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
+        ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+      });
+    this.model = opts.model ?? "claude-opus-5-5";
     this.effort = opts.effort ?? "medium";
   }
 
@@ -131,10 +141,14 @@ export class Player {
     this.brain = brain;
   }
 
-  /** Decide a phase. Never throws on model misbehaviour: fallback orders come from the legal menu. */
+  /**
+   * Decide a phase. Never throws on model misbehaviour: fallback orders come from the legal menu,
+   * and `fallback` is true so a caller with better orders of its own (the server's bot) can keep them.
+   */
   async play(input: Omit<PromptInput, "power" | "persona" | "diary" | "relationships">): Promise<{
     decision: Decision;
     validated: Validated;
+    fallback: boolean;
   }> {
     const full: PromptInput = {
       ...input,
@@ -144,9 +158,11 @@ export class Player {
       relationships: [...this.relationships].map(([power, r]) => ({ power, ...r })),
     };
     let decision: Decision;
+    let fallback = false;
     try {
       decision = await this.brain.decide(SYSTEM_PROMPT, userPrompt(full));
     } catch (e) {
+      fallback = true;
       const fallbackOrders = Object.values(input.legal.by_unit).flatMap((menu) => {
         if (menu.length === 0) return [];
         return [menu[Math.floor(Math.random() * menu.length)]!];
@@ -163,7 +179,7 @@ export class Player {
     const validated = validateOrders(decision, input.legal.by_unit);
     for (const r of decision.relationships) this.relationships.set(r.power, { stance: r.stance, note: r.note });
     if (decision.diary) this.diary.push(`${input.phase}: ${decision.diary}`);
-    return { decision, validated };
+    return { decision, validated, fallback };
   }
 }
 

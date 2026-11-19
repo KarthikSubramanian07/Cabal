@@ -33,12 +33,16 @@ export class AgentClient {
   constructor(private opts: AgentClientOptions) {}
 
   connect(): Promise<void> {
-    const url = `${this.opts.serverUrl.replace(/^http/, "ws")}/api/games/${this.opts.gameId}/ws?token=${this.opts.token}`;
+    // The seat token never goes in the URL (URLs are logged): it is the first frame on the socket.
+    const url = `${this.opts.serverUrl.replace(/^http/, "ws")}/api/games/${this.opts.gameId}/ws`;
     const WS = this.opts.WebSocketImpl ?? WebSocket;
     const ws = new WS(url);
     this.ws = ws;
     return new Promise((resolve, reject) => {
-      ws.addEventListener("open", () => resolve());
+      ws.addEventListener("open", () => {
+        ws.send(JSON.stringify({ t: "hello", p: { token: this.opts.token } }));
+        resolve();
+      });
       ws.addEventListener("error", (e) => reject(e));
       ws.addEventListener("message", (ev) => void this.onFrame(JSON.parse(String(ev.data)) as ServerMessage));
     });
@@ -61,6 +65,8 @@ export class AgentClient {
   private async onFrame(m: ServerMessage): Promise<void> {
     switch (m.t) {
       case "welcome":
+        // Every socket is first welcomed as a spectator; the seat's own welcome follows the hello.
+        if (m.p.power !== this.opts.player.power) return;
         this.phase = m.p.phase;
         this.state = m.p.state;
         this.press = m.p.press;
