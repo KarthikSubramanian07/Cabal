@@ -65,7 +65,8 @@
   background: var(--paper);
   border: 1px solid var(--ink);
   border-radius: var(--radius);
-  box-shadow: 0 10px 28px -8px rgba(18, 17, 16, 0.35);
+  /* No shadow: the brand allows one, under the board. A second rule lifts the menu off the map. */
+  outline: 3px solid var(--paper);
 }
 
 .picker-title {

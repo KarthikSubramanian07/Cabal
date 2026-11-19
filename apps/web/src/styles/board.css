@@ -39,7 +39,7 @@ svg.board {
 
 .prov {
   cursor: pointer;
-  transition: fill 90ms ease;
+  transition: fill var(--dur-instant) var(--ease-out);
 }
 
 .prov.land {

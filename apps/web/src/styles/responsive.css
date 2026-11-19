@@ -229,8 +229,8 @@
     gap: 0;
     padding: 4px 0 8px;
     background: var(--ink);
-    border-top: 3px solid var(--vermilion);
-    border-bottom: 3px solid var(--vermilion);
+    /* The vermilion rule under the bar is above this panel; it gets a quiet edge of its own. */
+    border-bottom: 3px solid var(--ink-3);
   }
 
   .topbar nav[data-open="true"] {
