@@ -58,11 +58,11 @@ export function ProfileMenu() {
         className="player-button"
         aria-expanded={open}
         aria-controls={listId}
-        aria-label={player ? `Your account, ${player.handle}` : "Your account"}
         onClick={() => setOpen((o) => !o)}
       >
         {player ? <PlayerSeal handle={player.handle} /> : <span className="player-seal empty" aria-hidden="true" />}
-        <span className="player-name">{player ? player.handle : "Your seal"}</span>
+        {/* The name is the visible text (WCAG 2.5.3); on a phone it is read out but not shown. */}
+        <span className="player-name">{player ? <><span className="sr-only">Your account, </span>{player.handle}</> : "Your account"}</span>
       </button>
       <div className="player-list" id={listId} hidden={!open}>
         {player ? (

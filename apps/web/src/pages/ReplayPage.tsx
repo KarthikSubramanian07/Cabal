@@ -182,6 +182,9 @@ function Theatre({ code, summary, history, final, board }: Extract<Load, { kind:
   return (
     <>
       <main className="table replay-page" id="main" tabIndex={-1}>
+        <h1 className="sr-only" ref={heading} tabIndex={-1}>
+          Replay of table {spacedCode(code)}
+        </h1>
         <div className="board-wrap">
           <div className="stage">
             <Board
@@ -220,9 +223,7 @@ function Theatre({ code, summary, history, final, board }: Extract<Load, { kind:
           <div className="sheet-body" id="sheet-body">
             <header className="replay-head">
               <p className="replay-kicker">Replay</p>
-              <h1 ref={heading} tabIndex={-1}>
-                Table {spacedCode(code)}
-              </h1>
+              <p className="replay-title">Table {spacedCode(code)}</p>
               <p className="fine">
                 {ending(summary)}.{" "}
                 {history.length > 0

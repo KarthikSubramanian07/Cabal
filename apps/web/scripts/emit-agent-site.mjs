@@ -313,12 +313,14 @@ function enrichIndexHtml() {
           <button type="button" class="nav-toggle" aria-expanded="false">Menu</button>
           <nav aria-label="Site" data-open="false">
             <a href="/games">Games</a>
+            <a href="/ledger">Ledger</a>
             <a href="/sandbox" aria-current="page">Sandbox</a>
             <button type="button">How to play</button>
             <a href="/about">About</a>
             <a href="/contact">Contact</a>
             <a class="nav-end" href="https://github.com/KarthikSubramanian07/Cabal">GitHub</a>
           </nav>
+          <div class="player-menu"><button type="button" class="player-button" aria-expanded="false"><span class="player-seal empty" aria-hidden="true"></span><span class="player-name">Your account</span></button></div>
         </header>
         <main class="loading-body">
           <div class="loading-card">

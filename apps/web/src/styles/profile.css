@@ -15,7 +15,9 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: var(--hit);
+  /* A 32px target in a bar no taller than its links (WCAG 2.5.8 asks for 24). */
+  min-height: 32px;
+  margin-block: -4px;
   padding: 0 4px 0 8px;
   border: 0;
   background: none;
@@ -327,12 +329,19 @@ dialog.account .how-body section {
 
 @media (max-width: 1000px) {
   .player-name {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 
   .player-button {
     padding: 0 6px;
     min-width: var(--hit);
+    min-height: var(--hit);
+    margin-block: -8px;
     justify-content: center;
   }
 }
