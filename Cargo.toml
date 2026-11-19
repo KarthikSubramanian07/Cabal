@@ -23,3 +23,10 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# The bot's tests play whole games through the adjudicator; unoptimised that takes minutes.
+[profile.test.package.cabal-engine]
+opt-level = 2
+
+[profile.test.package.cabal-bot]
+opt-level = 2

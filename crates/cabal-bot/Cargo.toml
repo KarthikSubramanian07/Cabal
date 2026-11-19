@@ -14,3 +14,6 @@ crate-type = ["rlib"]
 [dependencies]
 cabal-engine = { path = "../cabal-engine" }
 serde.workspace = true
+
+[dev-dependencies]
+proptest = "1.11"
