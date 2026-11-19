@@ -338,16 +338,14 @@
   right: 12px;
   bottom: 13px;
   padding: 3px 10px 2px;
-  border: 3px solid var(--vermilion);
-  color: var(--vermilion);
+  border: 3px solid var(--vermilion-deep);
+  color: var(--vermilion-deep);
   font-family: var(--font-display);
   font-size: 23px;
   line-height: 1;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   transform: rotate(-11deg);
-  mix-blend-mode: multiply;
-  opacity: 0.94;
 }
 
 /* ---- wax seals */
