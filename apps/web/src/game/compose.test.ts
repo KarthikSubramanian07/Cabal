@@ -61,7 +61,7 @@ describe("movement orders", () => {
     expect(click(movement, s1.draft, "BRE").effect).toMatchObject({ text: "A LON - BRE VIA" });
   });
 
-  it("composes a support for a foreign move", () => {
+  it("lets the player choose the convoy route when a direct route also exists", () => { const ctx: ComposeContext = { ...movement, legal: { ...movement.legal, ENGLAND: { ...movement.legal.ENGLAND, "A LON": ["A LON H", "A LON - BRE", "A LON - BRE VIA", "A LON - WAL"] } } }; const selected = click(ctx, start, "LON").draft; const via = setMode(ctx, selected, "via-convoy").draft; expect(via).toEqual({ step: "unit", power: "ENGLAND", unit: "A LON", via: true }); expect(click(ctx, via, "BRE").effect).toMatchObject({ text: "A LON - BRE VIA" }); expect(setMode(ctx, via, "move").draft).toEqual({ step: "unit", power: "ENGLAND", unit: "A LON" }); }); it("composes a support for a foreign move", () => {
     const s1 = click(movement, start, "PAR");
     const s2 = setMode(movement, s1.draft, "support");
     expect(s2.draft.step).toBe("support");
