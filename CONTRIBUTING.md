@@ -31,7 +31,14 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 pnpm check
+pnpm test:e2e          # Playwright against the built site, no server
+pnpm test:e2e:live     # the lobby against cabal-server under wrangler dev, if you touched apps/web or the API
 ```
+
+`pnpm test:e2e:live` starts `wrangler dev` for `apps/server` on port 8799 and `vite preview` of the
+built site on port 4184 with `/api` and the game sockets proxied to it, then plays the lobby with two
+browser contexts. It needs `pnpm engine:build` first. Move the ports with `LIVE_SERVER_PORT` and
+`E2E_LIVE_PORT` when another checkout holds them.
 
 CI also runs a deploy dry run on every pull request: it bundles `apps/server` with `wrangler deploy --dry-run` (no credentials, nothing uploaded) and fails if the gzipped Worker bundle is over its budget. To reproduce it locally after `pnpm engine:build`:
 

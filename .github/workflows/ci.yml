@@ -227,11 +227,18 @@ jobs:
       - if: steps.browsers.outputs.cache-hit == 'true'
         run: pnpm --filter @cabal/web exec playwright install-deps chromium
       - run: pnpm test:e2e
+      # The lobby against cabal-server itself, run locally under wrangler dev (no credentials).
+      - name: End-to-end against a local game server
+        run: pnpm test:e2e:live
+        env:
+          WRANGLER_SEND_METRICS: "false"
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
-          path: apps/web/playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/playwright-report-live
           retention-days: 7
 
   audit:

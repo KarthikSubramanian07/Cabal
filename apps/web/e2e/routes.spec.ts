@@ -10,9 +10,7 @@ test.describe("routes", () => {
   });
 
   const reserved: [string, string][] = [
-    ["/games", "The games room is not open yet."],
     ["/ledger", "The Ledger is not open yet."],
-    ["/g/K7Q2", "This table is not set yet."],
     ["/u/ada", "No file on this player yet."],
     ["/replay/K7Q2", "This replay is not ready yet."],
   ];
@@ -31,6 +29,15 @@ test.describe("routes", () => {
       await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
     });
   }
+
+  test("a link to a code that cannot exist says so without asking the server", async ({ page }) => {
+    await page.goto("/g/K7Q2");
+    await expect(page.getByRole("heading", { level: 1, name: "No table goes by that code." })).toBeVisible();
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", "noindex");
+    await page.getByRole("link", { name: "Find a table" }).click();
+    await expect(page).toHaveURL(/\/games$/);
+    await expect(page.getByRole("heading", { level: 1, name: "The games room" })).toBeVisible();
+  });
 
   test("an unknown path is a real 404 from the edge, on the site's own page", async ({ page }) => {
     for (const path of ["/g/not/a/route", "/nope", "/apiary", "/sandbox/extra"]) {
@@ -122,7 +129,7 @@ test.describe("routes", () => {
       });
       expect(bar).toEqual({ background: "rgb(18, 17, 16)", rule: "rgb(217, 79, 48)" });
       // The same links, in the same order, as the app's own top bar.
-      await expect(banner.getByRole("navigation", { name: "Site" }).locator("a")).toHaveText(["Sandbox", "How to play", "About", "Contact", "GitHub"]);
+      await expect(banner.getByRole("navigation", { name: "Site" }).locator("a")).toHaveText(["Games", "Sandbox", "How to play", "About", "Contact", "GitHub"]);
       // A static page, not the app: no script runs here.
       expect(await page.locator("script[src]").count()).toBe(0);
       const heading = page.getByRole("heading", { level: 1 });
