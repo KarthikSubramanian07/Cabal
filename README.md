@@ -124,7 +124,7 @@ cargo run --release -p cabal-cli -- arena --games 100   # bot against bot on eve
 |---|---|
 | `cabal-engine` | 171 of 171 DATC v3.0 cases, property tests, benches, MILA saved games, seals and receipts |
 | `cabal-wasm`, `@cabal/engine` | one wasm module for browser and Workers (about 271 KB gzipped with the bot inside, CI budget 400 KB), generated TypeScript types |
-| `cabal-bot`, `cabal arena` | a deterministic heuristic player at three levels, exported as `botOrders`, and a native arena that plays 3 games a second and checks every order; see [docs/BOT.md](docs/BOT.md) |
+| `cabal-bot`, `cabal arena` | a deterministic heuristic player at three levels, exported as `botOrders`, and a native arena that plays 6 games a second and checks every order; see [docs/BOT.md](docs/BOT.md) |
 | `@cabal/protocol` | zod schemas for every frame, settings, pledges and scoring |
 | `apps/server` | GameRoom Durable Object: seats, deadlines, orders, press, sealed pledges with receipts, replay export |
 | `apps/web` | the classic board sandbox: click-to-order from the legal list, coast picker, receipts with reasons, phase replay, undo, MILA import and export, phone and desktop |
