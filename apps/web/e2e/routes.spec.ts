@@ -32,8 +32,53 @@ test.describe("routes", () => {
     });
   }
 
-  test("an unknown in-app path says so", async ({ page }) => {
-    await page.goto("/g/not/a/route");
+  test("an unknown path is a real 404 from the edge, on the site's own page", async ({ page }) => {
+    for (const path of ["/g/not/a/route", "/nope", "/apiary", "/sandbox/extra"]) {
+      const response = await page.goto(path);
+      expect(response?.status(), path).toBe(404);
+      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+      await expect(page.getByRole("banner").getByRole("img", { name: "Cabal" })).toBeVisible();
+      await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", "noindex");
+      // The static page, not the app shell with a client-side message.
+      expect(await page.locator("script[src]").count()).toBe(0);
+    }
+  });
+
+  test("the app shell and the trust pages come back 200 with the edge's security headers", async ({ page }) => {
+    for (const path of ["/", "/sandbox", "/g/K7Q2", "/about", "/privacy"]) {
+      const response = await page.goto(path);
+      expect(response?.status(), path).toBe(200);
+      const headers = response!.headers();
+      expect(headers["content-security-policy"], path).toContain("connect-src 'self'");
+      expect(headers["x-content-type-options"], path).toBe("nosniff");
+    }
+  });
+
+  test("the app and the static pages show the same links and the same footer", async ({ page }, info) => {
+    await page.goto("/games");
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    if (info.project.name === "phone") await page.getByRole("button", { name: "Menu" }).click();
+    const nav = page.getByRole("navigation", { name: "Site" });
+    const app = { links: await nav.locator("a, button").allInnerTexts(), footer: await page.locator("footer.footer").innerText() };
+    await page.goto("/about");
+    const page2 = { links: await page.getByRole("navigation", { name: "Site" }).locator("a").allInnerTexts(), footer: await page.locator("footer.footer").innerText() };
+    expect(page2).toEqual(app);
+  });
+
+  test("How to play on a static page opens the board with the dialog up", async ({ page }) => {
+    await page.goto("/about");
+    await page.getByRole("banner").getByRole("link", { name: "How to play" }).click();
+    await expect(page.getByRole("dialog", { name: "How to play" })).toBeVisible({ timeout: 20_000 });
+    await expect(page).toHaveURL(/\/sandbox$/);
+  });
+
+  test("a path the client cannot draw, reached without a page load, says so in the app", async ({ page }) => {
+    await page.goto("/games");
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await page.evaluate(() => {
+      history.pushState(null, "", "/g/not/a/route");
+      dispatchEvent(new PopStateEvent("popstate"));
+    });
     await expect(page.getByRole("heading", { level: 1, name: "That province is not on the map." })).toBeVisible();
   });
 
@@ -48,7 +93,8 @@ test.describe("routes", () => {
         return { background: style.backgroundColor, rule: style.borderBottomColor };
       });
       expect(bar).toEqual({ background: "rgb(18, 17, 16)", rule: "rgb(217, 79, 48)" });
-      await expect(banner.getByRole("link", { name: "Sandbox" })).toBeVisible();
+      // The same links, in the same order, as the app's own top bar.
+      await expect(banner.getByRole("navigation", { name: "Site" }).locator("a")).toHaveText(["Sandbox", "How to play", "About", "Contact", "GitHub"]);
       // A static page, not the app: no script runs here.
       expect(await page.locator("script[src]").count()).toBe(0);
       const heading = page.getByRole("heading", { level: 1 });

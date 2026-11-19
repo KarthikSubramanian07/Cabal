@@ -1,5 +1,5 @@
 import { type Page, expect, test } from "@playwright/test";
-import { isPhone, openSheet, primary, ready, tap } from "./helpers.js";
+import { isPhone, openHelp, openSheet, primary, ready, tap } from "./helpers.js";
 
 /** Font size of province codes and width of a piece, in CSS pixels, as drawn right now. */
 async function mapSizes(page: Page) {
@@ -26,6 +26,8 @@ async function smallTargets(page: Page, min = 44) {
       if (style.display === "none" || style.visibility === "hidden") continue;
       const r = el.getBoundingClientRect();
       if (r.width === 0 || r.height === 0) continue;
+      // A link in a sentence is sized by its line of text (the inline exception of WCAG 2.5.8).
+      if (el instanceof HTMLAnchorElement && style.display === "inline" && el.closest("p, li")) continue;
       // A checkbox is hit through its label, which is the full row.
       const hit = el instanceof HTMLInputElement && el.closest("label") ? el.closest("label")!.getBoundingClientRect() : r;
       if (hit.width < min - 0.5 || hit.height < min - 0.5) {
@@ -37,10 +39,12 @@ async function smallTargets(page: Page, min = 44) {
 }
 
 test.describe("map legibility", () => {
-  test("province codes and pieces are readable at the default zoom", async ({ page }) => {
+  test("province codes and pieces are readable at the default zoom", async ({ page }, info) => {
+    // A phone opens zoomed to this size; a desktop reaches it with the whole board at 1440x900.
+    if (!isPhone(info)) await page.setViewportSize({ width: 1440, height: 900 });
     await ready(page);
     const sizes = await mapSizes(page);
-    expect(sizes.label).toBeGreaterThanOrEqual(9);
+    expect(sizes.label).toBeGreaterThanOrEqual(9.9);
     expect(sizes.piece).toBeGreaterThanOrEqual(15);
   });
 
@@ -76,6 +80,102 @@ test.describe("map legibility", () => {
   });
 });
 
+test.describe("brand", () => {
+  test("the chrome is square cornered and the only shadow is the one under the board", async ({ page }) => {
+    const audit = () =>
+      page.evaluate(() => {
+        const rounded: string[] = [];
+        const shadowed: string[] = [];
+        for (const el of document.querySelectorAll<HTMLElement>("body *")) {
+          if (el.closest("svg")) continue; // pieces and seals are drawn shapes, not chrome
+          const style = getComputedStyle(el);
+          const name = `${el.tagName.toLowerCase()}.${el.className}`;
+          if ([style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomLeftRadius, style.borderBottomRightRadius].some((r) => r !== "0px")) {
+            // A checkbox keeps the shape the platform gives it.
+            if (!(el instanceof HTMLInputElement)) rounded.push(name);
+          }
+          const outer = style.boxShadow.split(/,(?![^(]*\))/).filter((s) => s.trim() !== "none" && !s.includes("inset"));
+          if (outer.length && !el.classList.contains("board-frame")) shadowed.push(name);
+        }
+        return { rounded, shadowed };
+      });
+    await ready(page);
+    await tap(page, "PAR");
+    await tap(page, "BUR");
+    await openSheet(page);
+    expect(await audit()).toEqual({ rounded: [], shadowed: [] });
+    await page.getByRole("button", { name: "New game" }).click();
+    expect(await audit()).toEqual({ rounded: [], shadowed: [] });
+    await page.getByRole("button", { name: "Keep playing" }).click();
+    // The coast menu floats over the map; it is lifted by a rule, not a shadow.
+    await page.goto("/");
+    await expect(page.locator("svg.board")).toBeVisible();
+    await tap(page, "MAO");
+    await tap(page, "SPA");
+    const menu = page.getByRole("menu");
+    if (await menu.isVisible()) expect(await audit()).toEqual({ rounded: [], shadowed: [] });
+    await page.goto("/about");
+    expect(await audit()).toEqual({ rounded: [], shadowed: [] });
+  });
+
+  test("the phone menu and the dialogs carry no vermilion rule of their own", async ({ page }, info) => {
+    await ready(page);
+    const vermilion = "rgb(217, 79, 48)";
+    if (isPhone(info)) {
+      await page.getByRole("button", { name: "Menu" }).click();
+      const nav = page.getByRole("navigation", { name: "Site" });
+      const borders = await nav.evaluate((el) => [getComputedStyle(el).borderTopColor, getComputedStyle(el).borderBottomColor, getComputedStyle(el).borderTopWidth]);
+      expect(borders[1]).not.toBe(vermilion);
+      expect(borders[0] === vermilion && borders[2] !== "0px").toBe(false);
+      await page.getByRole("button", { name: "Menu" }).click();
+    }
+    await openHelp(page);
+    const header = page.getByRole("dialog", { name: "How to play" }).locator("header");
+    expect(await header.evaluate((el) => `${getComputedStyle(el).borderBottomWidth} ${getComputedStyle(el).borderBottomColor}`)).not.toBe(`3px ${vermilion}`);
+  });
+});
+
+test.describe("desktop layout", () => {
+  test.beforeEach(({}, info) => {
+    test.skip(isPhone(info), "desktop only");
+  });
+
+  for (const [width, height] of [
+    [1280, 720],
+    [1366, 768],
+    [1440, 900],
+  ] as const) {
+    test(`a ${width}x${height} laptop opens on the whole board`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await ready(page);
+      await expect(page.locator("svg.board")).toHaveAttribute("data-whole", "true");
+      // Every power's home is on screen: St Petersburg and Smyrna as much as Paris.
+      for (const code of ["STP", "SMY", "EDI", "NAP"]) {
+        await expect(page.locator(`svg.board [data-province="${code}"]`)).toBeInViewport();
+      }
+      // Small on the shortest screens, never illegible; one zoom step makes them 10px and more.
+      expect((await mapSizes(page)).label).toBeGreaterThanOrEqual(7.5);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    });
+  }
+
+  test("every control is at least 24px, the WCAG 2.2 minimum for a pointer", async ({ page }) => {
+    await ready(page);
+    await tap(page, "PAR");
+    await tap(page, "BUR");
+    expect(await smallTargets(page, 24)).toEqual([]);
+    await primary(page).click();
+    expect(await smallTargets(page, 24)).toEqual([]);
+    await page.getByRole("button", { name: "Zoom in" }).click();
+    expect(await smallTargets(page, 24)).toEqual([]);
+    for (const path of ["/about", "/games"]) {
+      await page.goto(path);
+      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+      expect(await smallTargets(page, 24), path).toEqual([]);
+    }
+  });
+});
+
 test.describe("phone layout", () => {
   test.beforeEach(({}, info) => {
     test.skip(!isPhone(info), "phone only");
@@ -103,7 +203,7 @@ test.describe("phone layout", () => {
     await expect(page.getByRole("button", { name: "Show the whole board" })).toBeEnabled();
     // France's units are on screen and big enough to hit.
     const sizes = await mapSizes(page);
-    expect(sizes.label).toBeGreaterThanOrEqual(9);
+    expect(sizes.label).toBeGreaterThanOrEqual(9.9);
     expect(sizes.piece).toBeGreaterThanOrEqual(15);
     await tap(page, "PAR");
     await tap(page, "BUR");
@@ -146,6 +246,39 @@ test.describe("phone layout", () => {
     await expect(page.locator(".sheet-note")).toHaveText("Turkey: 0 of 3 orders");
     await tap(page, "CON");
     await expect(page.locator(".toolbar .hint")).toContainText("A CON:");
+  });
+
+  test("the pan arrows wait behind one button, so the map is not buried under controls", async ({ page }) => {
+    await ready(page);
+    const arrows = page.getByRole("group", { name: "Move the map" });
+    const toggle = page.getByRole("button", { name: "Move the map with buttons" });
+    await expect(arrows).toBeHidden();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    // Four controls over the map, not seven.
+    expect(await page.locator(".board-frame button:visible").count()).toBe(4);
+
+    const view = () => page.locator("svg.board").getAttribute("viewBox");
+    const before = await view();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(arrows).toBeVisible();
+    await arrows.getByRole("button", { name: "Pan right" }).click();
+    expect(await view()).not.toBe(before);
+    expect(await smallTargets(page)).toEqual([]);
+    await toggle.click();
+    await expect(arrows).toBeHidden();
+  });
+
+  test("How to play does not tell a phone to press keys", async ({ page }) => {
+    await ready(page);
+    await page.getByRole("button", { name: "Menu" }).click();
+    await page.getByRole("button", { name: "How to play" }).click();
+    const dialog = page.getByRole("dialog", { name: "How to play" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator("table.keys kbd:visible")).toHaveCount(0);
+    const text = await dialog.locator("table.keys").innerText();
+    expect(text).not.toMatch(/press/i);
+    expect(text).toContain("choose Support");
   });
 
   test("every control is at least 44px, with the sheet closed and open", async ({ page }) => {

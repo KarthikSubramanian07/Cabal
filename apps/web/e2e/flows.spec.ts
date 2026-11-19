@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { type Page, expect, test } from "@playwright/test";
 import { closeSheet, isPhone, openSheet, primary, ready, resolveAndContinue, selectPower, tap } from "./helpers.js";
 
@@ -200,6 +201,138 @@ test.describe("retreats and adjustments", () => {
     await orders(page, "Italy").getByRole("button", { name: "Remove WAIVE" }).click();
     await expect(orders(page, "Italy").locator(".row.given")).toHaveCount(0);
     await expect(waive).toBeEnabled();
+  });
+});
+
+test.describe("the open power", () => {
+  test("a retreat phase opens on the power that has to retreat", async ({ page }) => {
+    await ready(page);
+    await italyTakesTrieste(page);
+    await primary(page).click();
+    await expect(primary(page)).toHaveText("Resolve Fall 1901 retreats");
+    // Italy gave the last order, but only Austria has anything to do now.
+    await expect(page.locator(".choices h2")).toContainText("Austria");
+    await expect(page.locator(".choices button")).toHaveText(["F TRI: Fleet Trieste"]);
+    await openSheet(page);
+    await expect(page.locator("table.powers tr.active")).toContainText("Austria");
+    await expect(orders(page, "Austria")).toContainText("F TRI");
+    await closeSheet(page);
+
+    // Winter: Austria lost Trieste and owes a disband, so it stays open and has choices.
+    await tap(page, "TRI");
+    await tap(page, "ALB");
+    await resolveAndContinue(page);
+    await expect(primary(page)).toHaveText("Resolve Winter 1901 builds");
+    await openSheet(page);
+    await expect(page.locator("table.powers tr.active")).toContainText("Austria");
+    await expect(page.locator("table.powers tr.active td").last()).toHaveText("-1");
+    await closeSheet(page);
+    await expect(page.locator(".choices button")).not.toHaveCount(0);
+
+    // Spring: France, which was open before Italy's orders, is not forced back; whoever is
+    // open still has units, so nothing changes.
+    await resolveAndContinue(page);
+    await openSheet(page);
+    await expect(page.locator("table.powers tr.active")).toContainText("Austria");
+  });
+
+  test("the dislodged piece is drawn over the unit that pushed it out", async ({ page }) => {
+    await ready(page);
+    await italyTakesTrieste(page);
+    await primary(page).click();
+    await expect(page.locator("svg.board g.unit.dislodged")).toHaveCount(1);
+    // Later in the document is nearer the eye.
+    await expect(page.locator("svg.board g.units > g.unit").last()).toHaveClass(/dislodged/);
+  });
+});
+
+test.describe("receipts in context", () => {
+  test("a unit that bounced back is not said to have held its ground, and a tie is called a tie", async ({ page }) => {
+    await ready(page);
+    await tap(page, "MUN");
+    await tap(page, "BUR");
+    await resolveAndContinue(page);
+    // Paris and Brest bounce in Picardy, so Paris is still at home when Burgundy arrives.
+    await tap(page, "PAR");
+    await tap(page, "PIC");
+    await tap(page, "BRE");
+    await tap(page, "PIC");
+    await tap(page, "BUR");
+    await tap(page, "PAR");
+    await primary(page).click();
+    await openSheet(page);
+    const attack = results(page).locator(".receipt", { hasText: "A BUR - PAR" });
+    await expect(attack).toContainText("The unit in Paris failed to move out, and the attack was not strong enough to dislodge it.");
+    await expect(attack).not.toContainText("held its ground");
+    await expect(results(page).locator(".receipt", { hasText: "A PAR - PIC" })).toContainText(
+      "Bounced with the unit from Brest: equal strength, so nobody got in.",
+    );
+  });
+
+  test("a convoy paradox gets a sentence, not a rule number alone", async ({ page }) => {
+    // Pandin's paradox (DATC 6.F.16), set up from a saved position.
+    await ready(page);
+    await openSheet(page);
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "pandins-paradox.json",
+      mimeType: "application/json",
+      buffer: await readFile(new URL("./fixtures/pandins-paradox.json", import.meta.url)),
+    });
+    await closeSheet(page);
+    await expect(page.locator("svg.board g.unit")).toHaveCount(6);
+
+    await tap(page, "LON");
+    await tool(page, "Support").click();
+    await tap(page, "WAL");
+    await tap(page, "ENG");
+    await tap(page, "WAL");
+    await tap(page, "ENG");
+    await tap(page, "BRE");
+    await tap(page, "LON");
+    await tap(page, "ENG");
+    await tool(page, "Convoy").click();
+    await tap(page, "BRE");
+    await tap(page, "LON");
+    await tap(page, "NTH");
+    await tool(page, "Support").click();
+    await tap(page, "BEL");
+    await tap(page, "ENG");
+    await tap(page, "BEL");
+    await tap(page, "ENG");
+
+    await primary(page).click();
+    await openSheet(page);
+    const convoy = results(page).locator(".receipt", { hasText: "F ENG C A BRE - LON" });
+    await expect(convoy).toHaveAttribute("data-code", "paradox");
+    await expect(convoy).toHaveClass(/fail/);
+    await expect(convoy).toContainText("A convoy paradox: the orders contradict each other, so by the Szykman rule the convoy fails.");
+    await expect(results(page).locator(".receipt", { hasText: "A BRE - LON VIA" })).toContainText(
+      "No unbroken chain of fleets carried the army across.",
+    );
+    // Nobody got into the Channel, and the fleet there was not dislodged.
+    await expect(results(page).locator(".receipt.fail", { hasText: "F WAL - ENG" })).toBeVisible();
+    await expect(results(page).locator(".receipt.fail", { hasText: "F BEL - ENG" })).toBeVisible();
+    await expect(results(page)).not.toContainText("was dislodged");
+  });
+});
+
+test.describe("keyboard", () => {
+  test("the left arrow steps into the results from the board, not from a button", async ({ page }, info) => {
+    test.skip(isPhone(info), "arrow keys are a keyboard matter");
+    await ready(page);
+    await tap(page, "PAR");
+    await tap(page, "BUR");
+    await resolveAndContinue(page);
+    await expect(primary(page)).toHaveText("Adjudicate Fall 1901");
+
+    for (const name of ["Export", "Russia"]) {
+      await page.getByRole("button", { name }).focus();
+      await page.keyboard.press("ArrowLeft");
+      await expect(primary(page)).toHaveText("Adjudicate Fall 1901");
+    }
+    await page.locator("#main").focus();
+    await page.keyboard.press("ArrowLeft");
+    await expect(primary(page)).toHaveText("Continue to Fall 1901");
   });
 });
 

@@ -42,7 +42,8 @@ test.describe("classic board", () => {
     await openSheet(page);
     const results = page.getByLabel("Adjudication results");
     await expect(results).toContainText("A PAR - BUR");
-    await expect(results).toContainText("Bounced with the unit from Paris");
+    // Paris went in with Marseilles behind it; the receipt says why Munich lost, not just that it did.
+    await expect(results).toContainText("Bounced by the unit from Paris, which had more support.");
     await expect(results).not.toContainText("illegal");
     await expect(page.locator(".tag")).toHaveText("Results");
     await closeSheet(page);

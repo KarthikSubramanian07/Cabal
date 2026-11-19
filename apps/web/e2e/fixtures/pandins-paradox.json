@@ -1,0 +1,114 @@
+{
+ "id": "pandins-paradox",
+ "map": "standard",
+ "rules": [
+  "E2023"
+ ],
+ "phases": [
+  {
+   "name": "S1901M",
+   "state": {
+    "name": "S1901M",
+    "units": {
+     "AUSTRIA": [],
+     "ENGLAND": [
+      "F LON",
+      "F WAL"
+     ],
+     "FRANCE": [
+      "A BRE",
+      "F ENG"
+     ],
+     "GERMANY": [
+      "F BEL",
+      "F NTH"
+     ],
+     "ITALY": [],
+     "RUSSIA": [],
+     "TURKEY": []
+    },
+    "centers": {
+     "AUSTRIA": [
+      "BUD",
+      "TRI",
+      "VIE"
+     ],
+     "ENGLAND": [
+      "EDI",
+      "LON",
+      "LVP"
+     ],
+     "FRANCE": [
+      "BRE",
+      "MAR",
+      "PAR"
+     ],
+     "GERMANY": [
+      "BER",
+      "KIE",
+      "MUN"
+     ],
+     "ITALY": [
+      "NAP",
+      "ROM",
+      "VEN"
+     ],
+     "RUSSIA": [
+      "MOS",
+      "SEV",
+      "STP",
+      "WAR"
+     ],
+     "TURKEY": [
+      "ANK",
+      "CON",
+      "SMY"
+     ]
+    },
+    "homes": {
+     "AUSTRIA": [
+      "BUD",
+      "TRI",
+      "VIE"
+     ],
+     "ENGLAND": [
+      "EDI",
+      "LON",
+      "LVP"
+     ],
+     "FRANCE": [
+      "BRE",
+      "MAR",
+      "PAR"
+     ],
+     "GERMANY": [
+      "BER",
+      "KIE",
+      "MUN"
+     ],
+     "ITALY": [
+      "NAP",
+      "ROM",
+      "VEN"
+     ],
+     "RUSSIA": [
+      "MOS",
+      "SEV",
+      "STP",
+      "WAR"
+     ],
+     "TURKEY": [
+      "ANK",
+      "CON",
+      "SMY"
+     ]
+    },
+    "retreats": {},
+    "builds": {}
+   },
+   "orders": {},
+   "results": {},
+   "messages": []
+  }
+ ]
+}
