@@ -694,7 +694,7 @@ export function Board({
   // CSS animations are put on the same clock, and the cues are handed to the sound deck.
   const liveRef = useRef<SVGSVGElement>(null);
   const [animating, setAnimating] = useState(false);
-  const playing = useRef<{ all: () => Animation[]; stop: () => void; settle: () => void } | null>(null);
+  const playing = useRef<{ skip: () => void; retime: (rate: number) => void } | null>(null);
   const settled = useRef(onSettled);
   settled.current = onSettled;
   const rateRef = useRef(rate);
@@ -705,7 +705,7 @@ export function Board({
     if (!plan || !resolution || !svg || !unitsDrawn) return;
     const key = resolution.key;
     const total = Math.max(1, plan.total);
-    const speed = rateRef.current > 0 ? rateRef.current : 1;
+    let speed = rateRef.current > 0 ? rateRef.current : 1;
     const mine: Animation[] = [];
     if (typeof svg.animate === "function") {
       for (const u of plan.units) {
@@ -720,49 +720,78 @@ export function Board({
     }
     const all = () => (typeof svg.getAnimations === "function" ? svg.getAnimations({ subtree: true }) : mine);
     for (const a of all()) a.playbackRate = speed;
-    const silence = sound ? deck.schedule(plan.cues, { rate: speed }) : () => {};
+
+    // Where the phase has got to, in phase time: a piece's own clock while one runs, else the
+    // wall clock at the speeds it has played at.
+    let base = 0;
+    let since = performance.now();
+    const elapsed = () => {
+      const t = mine[0]?.currentTime;
+      return typeof t === "number" ? t : base + (performance.now() - since) * speed;
+    };
+    const cues = plan.cues;
+    let silence = sound ? deck.schedule(cues, { rate: speed }) : () => {};
+
     let done = false;
     const settle = () => {
       if (done) return;
       done = true;
+      silence();
       setAnimating(false);
       settled.current?.(key);
     };
-    const timer = window.setTimeout(settle, total / speed + 30);
-    const stop = () => {
-      window.clearTimeout(timer);
-      silence();
+    // Settled once every animation on the layer has run out, whatever the speed did meanwhile
+    // (and at once after a Skip finishes them all). Animations that never end are not waited for.
+    const finite = (a: Animation) => {
+      const end = a.effect?.getComputedTiming().endTime;
+      return typeof end === "number" && Number.isFinite(end);
     };
-    playing.current = { all, stop, settle };
+    void (async () => {
+      for (let round = 0; round < 8 && !done; round++) {
+        const left = all().filter((a) => a.playState !== "finished" && finite(a));
+        if (left.length === 0) break;
+        await Promise.all(left.map((a) => a.finished.catch(() => undefined)));
+      }
+      settle();
+    })();
+    playing.current = {
+      skip() {
+        for (const a of all()) {
+          try {
+            a.finish();
+          } catch {
+            // an animation with no end
+          }
+        }
+        settle();
+      },
+      retime(next) {
+        if (done || next <= 0 || next === speed) return;
+        base = elapsed();
+        since = performance.now();
+        speed = next;
+        for (const a of all()) a.playbackRate = next;
+        // The cues still to come, again, at the new speed from where the phase has got to.
+        silence();
+        silence = sound ? deck.schedule(cues, { rate: next, from: base }) : () => {};
+      },
+    };
     setAnimating(plan.total > 0);
     return () => {
-      stop();
+      done = true;
+      silence();
       for (const a of mine) a.cancel();
       playing.current = null;
       setAnimating(false);
     };
-    // The sound switch and the speed are read when a phase starts; the effect below follows the speed.
+    // The sound switch is read when a phase starts; the effect below follows the speed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan, unitsDrawn]);
   useEffect(() => {
-    const p = playing.current;
-    if (p && rate > 0) for (const a of p.all()) a.playbackRate = rate;
+    playing.current?.retime(rate);
   }, [rate]);
   /** Jump to the end of the phase being played: every piece where it lands, every stamp down. */
-  const skip = useCallback(() => {
-    const p = playing.current;
-    if (!p) return;
-    for (const a of p.all()) {
-      try {
-        a.finish();
-      } catch {
-        // an animation with nothing left to play
-      }
-    }
-    p.stop();
-    p.settle();
-  }, []);
-
+  const skip = useCallback(() => playing.current?.skip(), []);
   const candidates = useMemo<TapCandidate[]>(() => {
     const codes = new Set<string>([...(targets ?? []), ...(hot ?? [])]);
     return [...codes].flatMap((code) => (board.provinces[code] ? [{ code, at: board.provinces[code]!.unit }] : []));

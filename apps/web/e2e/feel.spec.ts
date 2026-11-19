@@ -101,6 +101,22 @@ test.describe("a phase played on the board", () => {
   });
 });
 
+/** Every animation on the page brought to its end (the ones with no end left alone). */
+const finishAll = (page: Page) =>
+  page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => Number.isFinite(Number(a.effect?.getComputedTiming().endTime)))
+        .map((a) => {
+          a.finish();
+          return a.finished.catch(() => undefined);
+        }),
+    ),
+  );
+
+const skipButton = (page: Page) => page.getByRole("button", { name: "Skip the animation" });
+
 test.describe("ink and the keyboard while a phase plays", () => {
   test("no ink shows on the map before an order starts to draw", async ({ page }, info) => {
     test.skip(isPhone(info), "the mask is the same at any size");
@@ -132,6 +148,31 @@ test.describe("ink and the keyboard while a phase plays", () => {
     // Nothing has been drawn yet, so the marks add not one pixel (a round cap on a zero-length
     // dash at either end of a mark used to paint a dot there).
     expect(withMarks.equals(without)).toBe(true);
+  });
+
+  test("a speed changed part way through a phase keeps Skip until every piece has landed", async ({ page }, info) => {
+    test.skip(isPhone(info), "one viewport is enough");
+    await ready(page);
+    for (let i = 0; i < 2; i++) {
+      await write(page, "A PAR - BUR; A MUN - BUR; A VEN - TRI; F TRI - VEN; F LON - NTH; F KIE - DEN");
+      await primary(page).click();
+      await finishAll(page);
+      await expect(skipButton(page)).toBeHidden();
+      await primary(page).click();
+    }
+    await page.getByRole("button", { name: "Double speed" }).click();
+    await page.getByRole("button", { name: "Replay the game from the start" }).click();
+    await page.waitForTimeout(150);
+    await page.getByRole("button", { name: "Half speed" }).click();
+    // For two seconds: Skip is never gone while a piece is still moving.
+    for (let i = 0; i < 20; i++) {
+      const s = await page.evaluate(() => ({
+        skip: [...document.querySelectorAll(".board-tools button")].some((b) => b.textContent?.startsWith("Skip")),
+        running: document.querySelector("svg.board-live")!.getAnimations({ subtree: true }).filter((a) => a.playState === "running").length,
+      }));
+      if (s.running > 0) expect(s.skip, `${s.running} animations still running at sample ${i}`).toBe(true);
+      await page.waitForTimeout(100);
+    }
   });
 });
 
