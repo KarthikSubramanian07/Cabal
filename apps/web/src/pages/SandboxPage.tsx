@@ -44,8 +44,9 @@ interface Picker {
   power: string;
   key: string;
   options: string[];
-  /** When it opened (event clock), to ignore the click a touch sends after the tap that opened it. */
+  /** When and where it was opened, to ignore the click a touch sends after the tap that opened it. */
   openedAt: number;
+  openedBy: { x: number; y: number } | null;
 }
 
 const IDLE: Draft = { step: "idle" };
@@ -166,6 +167,7 @@ function Table({ sb }: { sb: Sandbox }) {
           key: effect.key,
           options: effect.options,
           openedAt: performance.now(),
+          openedBy: client ?? null,
         });
         setMessage(null);
       } else if (effect.kind === "message") {
@@ -529,7 +531,9 @@ function Table({ sb }: { sb: Sandbox }) {
                   onClick={(e) => {
                     // A touch is followed by a synthetic click at the same spot. If the menu opened
                     // under the finger, that click must not choose for the player.
-                    if (e.timeStamp - picker.openedAt < 350) return;
+                    const from = picker.openedBy;
+                    const sameSpot = from !== null && Math.hypot(e.clientX - from.x, e.clientY - from.y) < 16;
+                    if (sameSpot && e.timeStamp - picker.openedAt < 700) return;
                     sb.setOrder(picker.power, picker.key, o);
                     setActive(picker.power);
                     setPicker(null);

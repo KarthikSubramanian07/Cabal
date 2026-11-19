@@ -20,8 +20,8 @@
   display: inline-block;
   margin: 0 0 var(--space-5);
   padding: 5px 10px 4px;
-  border: 2px solid var(--brass-deep);
-  color: var(--brass-deep);
+  border: 2px solid var(--brass-ink);
+  color: var(--brass-ink);
   font-family: var(--font-display);
   font-size: var(--text-md);
   letter-spacing: 0.14em;

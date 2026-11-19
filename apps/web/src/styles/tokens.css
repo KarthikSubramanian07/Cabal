@@ -21,6 +21,8 @@
   /* ---- colour: accents */
   --brass: #c8a24a;
   --brass-deep: #94731f;
+  /* Brass dark enough for small text on paper and bone (4.5:1). */
+  --brass-ink: #7a5e14;
   --vermilion: #d94f30;
   --vermilion-deep: #b23c20;
   --kept: #2c7541;

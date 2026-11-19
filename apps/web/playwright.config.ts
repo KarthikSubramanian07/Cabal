@@ -7,6 +7,8 @@ const origin = `http://localhost:${port}`;
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
+  // Whole games are played through on an emulated phone at three times pixel density.
+  timeout: 90_000,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: { baseURL: origin, trace: "retain-on-failure" },

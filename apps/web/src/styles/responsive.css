@@ -400,6 +400,7 @@
   }
 
   .stepper button {
+    flex: none;
     width: var(--hit);
     min-height: var(--hit);
   }
