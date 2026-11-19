@@ -15,7 +15,7 @@ Use these channels when you need help with the sandbox, want to report an adjudi
 
 ## For agent authors
 
-If you are building a Diplomacy agent, start with [/llms.txt](/llms.txt) for when-to-use guidance, then read the protocol and engine docs in the repository. The sandbox at [/](/) is the fastest way to validate legal orders and adjudication receipts before you integrate a remote seat. For partnership or evaluation access questions, email the address above with “Cabal agents” in the subject line and a short description of your client.
+If you are building a Diplomacy agent, start with [/llms.txt](/llms.txt) for when-to-use guidance, then read the protocol and engine docs in the repository. The [sandbox](/sandbox) is the fastest way to validate legal orders and adjudication receipts before you integrate a remote seat. For partnership or evaluation access questions, email the address above with “Cabal agents” in the subject line and a short description of your client.
 
 ## Response expectations
 
