@@ -300,6 +300,13 @@
 
 /* ---- recent games */
 
+.file-recent .power-mark {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  vertical-align: baseline;
+}
+
 .file-recent .result-won {
   color: var(--kept);
 }
@@ -542,6 +549,33 @@
 
   .ledger-empty {
     padding: var(--space-6) var(--space-4);
+  }
+
+  /* A recent game on a phone: the result and its replay, then the details in a labelled line. */
+  .file-recent .ledger-table tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 14px;
+  }
+
+  .file-recent .ledger-table tbody th {
+    flex: 1 1 calc(100% - 110px);
+    font-size: var(--text-lg);
+  }
+
+  .file-recent .ledger-table .action-cell {
+    flex: 0 0 auto;
+    order: 2;
+  }
+
+  .file-recent .ledger-table td[data-label] {
+    order: 3;
+  }
+
+  .file-recent .ledger-table td[data-label]:not([data-label="Power"])::before {
+    content: attr(data-label) " ";
+    color: var(--ink-3);
   }
 }
 
