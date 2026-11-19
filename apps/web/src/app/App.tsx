@@ -11,8 +11,9 @@ import { matchRoute } from "./routes.js";
 const SandboxPage = lazy(() => import("../pages/SandboxPage.jsx"));
 const GamesPage = lazy(() => import("../pages/GamesPage.jsx"));
 const GamePage = lazy(() => import("../pages/GamePage.jsx"));
-/** The front door is in the entry bundle: it is prerendered and hydrated, and must not suspend. */
-const NotYetPage = lazy(() => import("../pages/NotYetPage.jsx"));
+const LedgerPage = lazy(() => import("../pages/LedgerPage.jsx"));
+const ProfilePage = lazy(() => import("../pages/ProfilePage.jsx"));
+const ReplayPage = lazy(() => import("../pages/ReplayPage.jsx"));
 const NotFoundPage = lazy(() => import("../pages/NotFoundPage.jsx"));
 
 export function App() {
@@ -36,8 +37,12 @@ export function App() {
               <GamesPage />
             ) : route.name === "game" ? (
               <GamePage code={route.params["code"] ?? ""} />
+            ) : route.name === "ledger" ? (
+              <LedgerPage />
+            ) : route.name === "profile" ? (
+              <ProfilePage handle={route.params["handle"] ?? ""} />
             ) : (
-              <NotYetPage route={route} />
+              <ReplayPage code={route.params["code"] ?? ""} />
             )}
           </Suspense>
         </ErrorBoundary>
