@@ -163,7 +163,9 @@ export function NotificationsPanel() {
               <input type="checkbox" checked={push.settings!.preferences[k.kind]} onChange={(e) => void push.setKind(k.kind, e.target.checked)} />
               <span className="option-label">{k.label}</span>
               <span className="option-blurb">
-                {k.kind === "deadline" ? `${push.settings!.reminderMinutes} minutes before a deadline, when you have not readied.` : k.blurb}
+                {k.kind === "deadline"
+                  ? `${push.settings!.reminderMinutes} minutes before a deadline, when you have not readied. Not at quicker tables, where the phase has only just opened.`
+                  : k.blurb}
               </span>
             </label>
           ))}

@@ -6,8 +6,10 @@ This page describes what Cabal at playcabal.pages.dev keeps about you, where, an
 
 - **The sandbox** keeps your game in your browser's local storage so a reload does not lose it. It is never sent anywhere. The rules engine runs as WebAssembly in your browser; sandbox orders are not uploaded.
 - **Your account**, once you choose a handle: its id, the handle, and a secret the server issued to this device. The secret proves the device is you; it is sent only as a request header to Cabal's own server, never in an address.
-- **Your seats**: for each table you sit at, a seat token, kept the same way.
-- Small preferences: whether single-key shortcuts are on, and whether you said "Not now" to notifications.
+- **Your seats**: for each table you sit at, a seat token, kept the same way, with the handle you sat down under and the account that took it. Signing out of the device forgets the seats your account took here.
+- **Notifications on this device**: which account turned them on here, so a device that changes hands does not report them on for the next person.
+- Small preferences: whether single-key shortcuts are on, whether the table's sounds are on, the last name this device sat down under, and whether you said "Not now" to notifications.
+- **The app itself**: the service worker keeps a copy of the site's own files (its scripts, styles, fonts, map and engine) so Cabal opens quickly and offline. It keeps no game data and nothing from Cabal's server.
 
 Clearing this site's data in your browser removes all of it. Without a recovery code, an account whose last device is cleared cannot be recovered.
 
