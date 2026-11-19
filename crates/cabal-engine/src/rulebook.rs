@@ -33,7 +33,10 @@ pub enum Edition {
     Dptg,
 }
 
+/// Every setting has a default (the 2023 edition), so a rulebook recorded
+/// before a setting existed still loads.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Rulebook {
     pub edition: Edition,
     pub convoy_intent: ConvoyIntent,

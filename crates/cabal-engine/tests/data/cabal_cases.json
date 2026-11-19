@@ -1,0 +1,108 @@
+{
+  "source": "Cabal's own adjudication cases, in the DATC JSON layout of tests/data/datc_v3.json plus explicit lists: `dislodged` (every dislodged unit and its attacker's origin), `standoffs` (every standoff province) and `retreats` (legal retreat destinations by the dislodged unit's province). Each case states a ruling that follows directly from the rulebook and that the DATC layout cannot express.",
+  "cases": [
+    {
+      "name": "x01_bounce_is_a_standoff_when_both_bouncing_units_are_dislodged",
+      "note": "Munich and Vienna bounce in Tyrolia; each is dislodged from a third province. A dislodged unit only loses its effect on the province its attacker came from, so Tyrolia is a standoff and closed to both retreats.",
+      "phase": "Main",
+      "orders": {
+        "GER: A mun -> tyr": "Fails",
+        "AUS: A vie -> tyr": "Fails",
+        "FRA: A bur -> mun": "Succeeds",
+        "FRA: A ruh supports A bur -> mun": "Succeeds",
+        "RUS: A gal -> vie": "Succeeds",
+        "RUS: A bud supports A gal -> vie": "Succeeds"
+      },
+      "dislodged": ["GER: A mun <- bur", "AUS: A vie <- gal"],
+      "standoffs": ["tyr"],
+      "retreats": {
+        "mun": ["ber", "boh", "kie", "sil"],
+        "vie": ["boh", "tri"]
+      }
+    },
+    {
+      "name": "x02_bounce_is_a_standoff_when_one_bouncing_unit_is_dislodged",
+      "phase": "Main",
+      "orders": {
+        "GER: A mun -> tyr": "Fails",
+        "AUS: A vie -> tyr": "Fails",
+        "FRA: A bur -> mun": "Succeeds",
+        "FRA: A ruh supports A bur -> mun": "Succeeds"
+      },
+      "dislodged": ["GER: A mun <- bur"],
+      "standoffs": ["tyr"],
+      "retreats": { "mun": ["ber", "boh", "kie", "sil"] }
+    },
+    {
+      "name": "x03_head_to_head_loser_leaves_no_standoff_behind_its_attacker",
+      "note": "The loser of a head-to-head battle has no effect on the province its attacker came from. Burgundy is closed to Munich as the attacker's origin, not as a standoff.",
+      "phase": "Main",
+      "orders": {
+        "GER: A mun -> bur": "Fails",
+        "FRA: A bur -> mun": "Succeeds",
+        "FRA: A ruh supports A bur -> mun": "Succeeds"
+      },
+      "dislodged": ["GER: A mun <- bur"],
+      "standoffs": [],
+      "retreats": { "mun": ["ber", "boh", "kie", "sil", "tyr"] }
+    },
+    {
+      "name": "x04_a_third_unit_takes_the_province_behind_a_head_to_head_winner",
+      "note": "Burgundy beats Munich head to head and leaves Burgundy vacant. Munich's failed move there does not stop Paris from walking in.",
+      "phase": "Main",
+      "orders": {
+        "GER: A mun -> bur": "Fails",
+        "FRA: A bur -> mun": "Succeeds",
+        "FRA: A ruh supports A bur -> mun": "Succeeds",
+        "FRA: A par -> bur": "Succeeds"
+      },
+      "dislodged": ["GER: A mun <- bur"],
+      "standoffs": []
+    },
+    {
+      "name": "x05_plain_bounce_is_a_standoff_and_closes_the_province_to_retreats",
+      "note": "Berlin and Warsaw bounce in Silesia while Munich is dislodged from Burgundy: Munich may go to neither Silesia (standoff) nor Burgundy (attacker's origin).",
+      "phase": "Main",
+      "orders": {
+        "GER: A ber -> sil": "Fails",
+        "RUS: A war -> sil": "Fails",
+        "GER: A mun holds": "Fails",
+        "FRA: A bur -> mun": "Succeeds",
+        "FRA: A ruh supports A bur -> mun": "Succeeds"
+      },
+      "dislodged": ["GER: A mun <- bur"],
+      "standoffs": ["sil"],
+      "retreats": { "mun": ["boh", "kie", "tyr"] }
+    },
+    {
+      "name": "x06_a_bounce_off_a_holding_unit_is_not_a_standoff",
+      "phase": "Main",
+      "orders": {
+        "GER: A mun -> bur": "Fails",
+        "ITA: A pie -> mar": null,
+        "FRA: A bur holds": "Succeeds"
+      },
+      "dislodged": [],
+      "standoffs": []
+    },
+    {
+      "name": "x07_retreat_into_a_standoff_province_fails",
+      "phase": "Retreat",
+      "preceding_main_phase": {
+        "orders": {
+          "GER: A mun -> tyr": "Fails",
+          "AUS: A vie -> tyr": "Fails",
+          "FRA: A bur -> mun": "Succeeds",
+          "FRA: A ruh supports A bur -> mun": "Succeeds",
+          "RUS: A gal -> vie": "Succeeds",
+          "RUS: A bud supports A gal -> vie": "Succeeds"
+        },
+        "standoffs": ["tyr"]
+      },
+      "orders": {
+        "GER: A mun -> tyr": "Fails",
+        "AUS: A vie -> tri": "Succeeds"
+      }
+    }
+  ]
+}

@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [parser, movement]
+        target: [parser, movement, saved, validate, record]
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -37,13 +37,66 @@ jobs:
         with:
           workspaces: fuzz
           key: fuzz-${{ matrix.target }}
-      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         with:
           tool: cargo-fuzz
-      - run: cargo +nightly fuzz run ${{ matrix.target }} --target x86_64-unknown-linux-gnu -- -max_total_time=600 -max_len=4096
+      - run: cargo +nightly fuzz run ${{ matrix.target }} --target x86_64-unknown-linux-gnu -- -max_total_time=600 -max_len=${{ matrix.target == 'saved' && 16384 || 4096 }}
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: fuzz-${{ matrix.target }}
           path: fuzz/artifacts
           if-no-files-found: ignore
+
+  arena:
+    name: Bot arena (300 games) and bot property tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ARENA_GAMES: 300
+      # A different seed every night, recorded in the summary so a failure can be replayed.
+      ARENA_SEED: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: arena
+      - name: Bot property tests, large budget
+        run: PROPTEST_CASES=1000 cargo test -p cabal-bot --release -- prop_
+      - run: cargo build --release -p cabal-cli
+      # Exits non-zero on any illegal order, incomplete decision, void support or
+      # convoy, order refused by the validator, replay divergence or strength-order
+      # regression; a panic aborts the process (panic = "abort").
+      - name: Play the arena
+        run: >
+          ./target/release/cabal arena
+          --games "$ARENA_GAMES" --seed "$ARENA_SEED" --max-year 1910
+          --levels hard,standard,easy --out arena --check-strength
+      - name: Replay every saved game with the CLI
+        run: |
+          count=$(find arena/games -name '*.json' | wc -l | tr -d ' ')
+          test "$count" -eq "$ARENA_GAMES"
+          find arena/games -name '*.json' -print0 | xargs -0 -n 1 ./target/release/cabal replay > arena/replay.log
+          echo "replayed $count saved games without divergence"
+      - name: Publish the summary
+        if: always()
+        run: |
+          if test -f arena/summary.md; then cat arena/summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Pack the games
+        if: always()
+        run: |
+          if test -d arena/games; then tar -czf arena/games.tar.gz -C arena games; fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: arena-${{ github.run_number }}
+          path: |
+            arena/summary.md
+            arena/summary.json
+            arena/replay.log
+            arena/games.tar.gz
+          if-no-files-found: warn
+          retention-days: 30

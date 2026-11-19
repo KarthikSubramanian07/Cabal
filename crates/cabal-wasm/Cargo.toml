@@ -13,7 +13,9 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 cabal-engine = { path = "../cabal-engine" }
+cabal-bot = { path = "../cabal-bot" }
 wasm-bindgen = "0.2.128"
+js-sys = "0.3"
 serde.workspace = true
 serde_json.workspace = true
 serde-wasm-bindgen = "0.6"
@@ -24,4 +26,8 @@ hex.workspace = true
 wasm-bindgen-test = "0.3"
 
 [package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
+
+# `--profile wasm-release` is a "custom" profile to wasm-pack.
+[package.metadata.wasm-pack.profile.custom]
 wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]

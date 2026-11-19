@@ -119,6 +119,146 @@ pub fn resolve_movement_with_dependencies(
     (result, graph)
 }
 
+/// How a dependency cycle was settled (the backup rules of DATC 5.E).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CycleKind {
+    /// Every member is a move: they all succeed.
+    CircularMovement,
+    /// A convoy is part of the cycle: the convoys fail (Szykman rule).
+    ConvoyParadox,
+    /// Any other cycle: every member fails.
+    Unresolved,
+}
+
+/// Orders that depended on one another in a circle, and how that was settled.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Cycle {
+    pub kind: CycleKind,
+    /// Indices into `MovementResult::orders`, ascending.
+    pub members: Vec<usize>,
+}
+
+/// What a move had to overcome in its destination.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Opposition {
+    /// Nobody there, or the occupant moved away.
+    Empty,
+    /// The occupant stayed: the move had to beat its hold strength (DATC 5.B.5).
+    Hold {
+        occupant: ProvinceId,
+        strength: u32,
+        /// The occupant belongs to the mover's own power and cannot be dislodged.
+        own_unit: bool,
+    },
+    /// The occupant moved the opposite way: its defend strength counts (DATC 5.B.7).
+    HeadToHead { opponent: ProvinceId, strength: u32 },
+}
+
+/// Another move into the same province.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Rival {
+    pub unit: ProvinceId,
+    /// Prevent strength (DATC 5.B.6): zero when it had no path or lost a head-to-head.
+    pub prevent: u32,
+}
+
+/// A support order aimed at this order, and whether it added strength.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct SupportUse {
+    pub supporter: ProvinceId,
+    pub outcome: SupportOutcome,
+    /// False when the support failed, or was given against the supporter's own unit.
+    pub counted: bool,
+    /// Units whose attack cut this support.
+    pub cut_by: Vec<ProvinceId>,
+}
+
+/// A move against this unit's province.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Attack {
+    pub from: ProvinceId,
+    pub strength: u32,
+    pub succeeded: bool,
+}
+
+/// A fleet ordered to convoy this army.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct ConvoyUse {
+    pub fleet: ProvinceId,
+    pub outcome: ConvoyOutcome,
+}
+
+/// The numbers and the units behind one order's result.
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub struct OrderWhy {
+    /// Moves: attack strength (DATC 5.B.8). Zero without a path, or against an own unit.
+    pub attack: Option<u32>,
+    /// Moves: what stood in the destination.
+    pub opposition: Option<Opposition>,
+    /// Moves: every other move into the same province.
+    pub rivals: Vec<Rival>,
+    /// Units that stayed put: the strength an attacker had to beat.
+    pub hold: Option<u32>,
+    /// Moves against this unit's province.
+    pub attacks: Vec<Attack>,
+    /// Supports for this order, counted or not.
+    pub supports: Vec<SupportUse>,
+    /// Support orders: units whose attack cut it.
+    pub cut_by: Vec<ProvinceId>,
+    /// Moves: the army travels by convoy.
+    pub by_convoy: bool,
+    /// Convoyed moves: the fleets ordered to carry the army.
+    pub convoys: Vec<ConvoyUse>,
+    /// Convoyed moves: did an unbroken chain of convoys exist in the end?
+    pub convoy_path: Option<bool>,
+    /// Index into `MovementExplanation::cycles` when a backup rule settled this order.
+    pub cycle: Option<usize>,
+}
+
+/// Everything behind a movement phase: the dependency trace, the strengths of
+/// DATC 5.B for every order, and the cycles settled by backup rules.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct MovementExplanation {
+    pub orders: Vec<Order>,
+    pub outcomes: Vec<OrderOutcome>,
+    /// `(a, b)`: resolving order `a` asked for the result of order `b`.
+    pub edges: BTreeSet<(usize, usize)>,
+    /// One entry per order.
+    pub why: Vec<OrderWhy>,
+    pub cycles: Vec<Cycle>,
+}
+
+/// Resolve and explain: the result plus, for every order, the strengths it was
+/// judged on, the supports that counted, who cut what, and any paradox cycle.
+/// The adjudication is the same as [`resolve_movement`].
+pub fn explain_movement(
+    map: &Map,
+    position: &Position,
+    rulebook: Rulebook,
+    orders: &[Order],
+) -> (MovementResult, MovementExplanation) {
+    let mut resolver = Resolver::new(map, position, rulebook, orders);
+    resolver.tracking = true;
+    for i in 0..resolver.entries.len() {
+        resolver.resolve(i, true);
+    }
+    resolver.tracking = false;
+    let edges = std::mem::take(&mut resolver.dependencies);
+    let mut result = resolver.finish();
+    result.position.owners = position.owners.clone();
+    let why = resolver.why(&result);
+    let explanation = MovementExplanation {
+        orders: result.orders.clone(),
+        outcomes: result.outcomes.clone(),
+        edges,
+        why,
+        cycles: std::mem::take(&mut resolver.cycles),
+    };
+    (result, explanation)
+}
+
 #[derive(Clone, Debug)]
 struct Entry {
     unit: Unit,
@@ -176,6 +316,8 @@ struct Resolver<'a> {
     tracking: bool,
     stack: Vec<usize>,
     dependencies: BTreeSet<(usize, usize)>,
+    /// dependency cycles settled by a backup rule, in the order they were met
+    cycles: Vec<Cycle>,
 }
 
 impl<'a> Resolver<'a> {
@@ -211,17 +353,17 @@ impl<'a> Resolver<'a> {
                 continue;
             }; // NoUnit: nothing to attach it to
             let e = &mut entries[i];
-            if list.len() > 1 {
+            // DATC 6.A.6: an order for another power's unit is ignored. It must
+            // never count against the owner, or any power could void a rival's
+            // order by submitting a second one for the same unit.
+            let owner = e.unit.power;
+            let mut own = list.iter().filter(|o| o.power == owner);
+            match (own.next(), own.next()) {
+                (None, _) => e.illegal = Some(Illegal::ForeignUnit),
+                (Some(o), None) => e.command = o.command,
                 // DATC 4.D.3: all orders illegal, unit holds
-                e.illegal = Some(Illegal::DuplicateOrder);
-                continue;
+                (Some(_), Some(_)) => e.illegal = Some(Illegal::DuplicateOrder),
             }
-            let o = list[0];
-            if o.power != e.unit.power {
-                e.illegal = Some(Illegal::ForeignUnit);
-                continue;
-            }
-            e.command = o.command;
         }
 
         // validate each command (DATC section 3 / 4.E.1); `check` is `normalise`, so the
@@ -368,6 +510,7 @@ impl<'a> Resolver<'a> {
             tracking: false,
             stack: Vec::new(),
             dependencies: BTreeSet::new(),
+            cycles: Vec::new(),
         }
     }
 
@@ -439,11 +582,18 @@ impl<'a> Resolver<'a> {
     }
 
     fn backup_rule(&mut self, members: &[usize]) {
+        let mut sorted = members.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
         if members.iter().all(|&m| self.entries[m].is_move()) {
             // circular movement: every move succeeds
             for &m in members {
                 self.resolved[m] = Some(true);
             }
+            self.cycles.push(Cycle {
+                kind: CycleKind::CircularMovement,
+                members: sorted,
+            });
             return;
         }
         let convoys: Vec<usize> = members
@@ -457,11 +607,19 @@ impl<'a> Resolver<'a> {
                 self.paradox[c] = true;
                 self.resolved[c] = Some(false);
             }
+            self.cycles.push(Cycle {
+                kind: CycleKind::ConvoyParadox,
+                members: sorted,
+            });
             return;
         }
         for &m in members {
             self.resolved[m] = Some(false);
         }
+        self.cycles.push(Cycle {
+            kind: CycleKind::Unresolved,
+            members: sorted,
+        });
     }
 
     // ---- adjudicate: the equations of DATC 5.B ----
@@ -684,7 +842,7 @@ impl<'a> Resolver<'a> {
     // ---- explanation and bookkeeping ----
 
     #[allow(clippy::needless_range_loop)] // indices are shared across several parallel tables
-    fn finish(mut self) -> MovementResult {
+    fn finish(&mut self) -> MovementResult {
         let n = self.entries.len();
         let ok: Vec<bool> = (0..n).map(|i| self.resolved[i].unwrap_or(false)).collect();
         let moved_v: Vec<bool> = (0..n).map(|i| self.entries[i].is_move() && ok[i]).collect();
@@ -704,7 +862,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // standoffs: no move in, at least one failed move in by a unit that was not itself dislodged
+        // standoffs: no move in, at least one failed move in that still contested the province
         // every PATH is now a function of resolved orders
         let path_ok: Vec<bool> = (0..n)
             .map(|i| self.entries[i].is_move() && self.path_final(i))
@@ -719,9 +877,17 @@ impl<'a> Resolver<'a> {
             if list.iter().any(|&m| ok[m]) {
                 continue;
             }
-            let contested = list
-                .iter()
-                .any(|&m| dislodged_by[m].is_none() && path_ok[m]);
+            // A move contests its destination when it has prevent strength (DATC 5.B.6).
+            // That is zero only without a path or for the loser of a head-to-head
+            // battle, which has no effect on the province its attacker came from.
+            // A unit dislodged from a third province still bounces what it meets.
+            let mut contested = false;
+            for &m in &list {
+                if path_ok[m] && self.prevent_strength(m, true) > 0 {
+                    contested = true;
+                    break;
+                }
+            }
             if !contested {
                 continue;
             }
@@ -760,17 +926,11 @@ impl<'a> Resolver<'a> {
                         } else if ok[i] {
                             SupportOutcome::Succeeds
                         } else {
-                            let p = e.province();
                             let cutter = self
-                                .attackers
-                                .get(&p)
-                                .and_then(|l| {
-                                    l.iter().copied().find(|&m| {
-                                        self.entries[m].unit.power != e.unit.power && path_ok[m]
-                                    })
-                                })
-                                .map(|m| self.entries[m].province())
-                                .unwrap_or(p);
+                                .cutters(i)
+                                .first()
+                                .map(|&m| self.entries[m].province())
+                                .unwrap_or(e.province());
                             SupportOutcome::Cut { by: cutter }
                         })
                     }
@@ -830,6 +990,145 @@ impl<'a> Resolver<'a> {
             dislodged,
             standoffs,
         }
+    }
+
+    /// Moves that cut support order `s`: attacks with a path from another power,
+    /// other than from the province the support is aimed at (DATC 5.B.2).
+    fn cutters(&mut self, s: usize) -> Vec<usize> {
+        let me = self.entries[s].unit;
+        let aimed_at = match self.entries[s].command {
+            Command::SupportHold { target } => target,
+            Command::SupportMove { dest, .. } => dest,
+            _ => return Vec::new(),
+        };
+        let list = self
+            .attackers
+            .get(&me.province())
+            .cloned()
+            .unwrap_or_default();
+        let mut out = Vec::new();
+        for m in list {
+            if self.entries[m].unit.power != me.power
+                && self.entries[m].province() != aimed_at
+                && self.path_final(m)
+            {
+                out.push(m);
+            }
+        }
+        out
+    }
+
+    /// The strengths and actors behind every order. Call after `finish`: every
+    /// order is resolved, so each strength is its final value.
+    fn why(&mut self, result: &MovementResult) -> Vec<OrderWhy> {
+        let n = self.entries.len();
+        let mut out = Vec::with_capacity(n);
+        for i in 0..n {
+            let e = self.entries[i].clone();
+            let mut why = OrderWhy {
+                cycle: self.cycles.iter().position(|c| c.members.contains(&i)),
+                ..OrderWhy::default()
+            };
+            let moved = e.is_move() && self.resolved[i] == Some(true);
+            let support_use = |r: &mut Self, s: usize, counted: bool| {
+                let cut_by = match result.outcomes[s] {
+                    OrderOutcome::Support(SupportOutcome::Cut { .. }) => r
+                        .cutters(s)
+                        .into_iter()
+                        .map(|m| r.entries[m].province())
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                SupportUse {
+                    supporter: r.entries[s].province(),
+                    outcome: match &result.outcomes[s] {
+                        OrderOutcome::Support(o) => o.clone(),
+                        _ => SupportOutcome::Void,
+                    },
+                    counted,
+                    cut_by,
+                }
+            };
+            if let Command::Move { dest, .. } = e.command {
+                why.by_convoy = e.by_convoy;
+                why.attack = Some(self.attack_strength(i, true));
+                let occupant = self.at.get(&dest).copied();
+                let mut excluded = None;
+                why.opposition = Some(if let Some(j) = self.h2h(i, true) {
+                    excluded = Some(self.entries[j].unit.power);
+                    Opposition::HeadToHead {
+                        opponent: self.entries[j].province(),
+                        strength: self.defend_strength(j, true),
+                    }
+                } else {
+                    match occupant {
+                        Some(d)
+                            if !(self.entries[d].is_move() && self.resolved[d] == Some(true)) =>
+                        {
+                            excluded = Some(self.entries[d].unit.power);
+                            Opposition::Hold {
+                                occupant: dest,
+                                strength: self.hold_strength(dest, true),
+                                own_unit: self.entries[d].unit.power == e.unit.power,
+                            }
+                        }
+                        _ => Opposition::Empty,
+                    }
+                });
+                for k in self.attackers.get(&dest).cloned().unwrap_or_default() {
+                    if k != i {
+                        why.rivals.push(Rival {
+                            unit: self.entries[k].province(),
+                            prevent: self.prevent_strength(k, true),
+                        });
+                    }
+                }
+                for s in self.move_supports[i].clone() {
+                    let counted = self.resolved[s] == Some(true)
+                        && excluded != Some(self.entries[s].unit.power);
+                    why.supports.push(support_use(self, s, counted));
+                }
+                if e.by_convoy {
+                    for f in self.convoys_for[i].clone() {
+                        why.convoys.push(ConvoyUse {
+                            fleet: self.entries[f].province(),
+                            outcome: match &result.outcomes[f] {
+                                OrderOutcome::Convoy(o) => o.clone(),
+                                _ => ConvoyOutcome::Void,
+                            },
+                        });
+                    }
+                    why.convoy_path = Some(self.convoy_path_final(i));
+                }
+            }
+            if !moved {
+                let p = e.province();
+                why.hold = Some(self.hold_strength(p, true));
+                for s in self.hold_supports.get(&p).cloned().unwrap_or_default() {
+                    let counted = self.resolved[s] == Some(true);
+                    why.supports.push(support_use(self, s, counted));
+                }
+                for m in self.attackers.get(&p).cloned().unwrap_or_default() {
+                    why.attacks.push(Attack {
+                        from: self.entries[m].province(),
+                        strength: self.attack_strength(m, true),
+                        succeeded: self.resolved[m] == Some(true),
+                    });
+                }
+            }
+            if matches!(
+                result.outcomes[i],
+                OrderOutcome::Support(SupportOutcome::Cut { .. })
+            ) {
+                why.cut_by = self
+                    .cutters(i)
+                    .into_iter()
+                    .map(|m| self.entries[m].province())
+                    .collect();
+            }
+            out.push(why);
+        }
+        out
     }
 
     /// PATH with every order resolved.

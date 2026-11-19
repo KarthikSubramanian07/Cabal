@@ -1,0 +1,11 @@
+{
+  // Configuration for the Pages project. `dist/_worker.js` (advanced mode, bundled from
+  // worker/entry.ts by scripts/emit-agent-site.mjs) receives these bindings on `env`.
+  // With this file present it is the source of truth for the project's settings.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "playcabal",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-08-20",
+  // Same-origin API: `/api/*`, including the game WebSocket, goes to the game server.
+  "services": [{ "binding": "SERVER", "service": "cabal-server" }]
+}

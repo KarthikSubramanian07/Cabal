@@ -14,11 +14,13 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  WASM_SIZE_BUDGET_BYTES: 409600
+  # About 6 percent above the measured build (384,183 bytes gzip with the bot
+  # inside, see docs/PERFORMANCE.md). Raise it only with a number and a reason.
+  WASM_SIZE_BUDGET_BYTES: 409000
 
 jobs:
   rust:
-    name: "Rust: fmt, clippy, tests, DATC"
+    name: "Rust: fmt, clippy, tests, DATC, replay"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -36,17 +38,24 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - run: cargo test --workspace
+      # Adjudicates all 171 DATC cases plus Cabal's own and prints pass, fail and
+      # skip totals; exits 1 if any case fails.
       - name: DATC report
         run: cargo run -p cabal-cli -- datc --report
+      # Every committed saved game must replay with zero divergences.
+      - name: Replay fixtures
+        run: cargo run -p cabal-cli -- replay crates/cabal-engine/tests/data/games
 
   bench:
-    name: "Bench: opening adjudication gate"
+    name: "Bench: adjudication and legal-order gates"
     runs-on: ubuntu-latest
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       CRITERION_HOME: ${{ github.workspace }}/target/criterion
-      BENCH_ARGS: --sample-size 30 --measurement-time 3 --warm-up-time 1 --noplot ^adjudicate.spring.1901
+      # Gated: opening adjudication, and legal orders on the fleet-heavy midgame
+      # board (per power and with the shared convoy search).
+      BENCH_ARGS: --sample-size 30 --measurement-time 3 --warm-up-time 1 --noplot ^(adjudicate.spring.1901|midgame/legal.orders,.all.powers)
     steps:
       - uses: actions/checkout@v7
         with:
@@ -84,11 +93,11 @@ jobs:
           toolchain: 1.97.0
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         with:
           tool: wasm-pack
       - run: wasm-pack test --node crates/cabal-wasm
-      - run: wasm-pack build crates/cabal-wasm --target web --release --out-dir ../../packages/engine/pkg --out-name cabal_engine
+      - run: wasm-pack build crates/cabal-wasm --target web --profile wasm-release --out-dir ../../packages/engine/pkg --out-name cabal_engine
       - name: Size gate
         run: |
           size=$(gzip -c packages/engine/pkg/cabal_engine_bg.wasm | wc -c | tr -d ' ')
@@ -110,7 +119,7 @@ jobs:
         with:
           name: engine-pkg
           path: packages/engine/pkg
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
@@ -120,6 +129,74 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
       - run: pnpm build
+
+  deploy-dry-run:
+    # Bundles the Worker exactly as `pnpm deploy:server` would, without credentials and without
+    # uploading anything (ADR 0008). Catches wrangler config, module rule and bundling errors on
+    # the pull request instead of during a production deploy, and gates the upload size.
+    name: "Deploy dry run: cabal-server bundle and size budget"
+    runs-on: ubuntu-latest
+    needs: wasm
+    env:
+      # Measured 755,828 bytes with the engine of this change (642,074 before it: the engine
+      # wasm grew by about 110 KB gzip with replay verification, snapshots, verdicts and
+      # explanations; see docs/PERFORMANCE.md). The budget leaves about 4 percent of headroom.
+      # Cloudflare's own limit is 3 MiB gzip on the free plan.
+      WORKER_GZIP_BUDGET_BYTES: 786432
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-pkg
+          path: packages/engine/pkg
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # `exec` skips the package's predeploy hook, so copy the wasm into the worker tree first.
+      - run: pnpm --filter @cabal/server run engine:sync
+      - name: wrangler deploy --dry-run
+        run: |
+          set -o pipefail
+          pnpm --filter @cabal/server exec wrangler deploy --dry-run --outdir "$RUNNER_TEMP/cabal-server-dry-run" 2>&1 | tee "$RUNNER_TEMP/dry-run.log"
+      - name: Bundle size gate
+        run: |
+          shopt -s nullglob
+          files=("$RUNNER_TEMP/cabal-server-dry-run"/*.js "$RUNNER_TEMP/cabal-server-dry-run"/*.wasm)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::the dry run produced no bundle in $RUNNER_TEMP/cabal-server-dry-run"
+            exit 1
+          fi
+          raw=0
+          gz=0
+          {
+            echo "### cabal-server bundle"
+            echo
+            echo "| File | Raw bytes | Gzip bytes |"
+            echo "|---|---:|---:|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for f in "${files[@]}"; do
+            r=$(wc -c < "$f" | tr -d ' ')
+            g=$(gzip -c "$f" | wc -c | tr -d ' ')
+            raw=$((raw + r))
+            gz=$((gz + g))
+            echo "| $(basename "$f") | $r | $g |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          wrangler_line=$(grep -m1 'Total Upload' "$RUNNER_TEMP/dry-run.log" || echo "not reported")
+          {
+            echo "| **total** | **$raw** | **$gz** |"
+            echo
+            echo "Budget: $WORKER_GZIP_BUDGET_BYTES gzip bytes. Wrangler: $wrangler_line"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "worker bundle: $raw bytes raw, $gz bytes gzip (budget $WORKER_GZIP_BUDGET_BYTES)"
+          echo "wrangler: $wrangler_line"
+          if [ "$gz" -gt "$WORKER_GZIP_BUDGET_BYTES" ]; then
+            echo "::error::cabal-server bundle is $gz gzip bytes, over the $WORKER_GZIP_BUDGET_BYTES byte budget"
+            exit 1
+          fi
 
   e2e:
     name: End-to-end (Playwright)
@@ -131,7 +208,7 @@ jobs:
         with:
           name: engine-pkg
           path: packages/engine/pkg
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
@@ -162,11 +239,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         with:
           tool: cargo-audit
       - run: cargo audit
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
@@ -187,7 +264,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: fuzz
-      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         with:
           tool: cargo-fuzz
       # Only the nightly Stress workflow runs the fuzzers; this keeps them building on every change.
