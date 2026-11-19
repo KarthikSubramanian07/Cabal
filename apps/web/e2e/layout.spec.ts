@@ -282,6 +282,16 @@ test.describe("phone layout", () => {
     await expect(page.locator(".toolbar .hint")).toContainText("A CON:");
   });
 
+  test("ordering on the map does not scroll the board out from under the finger", async ({ page }) => {
+    await ready(page);
+    for (const code of ["PAR", "BUR", "MAR", "SPA", "BRE"]) {
+      await tap(page, code);
+      expect(await page.evaluate(() => window.scrollY), code).toBe(0);
+    }
+    await expect(page.locator(".toolbar .hint")).toContainText("F BRE:");
+    await expect(page.getByRole("banner")).toBeInViewport();
+  });
+
   test("the pan arrows wait behind one button, so the map is not buried under controls", async ({ page }) => {
     await ready(page);
     const arrows = page.getByRole("group", { name: "Move the map" });

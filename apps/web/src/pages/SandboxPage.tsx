@@ -105,6 +105,8 @@ function Table({ sb }: { sb: Sandbox }) {
   const pickerRef = useRef<HTMLDivElement>(null);
   /** Set when a keyboard choice (or Escape) removed the focused button, so focus moves on. */
   const moveFocus = useRef(false);
+  /** Set by a click or tap on the map, which must not pull focus (and the page) to the choices. */
+  const byPointer = useRef(false);
 
   const setActive = useCallback(
     (power: string) => {
@@ -185,6 +187,7 @@ function Table({ sb }: { sb: Sandbox }) {
     (code: string, client: { x: number; y: number }) => {
       if (!playing) return;
       setPicker(null);
+      byPointer.current = true;
       apply(click(ctx, draft, code), client);
     },
     [ctx, draft, apply, playing],
@@ -308,7 +311,11 @@ function Table({ sb }: { sb: Sandbox }) {
       pickerRef.current?.querySelector("button")?.focus();
       return;
     }
-    const lost = !document.activeElement || document.activeElement === document.body;
+    // An order given on the map leaves focus where it was: moving it to the choices under the
+    // map would scroll the page and slide the board out from under the finger.
+    const pointed = byPointer.current;
+    byPointer.current = false;
+    const lost = !pointed && (!document.activeElement || document.activeElement === document.body);
     if (!moveFocus.current && !lost) return;
     moveFocus.current = false;
     const panel = choicesRef.current;
