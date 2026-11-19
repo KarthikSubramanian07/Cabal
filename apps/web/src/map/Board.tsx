@@ -143,14 +143,12 @@ const TOUCH_REACH_PX = 26;
 const TOUCH_REACH_MAX = 48;
 
 const OrderMark = memo(function OrderMark({
-  board,
   order,
   laid,
   r,
   timing,
   lit,
 }: {
-  board: BoardData;
   order: DrawnOrder;
   laid: LaidMark;
   r: number;
@@ -927,7 +925,6 @@ export function Board({
             return (
               <OrderMark
                 key={`${o.power}-${o.text}-${i}`}
-                board={board}
                 order={o}
                 laid={mark}
                 r={r}
