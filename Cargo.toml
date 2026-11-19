@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/cabal-engine", "crates/cabal-wasm", "crates/cabal-cli"]
+members = ["crates/cabal-engine", "crates/cabal-bot", "crates/cabal-wasm", "crates/cabal-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -16,6 +16,7 @@ serde_json = "1"
 thiserror = "2"
 blake3 = "1"
 hex = "0.4"
+rayon = "1"
 
 [profile.release]
 opt-level = 3
@@ -23,3 +24,10 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# The bot's tests play whole games through the adjudicator; unoptimised that takes minutes.
+[profile.test.package.cabal-engine]
+opt-level = 2
+
+[profile.test.package.cabal-bot]
+opt-level = 2

@@ -96,10 +96,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
-name = "cabal-cli"
+name = "cabal-bot"
 version = "0.1.0"
 dependencies = [
  "cabal-engine",
+ "criterion",
+ "proptest",
+ "serde",
+]
+
+[[package]]
+name = "cabal-cli"
+version = "0.1.0"
+dependencies = [
+ "cabal-bot",
+ "cabal-engine",
+ "rayon",
+ "serde",
  "serde_json",
 ]
 
@@ -121,6 +134,7 @@ dependencies = [
 name = "cabal-wasm"
 version = "0.1.0"
 dependencies = [
+ "cabal-bot",
  "cabal-engine",
  "hex",
  "serde",
