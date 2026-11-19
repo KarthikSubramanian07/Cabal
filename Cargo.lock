@@ -109,7 +109,10 @@ dependencies = [
 name = "cabal-cli"
 version = "0.1.0"
 dependencies = [
+ "cabal-bot",
  "cabal-engine",
+ "rayon",
+ "serde",
  "serde_json",
 ]
 
