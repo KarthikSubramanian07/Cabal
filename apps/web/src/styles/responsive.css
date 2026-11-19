@@ -434,6 +434,18 @@
     font-size: 18px;
   }
 
+  /* Seven 44px buttons would cover a good part of a small map. The four arrows are for
+     players who cannot drag, so they wait behind one button until they are asked for. */
+  .zoom .pan-toggle {
+    display: grid;
+    place-items: center;
+    padding: 0;
+  }
+
+  .pan:not([data-open="true"]) {
+    display: none;
+  }
+
   .btn,
   .btn.small {
     min-height: var(--hit);

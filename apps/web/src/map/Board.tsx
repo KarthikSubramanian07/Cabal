@@ -356,6 +356,8 @@ export function Board({
   const frameRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const gesture = useRef<Gesture>({ pointers: new Map(), start: null, moved: false });
+  /** Small boards fold the pan arrows behind a button; this is whether they are out. */
+  const [panOpen, setPanOpen] = useState(false);
   /** True until the player zooms or pans: the view then follows the frame and the focus. */
   const auto = useRef(true);
   const measured = useRef(false);
@@ -665,9 +667,23 @@ export function Board({
         <button type="button" onClick={showAll} aria-label="Show the whole board" disabled={whole}>
           ⤢
         </button>
+        {whole ? null : (
+          <button
+            type="button"
+            className="pan-toggle"
+            aria-expanded={panOpen}
+            aria-controls="board-pan"
+            aria-label="Move the map with buttons"
+            onClick={() => setPanOpen((open) => !open)}
+          >
+            <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <path d="M10 2v16M2 10h16M10 2 7.5 4.5M10 2l2.5 2.5M10 18l-2.5-2.5M10 18l2.5-2.5M2 10l2.5-2.5M2 10l2.5 2.5M18 10l-2.5-2.5M18 10l-2.5 2.5" />
+            </svg>
+          </button>
+        )}
       </div>
       {whole ? null : (
-        <div className="pan" role="group" aria-label="Move the map">
+        <div className="pan" id="board-pan" role="group" aria-label="Move the map" data-open={panOpen}>
           <button type="button" onClick={() => pan(-0.25, 0)} aria-label="Pan left">
             ←
           </button>

@@ -19,6 +19,20 @@
   grid-auto-flow: column;
 }
 
+/* Small boards keep the arrows folded away behind this button (see responsive.css). */
+.zoom .pan-toggle {
+  display: none;
+}
+
+.zoom .pan-toggle svg {
+  display: block;
+  margin: auto;
+}
+
+.zoom .pan-toggle[aria-expanded="true"] {
+  box-shadow: inset 0 -3px 0 var(--brass);
+}
+
 .zoom button,
 .pan button {
   width: 30px;
