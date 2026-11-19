@@ -67,8 +67,9 @@ jobs:
       - name: Bot property tests, large budget
         run: PROPTEST_CASES=1000 cargo test -p cabal-bot --release -- prop_
       - run: cargo build --release -p cabal-cli
-      # Exits non-zero on any illegal order, incomplete decision, replay divergence
-      # or strength-order regression; a panic aborts the process (panic = "abort").
+      # Exits non-zero on any illegal order, incomplete decision, void support or
+      # convoy, order refused by the validator, replay divergence or strength-order
+      # regression; a panic aborts the process (panic = "abort").
       - name: Play the arena
         run: >
           ./target/release/cabal arena

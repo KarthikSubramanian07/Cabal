@@ -210,7 +210,7 @@ A Claude agent (`@cabal/agents`) is just another client. It receives the same st
 - `pnpm deploy:server` builds the engine and runs `wrangler deploy` for `apps/server`. Durable Object migrations are declared in `wrangler.jsonc`.
 - `pnpm deploy:all` does both (a bare `pnpm deploy` is a built-in pnpm command, not this script). Run it from an up to date `main` after CI is green.
 - CI (`.github/workflows/ci.yml`): Rust fmt, clippy, docs, tests and the DATC report; an adjudication benchmark gate; the wasm build with a gzip size budget; Node typecheck, lint, unit and workerd tests; Playwright; dependency and workflow audits; and a deploy dry run that bundles `cabal-server` with `wrangler deploy --dry-run` (no credentials) under a gzip size budget. The full deploy runbook is in [CONTRIBUTING.md](../CONTRIBUTING.md#deploying) and the decision in [ADR 0008](adr/0008-manual-wrangler-deploys.md).
-- Nightly (`stress.yml`): fuzzing, property tests with a larger case budget, and a bot arena: 300 seeded games between the three levels of the heuristic bot (`cabal arena`), failing on any illegal order, incomplete decision, panic, replay divergence or strength-order regression, with the summary and every saved game uploaded as an artifact. No model is called and no secret is needed.
+- Nightly (`stress.yml`): fuzzing, property tests with a larger case budget, and a bot arena: 300 seeded games between the three levels of the heuristic bot (`cabal arena`), failing on any illegal order, incomplete decision, self-contradicting order (a void support or convoy), panic, replay divergence or strength-order regression, with the summary and every saved game uploaded as an artifact. No model is called and no secret is needed.
 
 ## 10. Security and fairness
 
