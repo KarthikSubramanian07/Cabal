@@ -5,7 +5,7 @@
  * game format.
  */
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Game, type PhaseOutcome, type State, engineReady } from "../engine.js";
+import { Game, type OrderVerdict, type PhaseOutcome, type State, engineReady } from "../engine.js";
 import { type Board, loadBoard } from "../map/boardData.js";
 import { type OrderBook, eraseOrder, flatten, keepLegal, waiveBuild, writeOrder } from "./book.js";
 import type { Piece } from "./compose.js";
@@ -82,6 +82,8 @@ export interface Sandbox {
   openSaved: (json: string) => OpenedGame;
   /** Remember which power is open, for the autosave. */
   noteActive: (power: string) => void;
+  /** The engine's verdict on one order typed for `power` this phase: canonical text, legal, and why not. */
+  judge: (power: string, text: string) => OrderVerdict;
 }
 
 export type SandboxLoad =
@@ -308,6 +310,15 @@ export function useSandbox(): SandboxLoad {
     };
   }, []);
 
+  const judge = useCallback(
+    (power: string, text: string): OrderVerdict => {
+      void version;
+      if (!game) return { input: text, canonical: null, legal: false, code: "unparseable", reason: "The board is not ready.", unit: null };
+      return game.validateOrders(power, [text])[0]!;
+    },
+    [game, version],
+  );
+
   const dismissResumed = useCallback(() => setResumed(null), []);
   const noteActive = useCallback((power: string) => setActive(power), []);
 
@@ -342,6 +353,7 @@ export function useSandbox(): SandboxLoad {
       exportSaved,
       openSaved,
       noteActive,
+      judge,
     },
   };
 }
