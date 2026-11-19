@@ -599,26 +599,30 @@ export function Board({
   const r = Math.round(unitRadius(scale) * 4) / 4;
   const size = Math.round(labelSize(scale) * 4) / 4;
 
+  /** The phase that has finished playing: the territory is then tinted as the phase leaves it. */
+  const [settledKey, setSettledKey] = useState<string | null>(null);
+  const tint = resolution && settledKey === resolution.key ? resolution.after : state;
+
   const control = useMemo(() => {
     const owner: Record<string, string> = {};
-    for (const [power, units] of Object.entries(state.units)) {
+    for (const [power, units] of Object.entries(tint.units)) {
       for (const u of units) {
         if (u.startsWith("*")) continue;
         const ref = parseUnit(u);
         if (ref) owner[ref.province] = power;
       }
     }
-    for (const [power, centers] of Object.entries(state.centers)) {
+    for (const [power, centers] of Object.entries(tint.centers)) {
       for (const c of centers) owner[c] = power;
     }
     return owner;
-  }, [state]);
+  }, [tint]);
 
   const centerOwner = useMemo(() => {
     const owner: Record<string, string> = {};
-    for (const [power, centers] of Object.entries(state.centers)) for (const c of centers) owner[c] = power;
+    for (const [power, centers] of Object.entries(tint.centers)) for (const c of centers) owner[c] = power;
     return owner;
-  }, [state]);
+  }, [tint]);
 
 
   // Every order's shape, worked out from the set (a support aims at the move it backs).
@@ -745,6 +749,7 @@ export function Board({
       silence();
       release();
       setAnimating(false);
+      setSettledKey(key);
       settled.current?.(key);
     };
     // Settled once every animation on the layer has run out, whatever the speed did meanwhile
@@ -783,6 +788,7 @@ export function Board({
         silence = sound ? deck.schedule(cues, { rate: next, from: base }) : () => {};
       },
     };
+    setSettledKey(null);
     setAnimating(plan.total > 0);
     return () => {
       done = true;
