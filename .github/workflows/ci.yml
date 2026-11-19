@@ -126,6 +126,70 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  deploy-dry-run:
+    # Bundles the Worker exactly as `pnpm deploy:server` would, without credentials and without
+    # uploading anything (ADR 0008). Catches wrangler config, module rule and bundling errors on
+    # the pull request instead of during a production deploy, and gates the upload size.
+    name: "Deploy dry run: cabal-server bundle and size budget"
+    runs-on: ubuntu-latest
+    needs: wasm
+    env:
+      WORKER_GZIP_BUDGET_BYTES: 655360
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: engine-pkg
+          path: packages/engine/pkg
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # `exec` skips the package's predeploy hook, so copy the wasm into the worker tree first.
+      - run: pnpm --filter @cabal/server run engine:sync
+      - name: wrangler deploy --dry-run
+        run: |
+          set -o pipefail
+          pnpm --filter @cabal/server exec wrangler deploy --dry-run --outdir "$RUNNER_TEMP/cabal-server-dry-run" 2>&1 | tee "$RUNNER_TEMP/dry-run.log"
+      - name: Bundle size gate
+        run: |
+          shopt -s nullglob
+          files=("$RUNNER_TEMP/cabal-server-dry-run"/*.js "$RUNNER_TEMP/cabal-server-dry-run"/*.wasm)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::the dry run produced no bundle in $RUNNER_TEMP/cabal-server-dry-run"
+            exit 1
+          fi
+          raw=0
+          gz=0
+          {
+            echo "### cabal-server bundle"
+            echo
+            echo "| File | Raw bytes | Gzip bytes |"
+            echo "|---|---:|---:|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for f in "${files[@]}"; do
+            r=$(wc -c < "$f" | tr -d ' ')
+            g=$(gzip -c "$f" | wc -c | tr -d ' ')
+            raw=$((raw + r))
+            gz=$((gz + g))
+            echo "| $(basename "$f") | $r | $g |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          wrangler_line=$(grep -m1 'Total Upload' "$RUNNER_TEMP/dry-run.log" || echo "not reported")
+          {
+            echo "| **total** | **$raw** | **$gz** |"
+            echo
+            echo "Budget: $WORKER_GZIP_BUDGET_BYTES gzip bytes. Wrangler: $wrangler_line"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "worker bundle: $raw bytes raw, $gz bytes gzip (budget $WORKER_GZIP_BUDGET_BYTES)"
+          echo "wrangler: $wrangler_line"
+          if [ "$gz" -gt "$WORKER_GZIP_BUDGET_BYTES" ]; then
+            echo "::error::cabal-server bundle is $gz gzip bytes, over the $WORKER_GZIP_BUDGET_BYTES byte budget"
+            exit 1
+          fi
+
   e2e:
     name: End-to-end (Playwright)
     runs-on: ubuntu-latest
