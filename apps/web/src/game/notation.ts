@@ -26,6 +26,27 @@ export function describePhase(phase: string): { season: string; year: string; ki
   };
 }
 
+/** The button that resolves the current phase: `Adjudicate Spring 1901`, `Resolve Fall 1901 retreats`. */
+export function resolveLabel(phase: string): string {
+  const { season, year } = describePhase(phase);
+  switch (phaseKind(phase)) {
+    case "R":
+      return `Resolve ${season} ${year} retreats`;
+    case "A":
+      return `Resolve ${season} ${year} builds`;
+    default:
+      return `Adjudicate ${season} ${year}`;
+  }
+}
+
+/** The button that leaves the results for the next phase: `Continue to Fall 1901 retreats`. */
+export function continueLabel(next: string): string {
+  if (next === "COMPLETED") return "See the final position";
+  const { season, year } = describePhase(next);
+  const what = phaseKind(next) === "R" ? " retreats" : phaseKind(next) === "A" ? " builds" : "";
+  return `Continue to ${season} ${year}${what}`;
+}
+
 export function titleCase(power: string): string {
   return power.charAt(0) + power.slice(1).toLowerCase();
 }
