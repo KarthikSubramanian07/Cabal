@@ -123,6 +123,9 @@ export function LiveTable({ room, view }: { room: Room; view: RoomView }) {
   return <Floor room={room} view={view} me={me} kind={kind} running={running} over={over} canOrder={canOrder} online={online} desk={load.desk} />;
 }
 
+/** Games this visit has readied in; the room can be drawn afresh as a phase resolves. */
+const readiedThisVisit = new Set<string>();
+
 function Floor({
   room,
   view,
@@ -156,7 +159,7 @@ function Floor({
   const [announcement, setAnnouncement] = useState("");
   const [saved, setSaved] = useState<PhaseRecord[]>([]);
   /** This seat has readied at least once this visit: the moment notifications are worth offering. */
-  const [readied, setReadied] = useState(false);
+  const [readied, setReadied] = useState(() => readiedThisVisit.has(view.gameId));
   const boardWrap = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<HTMLInputElement>(null);
@@ -476,7 +479,10 @@ function Floor({
       return;
     }
     const sent = room.setReady(view.phase, !isReady);
-    if (sent && !isReady) setReadied(true);
+    if (sent && !isReady) {
+      readiedThisVisit.add(view.gameId);
+      setReadied(true);
+    }
     if (!sent) announce("Not connected. Try again when the table is back.");
     else announce(isReady ? "You are no longer ready." : "Ready. The phase resolves when every seat is.");
   };
@@ -730,7 +736,7 @@ function Floor({
             </div>
 
             <div role="tabpanel" id="panel-orders" aria-labelledby="tab-orders" hidden={tab !== "orders"} className="live-panel">
-              {readied && !record ? <NotifyOffer moment="ready" /> : null}
+              {readied ? <NotifyOffer moment="ready" /> : null}
               {record ? (
                 <Results record={record} names={desk.board.provinces} />
               ) : me && canOrder ? (
