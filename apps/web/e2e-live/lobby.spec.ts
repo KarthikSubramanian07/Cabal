@@ -4,6 +4,7 @@
  */
 import AxeBuilder from "@axe-core/playwright";
 import { type Browser, type Page, expect, test } from "@playwright/test";
+import { chooseHandle, uniqueHandle } from "./room.js";
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
@@ -37,13 +38,14 @@ test.describe("the lobby, live", () => {
     await page.getByRole("button", { name: "Set a new table" }).click();
     const dialog = page.getByRole("dialog", { name: "Set a new table" });
     await scan(page, "create dialog");
-    await dialog.getByLabel("Your name at the table").fill("Ada");
     await dialog.getByRole("radio", { name: /^Live/ }).check();
     await dialog.getByRole("radio", { name: /^Draw size/ }).check();
     await dialog.getByLabel("Rules").selectOption("1982");
     await dialog.getByRole("checkbox", { name: /Include all survivors/ }).uncheck();
     await dialog.getByRole("radio", { name: /^List it in the games room/ }).check();
     await dialog.getByRole("button", { name: "Set the table" }).click();
+    const ada = uniqueHandle("ada");
+    await chooseHandle(page, ada);
 
     await expect(page).toHaveURL(/\/g\/[A-Z2-9]{6}$/);
     const code = codeOf(page);
@@ -66,7 +68,7 @@ test.describe("the lobby, live", () => {
     const guest = await stranger(browser, page);
     await guest.goto("/games");
     const row = guest.getByRole("row", { name: new RegExp(`${code.slice(0, 3)} ${code.slice(3)}`) });
-    await expect(row).toContainText("Ada");
+    await expect(row).toContainText(ada);
     await expect(row).toContainText("1 of 7 seated, 6 open");
     await row.getByRole("link", { name: /Sit down/ }).click();
     await expect(guest).toHaveURL(new RegExp(`/g/${code}$`));
@@ -78,22 +80,23 @@ test.describe("the lobby, live", () => {
     const choice = seats.getByRole("button", { name: new RegExp(`^${power}`, "i") });
     await choice.click();
     await expect(choice).toHaveAttribute("aria-pressed", "true");
-    await guest.getByLabel("Your name at the table").fill("Bea");
     await scan(guest, "lobby, picking a seat");
     await guest.getByRole("button", { name: new RegExp(`^Sit as ${power}$`, "i") }).click();
+    const bea = uniqueHandle("bea");
+    await chooseHandle(guest, bea);
     await expect(guest.getByText(new RegExp(`You sit as ${power}`, "i"))).toBeVisible();
     expect((await storedSeat(guest, code))?.power).toBe(power.toUpperCase());
 
     // The host sees the new player without reloading.
     await expect(page.getByText("Waiting for players. 2 of 7 seated.")).toBeVisible();
-    await expect(page.getByRole("list", { name: "Seats" })).toContainText("Bea");
+    await expect(page.getByRole("list", { name: "Seats" })).toContainText(bea);
 
     // They talk at the table.
     await guest.getByLabel("Message the table").fill("Evening. I come in peace, mostly.");
     await guest.getByLabel("Message the table").press("Enter");
     const hostLog = page.getByRole("log", { name: "Table talk" });
     await expect(hostLog).toContainText("I come in peace, mostly.");
-    await expect(hostLog).toContainText("Bea");
+    await expect(hostLog).toContainText(bea);
     await page.getByLabel("Message the table").fill("Welcome, Bea.");
     await page.getByRole("button", { name: "Send" }).click();
     await expect(guest.getByRole("log", { name: "Table talk" })).toContainText("Welcome, Bea.");
@@ -156,12 +159,11 @@ test.describe("the lobby, live", () => {
     await expect(page.getByText("Take a seat to talk to the table.")).toBeVisible();
     await expect(page.getByLabel("Message the table")).toHaveCount(0);
 
-    // Taking any seat, with the name left blank first.
-    await page.getByLabel("Your name at the table").fill("");
+    // Taking any seat; the first sit-down asks for a handle, and the server can pick one.
     await page.getByRole("button", { name: "Take any open seat" }).click();
-    await expect(page.getByRole("alert")).toContainText("Write the name the table will know you by.");
-    await page.getByLabel("Your name at the table").fill("Dov");
-    await page.getByRole("button", { name: "Take any open seat" }).click();
+    const handleDialog = page.getByRole("dialog", { name: "Choose your handle" });
+    await handleDialog.getByRole("button", { name: "Pick one for me" }).click();
+    await expect(handleDialog).toBeHidden();
     await expect(page.getByText(/You sit as \w+/)).toBeVisible();
     const seat = await storedSeat(page, code);
     expect(seat?.token).toBeTruthy();
