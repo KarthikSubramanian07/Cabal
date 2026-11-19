@@ -155,8 +155,35 @@ function edge(): Plugin {
   };
 }
 
+/**
+ * `vite dev` has no `dist`, so `/about`, `/contact` and `/privacy` would fall through to the
+ * app shell and its not-found page. Render them on request from the same Markdown and the
+ * same template the build uses, styled by the stylesheet's source.
+ */
+function trustPagesInDev(): Plugin {
+  return {
+    name: "cabal:trust-pages-dev",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const path = (req.url ?? "").split("?")[0]!.replace(/(.)\/$/, "$1");
+        if (req.method !== "GET" || !/^\/(?:about|contact|privacy|404\.html)$/.test(path)) return next();
+        void (async () => {
+          const script = pathToFileURL(resolve(server.config.root, "scripts/emit-agent-site.mjs")).href;
+          const site = (await import(/* @vite-ignore */ script)) as { renderTrustPage: (route: string, stylesheet: string) => string | null };
+          const html = site.renderTrustPage(path, "/src/styles/index.css");
+          if (html === null) return next();
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "text/html; charset=utf-8");
+          res.end(html);
+        })().catch(next);
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), firstLoad(), edge()],
+  plugins: [react(), firstLoad(), edge(), trustPagesInDev()],
   build: { target: "esnext" },
   server: { port: 5173, strictPort: true, proxy: api },
   preview: { proxy: api },

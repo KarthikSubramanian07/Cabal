@@ -5,7 +5,7 @@
  */
 import { mkdirSync, readFileSync, writeFileSync, copyFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -95,11 +95,12 @@ function wordmarkSvg(height = 22) {
 }
 
 /**
- * A static page in the app's frame: the same ink top bar and wordmark, the same footer.
- * There is no script here, so on a phone the links sit in a row under the bar instead of
- * behind a menu button.
+ * A static page in the app's frame: the same ink top bar, wordmark and links as
+ * src/app/Shell.tsx, and the same footer. There is no script here, so How to play is a link
+ * to the board (which opens the dialog) and on a phone the links sit in a row under the bar
+ * instead of behind a menu button.
  */
-function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHref, robots }) {
+function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHref, robots, stylesheet }) {
   const ld = jsonLd ? `<script type="application/ld+json">\n${JSON.stringify(jsonLd, null, 2)}\n    </script>` : "";
   const mdHref =
     markdownHref ??
@@ -118,7 +119,7 @@ function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHr
     <meta name="theme-color" content="#121110" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="stylesheet" href="${appStylesheet()}" />
+    <link rel="stylesheet" href="${stylesheet ?? appStylesheet()}" />
     ${ld}
   </head>
   <body>
@@ -128,9 +129,9 @@ function pageShell({ title, description, canonical, bodyHtml, jsonLd, markdownHr
         <a class="brand" href="/" aria-label="Cabal home">${wordmarkSvg()}</a>
         <nav aria-label="Site">
           <a href="/sandbox">Sandbox</a>
+          <a href="/sandbox#how-to-play">How to play</a>
           <a href="/about"${current("/about")}>About</a>
           <a href="/contact"${current("/contact")}>Contact</a>
-          <a href="/privacy"${current("/privacy")}>Privacy</a>
           <a class="nav-end" href="https://github.com/KarthikSubramanian07/Cabal">GitHub</a>
         </nav>
       </header>
@@ -139,6 +140,8 @@ ${bodyHtml}
       </main>
       <footer class="footer">
         <span>Diplomacy with receipts.</span>
+        <span>Adjudicated in your browser by a Rust engine that passes all 171 DATC cases.</span>
+        <span>Board drawn from Natural Earth.</span>
         <span class="footer-links">
           <a href="/about">About</a>
           <a href="/contact">Contact</a>
@@ -155,6 +158,40 @@ ${bodyHtml}
 
 function ensureDir(path) {
   mkdirSync(path, { recursive: true });
+}
+
+/** The authored pages: route, Markdown source, title and description. */
+const PAGES = [
+  ["/", "home.md", "Cabal — Diplomacy browser game with receipts", "Play classic Diplomacy in the browser with explainable adjudication."],
+  ["/about", "about.md", "About Cabal — Diplomacy with receipts", "Cabal is an open-source Diplomacy browser game with a DATC-complete adjudicator."],
+  ["/contact", "contact.md", "Contact Cabal", "Email and GitHub contact paths for the Cabal Diplomacy project."],
+  ["/privacy", "privacy.md", "Privacy — Cabal", "How the Cabal Diplomacy sandbox handles information in your browser."],
+];
+
+function notFoundPage(stylesheet) {
+  return pageShell({
+    title: "Not found — Cabal",
+    description: "That path does not exist on Cabal.",
+    canonical: `${SITE}/404`,
+    bodyHtml: mdToHtmlBody(md("404.md")),
+    jsonLd: null,
+    markdownHref: "/404.md",
+    robots: "noindex",
+    stylesheet,
+  });
+}
+
+/**
+ * One trust page as HTML (`/about`, `/contact`, `/privacy`, or `/404.html`), or null for any
+ * other path. The build writes these into `dist`; `vite dev` has no `dist`, so it calls this
+ * with the stylesheet's source path and serves the same pages (see vite.config.ts).
+ */
+export function renderTrustPage(route, stylesheet) {
+  if (route === "/404.html") return notFoundPage(stylesheet);
+  const page = PAGES.find(([path]) => path === route && path !== "/");
+  if (!page) return null;
+  const [path, file, title, description] = page;
+  return pageShell({ title, description, canonical: `${SITE}${path}`, bodyHtml: mdToHtmlBody(md(file)), jsonLd: null, stylesheet });
 }
 
 function writePage(route, markdownFile, title, description) {
@@ -290,18 +327,8 @@ function assertMinPlainText(label, text, min) {
 }
 
 function write404() {
-  const markdown = md("404.md");
-  writeFileSync(join(dist, "404.md"), markdown);
-  const html = pageShell({
-    title: "Not found — Cabal",
-    description: "That path does not exist on Cabal.",
-    canonical: `${SITE}/404`,
-    bodyHtml: mdToHtmlBody(markdown),
-    jsonLd: null,
-    markdownHref: "/404.md",
-    robots: "noindex",
-  });
-  writeFileSync(join(dist, "404.html"), html);
+  writeFileSync(join(dist, "404.md"), md("404.md"));
+  writeFileSync(join(dist, "404.html"), notFoundPage());
 }
 
 function writeLlms() {
@@ -367,25 +394,7 @@ async function main() {
     throw new Error("dist/index.html missing; run vite build first");
   }
 
-  writePage("/", "home.md", "Cabal — Diplomacy browser game with receipts", "Play classic Diplomacy in the browser with explainable adjudication.");
-  writePage(
-    "/about",
-    "about.md",
-    "About Cabal — Diplomacy with receipts",
-    "Cabal is an open-source Diplomacy browser game with a DATC-complete adjudicator.",
-  );
-  writePage(
-    "/contact",
-    "contact.md",
-    "Contact Cabal",
-    "Email and GitHub contact paths for the Cabal Diplomacy project.",
-  );
-  writePage(
-    "/privacy",
-    "privacy.md",
-    "Privacy — Cabal",
-    "How the Cabal Diplomacy sandbox handles information in your browser.",
-  );
+  for (const [route, file, title, description] of PAGES) writePage(route, file, title, description);
   write404();
   writeLlms();
   writeSitemap();
@@ -394,7 +403,10 @@ async function main() {
   console.log("emit-agent-site: wrote trust pages, markdown siblings, llms.txt, _worker.js");
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Run as a script (the build); imported for `renderTrustPage` by the dev server.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

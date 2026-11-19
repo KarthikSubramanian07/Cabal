@@ -20,6 +20,13 @@ export function Shell({ children }: { children: ReactNode }) {
   const route = matchRoute(path);
   const header = useRef<HTMLElement>(null);
 
+  // The static pages have no script, so their How to play link comes here with a hash.
+  useEffect(() => {
+    if (window.location.hash !== "#how-to-play") return;
+    setHelp(true);
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }, []);
+
   // The phone menu closes when the route changes, on Escape and on a tap outside it.
   useEffect(() => setMenu(false), [path]);
   useEffect(() => {
