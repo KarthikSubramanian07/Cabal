@@ -207,6 +207,27 @@ fn bench_legal_shared(c: &mut Criterion) {
     group.bench_function("legal options, all powers, structured", |b| {
         b.iter(|| black_box(movement_options(map, black_box(&pos))))
     });
+    // the cost of turning those orders into text, one at a time and in a batch
+    let all = legal_movement_all(map, &pos);
+    group.bench_function("order text, every legal order, one by one", |b| {
+        b.iter(|| {
+            for orders in all.values() {
+                for o in orders {
+                    black_box(cabal_engine::text::order_text(map, &pos, o));
+                }
+            }
+        })
+    });
+    group.bench_function("order text, every legal order, batch", |b| {
+        b.iter(|| {
+            let texts = cabal_engine::text::OrderTexts::new(map, &pos);
+            for orders in all.values() {
+                for o in orders {
+                    black_box(texts.order(o));
+                }
+            }
+        })
+    });
     group.bench_function("legal orders, one unit", |b| {
         let unit = pos.units[0].province();
         b.iter(|| black_box(legal_movement_for(map, black_box(&pos), unit)))

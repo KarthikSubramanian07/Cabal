@@ -496,6 +496,38 @@ mod tests {
         }
     }
 
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(
+            std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
+        ))]
+
+        /// The batch formatter writes exactly what `order_text` writes.
+        #[test]
+        fn prop_batch_order_text_matches_order_text(pos in arb_crowded_position()) {
+            let map = Map::standard();
+            let texts = crate::text::OrderTexts::new(map, &pos);
+            for orders in legal_movement_all(map, &pos).values() {
+                for o in orders {
+                    prop_assert_eq!(texts.order(o), crate::text::order_text(map, &pos, o));
+                }
+            }
+            // orders that name empty provinces and coasts, legal or not
+            for unit in map.province_ids().step_by(7) {
+                for dest in map.province_ids().step_by(5) {
+                    for command in [
+                        Command::Move { dest, coast: Some(crate::geo::Coast::South), via_convoy: true },
+                        Command::SupportHold { target: dest },
+                        Command::SupportMove { target: dest, dest: unit, coast: Some(crate::geo::Coast::North) },
+                        Command::Convoy { army: dest, dest: unit },
+                    ] {
+                        let o = Order { power: Power(0), unit, command };
+                        prop_assert_eq!(texts.order(&o), crate::text::order_text(map, &pos, &o));
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn shared_search_agrees_at_the_opening() {
         let map = Map::standard();

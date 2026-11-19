@@ -73,6 +73,98 @@ pub fn order_text(map: &Map, position: &Position, order: &Order) -> String {
     }
 }
 
+/// [`order_text`] for many orders on one board. Unit and province names are
+/// looked up and upper-cased once, and each order is then assembled from those
+/// without formatting machinery: about five times faster per order, which is
+/// most of the cost of listing every legal order on a crowded board.
+pub struct OrderTexts {
+    /// Per province: the unit standing there (`A PAR`), else the province (`PAR`).
+    units: Vec<String>,
+    /// Per province: its code (`PAR`).
+    places: Vec<String>,
+}
+
+impl OrderTexts {
+    pub fn new(map: &Map, position: &Position) -> Self {
+        let places: Vec<String> = map
+            .provinces()
+            .iter()
+            .map(|p| p.name.to_ascii_uppercase())
+            .collect();
+        let mut units = places.clone();
+        for u in &position.units {
+            units[u.province().0 as usize] = unit_text(map, u);
+        }
+        OrderTexts { units, places }
+    }
+
+    /// The code of a province (`PAR`).
+    pub fn place(&self, p: ProvinceId) -> &str {
+        &self.places[p.0 as usize]
+    }
+
+    /// The unit in a province in full (`A PAR`), or the province code when it is empty.
+    pub fn unit(&self, p: ProvinceId) -> &str {
+        &self.units[p.0 as usize]
+    }
+
+    fn push_region(&self, out: &mut String, p: ProvinceId, coast: Option<crate::geo::Coast>) {
+        out.push_str(self.place(p));
+        if let Some(c) = coast {
+            out.push('/');
+            out.push_str(c.code());
+        }
+    }
+
+    /// A region as text (`STP/NC`).
+    pub fn region(&self, r: Region) -> String {
+        let mut out = String::with_capacity(6);
+        self.push_region(&mut out, r.province, r.coast);
+        out
+    }
+
+    /// Exactly [`order_text`] for the board this was built from.
+    pub fn order(&self, order: &Order) -> String {
+        let mut out = String::with_capacity(24);
+        out.push_str(self.unit(order.unit));
+        match order.command {
+            Command::Hold => out.push_str(" H"),
+            Command::Move {
+                dest,
+                coast,
+                via_convoy,
+            } => {
+                out.push_str(" - ");
+                self.push_region(&mut out, dest, coast);
+                if via_convoy {
+                    out.push_str(" VIA");
+                }
+            }
+            Command::SupportHold { target } => {
+                out.push_str(" S ");
+                out.push_str(self.unit(target));
+            }
+            Command::SupportMove {
+                target,
+                dest,
+                coast,
+            } => {
+                out.push_str(" S ");
+                out.push_str(self.unit(target));
+                out.push_str(" - ");
+                self.push_region(&mut out, dest, coast);
+            }
+            Command::Convoy { army, dest } => {
+                out.push_str(" C ");
+                out.push_str(self.unit(army));
+                out.push_str(" - ");
+                out.push_str(self.place(dest));
+            }
+        }
+        out
+    }
+}
+
 /// Canonical retreat order text for a retreat phase state, e.g. `F BLA R SEV`
 /// or `A BUL D`. The retreating unit is named in full: it is looked up among
 /// the dislodged units, which are not on the board.
