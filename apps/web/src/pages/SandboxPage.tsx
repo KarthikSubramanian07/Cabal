@@ -34,7 +34,7 @@ import {
   titleCase,
 } from "../game/notation.js";
 import { ImportError } from "../game/persist.js";
-import { type OpenedGame, type Sandbox, useSandbox } from "../game/useSandbox.js";
+import { type OpenedGame, type Sandbox, powerWithOrders, useSandbox } from "../game/useSandbox.js";
 import { Board, type DrawnOrder } from "../map/Board.jsx";
 
 interface Picker {
@@ -229,6 +229,19 @@ function Table({ sb }: { sb: Sandbox }) {
   }, [sb, cancel, announce, setActive]);
 
   const touched = sb.history.length > 0 || Object.values(sb.orders).some((o) => Object.keys(o).length > 0);
+
+  // A new phase can leave the open power with nothing to do: only Austria retreats, only
+  // England builds. Open the first power that has something to order, so the choices under
+  // the map and the sheet's note are never empty while orders are owed elsewhere.
+  useEffect(() => {
+    if (sb.status !== "active") return;
+    const next = powerWithOrders(sb.powers, active);
+    if (next === active) return;
+    setActive(next);
+    setRefocus((n) => n + 1);
+    // Only when the phase changes (or a game is loaded), never while orders are being written.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sb.phase, sb.history.length, sb.status]);
 
   // Say where the player is when they step through the phase history or back to the live phase.
   const lastViewing = useRef<number | null>(null);

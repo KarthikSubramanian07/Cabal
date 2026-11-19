@@ -39,6 +39,12 @@ export interface PowerSummary {
   allowance: number;
 }
 
+/** The power to open: the one already open if it has orders to give, else the first that has. */
+export function powerWithOrders(powers: readonly { power: string; due: number }[], open: string): string {
+  if (powers.some((p) => p.power === open && p.due > 0)) return open;
+  return powers.find((p) => p.due > 0)?.power ?? open;
+}
+
 export interface Sandbox {
   board: Board;
   phase: string;
