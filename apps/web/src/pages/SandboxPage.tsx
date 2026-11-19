@@ -1,4 +1,4 @@
-import { type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmDialog } from "../app/ConfirmDialog.jsx";
 import { PageLoading } from "../app/PageLoading.jsx";
 import { StatusPage } from "../app/StatusPage.jsx";
@@ -9,6 +9,8 @@ import {
   type Draft,
   type Mode,
   type Step,
+  canGoByConvoy,
+  carryingFleets,
   click,
   disbandSelected,
   holdSelected,
@@ -35,7 +37,7 @@ import {
 } from "../game/notation.js";
 import { ImportError } from "../game/persist.js";
 import { type OpenedGame, type Sandbox, powerWithOrders, useSandbox } from "../game/useSandbox.js";
-import { Board, type DrawnOrder } from "../map/Board.jsx";
+import { Board, type DrawnOrder, POWER_COLOR } from "../map/Board.jsx";
 
 interface Picker {
   x: number;
@@ -90,6 +92,8 @@ function Table({ sb }: { sb: Sandbox }) {
   const [active, setActiveState] = useState(sb.resumedActive ?? "FRANCE");
   const [message, setMessage] = useState<string | null>(null);
   const [picker, setPicker] = useState<Picker | null>(null);
+  /** The army whose move by convoy was just written: its carrying fleets are offered under the map. */
+  const [route, setRoute] = useState<{ power: string; unit: string } | null>(null);
   const [viewing, setViewing] = useState<number | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [sheet, setSheet] = useState(false);
@@ -151,6 +155,10 @@ function Table({ sb }: { sb: Sandbox }) {
         sb.setOrder(effect.power, effect.key, effect.text);
         setActive(effect.power);
         setMessage(null);
+        // A move by convoy goes nowhere without fleets: offer the ones that could carry it.
+        // Ordering one of those fleets keeps the offer up, so a route of two fleets is two taps.
+        if (effect.text.endsWith(" VIA")) setRoute({ power: effect.power, unit: effect.key });
+        else if (!/ C A /.test(effect.text)) setRoute(null);
         announce(describeOrder(effect.text));
       } else if (effect.kind === "choose") {
         const rect = boardWrap.current?.getBoundingClientRect();
@@ -201,6 +209,7 @@ function Table({ sb }: { sb: Sandbox }) {
     setDraft(IDLE);
     setPicker(null);
     setMessage(null);
+    setRoute(null);
   }, []);
 
   const adjudicate = useCallback(() => {
@@ -291,6 +300,7 @@ function Table({ sb }: { sb: Sandbox }) {
       if (!shortcutsEnabled()) return;
       if (key === "s") return mode("support");
       if (key === "c") return mode("convoy");
+      if (key === "v") return mode("via-convoy");
       if (key === "m") return mode("move");
       if (key === "h") return apply(holdSelected(ctx, draft));
       if (key === "d") return apply(disbandSelected(ctx, draft));
@@ -333,7 +343,9 @@ function Table({ sb }: { sb: Sandbox }) {
     for (const text of legal) {
       const o = parseOrder(text);
       if (!o) continue;
-      if (draft.step === "unit" && (o.type === "move" || o.type === "retreat")) set.add(provinceOf(o.dest));
+      // With By convoy chosen, only where a fleet could land the army.
+      if (draft.step === "unit" && o.type === "move" && (!draft.via || o.via)) set.add(provinceOf(o.dest));
+      if (draft.step === "unit" && o.type === "retreat") set.add(provinceOf(o.dest));
       if (draft.step === "support") {
         if (!draft.target && (o.type === "support-move" || o.type === "support-hold")) set.add(o.target.province);
         if (draft.target && o.type === "support-move" && o.target.unit === draft.target) set.add(provinceOf(o.dest));
@@ -387,6 +399,11 @@ function Table({ sb }: { sb: Sandbox }) {
   const selectedProvince = draft.step === "idle" ? null : parseUnit(draft.unit)?.province ?? null;
   const activeSummary = sb.powers.find((p) => p.power === active);
   const orderableUnits = Object.keys(sb.legal[active] ?? {}).filter((u) => u !== "");
+  /** The selected army could be carried by sea, so By convoy is on offer. */
+  const convoyable = playing && draft.step === "unit" && canGoByConvoy(ctx, draft.power, draft.unit);
+  /** The move by convoy whose fleets are on offer, while it is still written that way. */
+  const routeOrder = playing && route && draft.step === "idle" ? sb.orders[route.power]?.[route.unit] : undefined;
+  const carriers = routeOrder?.endsWith(" VIA") ? carryingFleets(ctx, routeOrder) : [];
   const choices = playing ? choicesFor(ctx, draft, active, orderableUnits, targets, sb.board.provinces) : [];
   const choose = (code: string) => {
     if (!playing) return;
@@ -415,6 +432,9 @@ function Table({ sb }: { sb: Sandbox }) {
             ? "Click a dislodged unit, then where it retreats."
             : "Click a unit, then where it should go.";
       case "unit":
+        if (draft.via) {
+          return `${draft.unit} by convoy: click where the fleets should land it.`;
+        }
         return sb.kind === "R" ? (
           <>
             {draft.unit}: click an empty neighbour, or disband it<span className="keys-only"> (D)</span>.
@@ -422,7 +442,10 @@ function Table({ sb }: { sb: Sandbox }) {
         ) : (
           <>
             {draft.unit}: click a destination, or click it again to hold
-            <span className="keys-only">. Press S to support, C to convoy</span>.
+            <span className="keys-only">
+              . Press S to support, C to convoy{canGoByConvoy(ctx, draft.power, draft.unit) ? ", V to go by convoy" : ""}
+            </span>
+            .
           </>
         );
       case "support":
@@ -569,6 +592,7 @@ function Table({ sb }: { sb: Sandbox }) {
                     sb.setOrder(picker.power, picker.key, o);
                     setActive(picker.power);
                     setPicker(null);
+                    if (o.endsWith(" VIA")) setRoute({ power: picker.power, unit: picker.key });
                     moveFocus.current = true;
                     announce(describeOrder(o));
                   }}
@@ -601,6 +625,16 @@ function Table({ sb }: { sb: Sandbox }) {
                 >
                   Convoy <kbd>C</kbd>
                 </button>
+                {convoyable ? (
+                  <button
+                    type="button"
+                    className="tool"
+                    aria-pressed={draft.step === "unit" && Boolean(draft.via)}
+                    onClick={() => mode("via-convoy")}
+                  >
+                    By convoy <kbd>V</kbd>
+                  </button>
+                ) : null}
                 <button type="button" className="tool" onClick={() => apply(holdSelected(ctx, draft))}>
                   Hold <kbd>H</kbd>
                 </button>
@@ -620,6 +654,33 @@ function Table({ sb }: { sb: Sandbox }) {
               {hint}
             </p>
           </div>
+          {carriers.length > 0 && routeOrder ? (
+            <div className="route" role="group" aria-labelledby="route-title">
+              <p className="route-title" id="route-title">
+                <span className="route-stamp">Route</span> <code>{routeOrder}</code>{" "}
+                {carriers.some((c) => c.given) ? "carried by" : "needs a fleet:"}
+              </p>
+              <div className="route-fleets">
+                {carriers.map((c) => (
+                  <button
+                    key={c.unit}
+                    type="button"
+                    className="tool"
+                    aria-pressed={c.given}
+                    aria-label={c.given ? `${c.unit} carries it; remove the convoy order` : `Order ${c.order}`}
+                    onClick={() => {
+                      if (c.given) sb.removeOrder(c.power, c.unit);
+                      else sb.setOrder(c.power, c.unit, c.order);
+                      announce(c.given ? `${c.unit} no longer convoys.` : describeOrder(c.order));
+                    }}
+                  >
+                    <span className="swatch" style={{ "--power": POWER_COLOR[c.power] } as CSSProperties} aria-hidden />
+                    {c.unit}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           </div>
 
           {choices.length ? (
@@ -698,6 +759,7 @@ function Table({ sb }: { sb: Sandbox }) {
                     alternative={(text) => viaAlternative(ctx, active, text)}
                     onReplace={(key, text) => {
                       sb.setOrder(active, key, text);
+                      setRoute(text.endsWith(" VIA") ? { power: active, unit: key } : null);
                       announce(describeOrder(text));
                     }}
                   />
