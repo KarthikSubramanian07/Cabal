@@ -1,9 +1,11 @@
 //! Criterion benches: full-board adjudication, legal order enumeration (opening and a
 //! fleet-heavy midgame), a convoy paradox.
 
-use cabal_engine::adjudicate::movement::resolve_movement;
+use cabal_engine::adjudicate::movement::{explain_movement, resolve_movement};
 use cabal_engine::geo::Map;
-use cabal_engine::legal::legal_movement;
+use cabal_engine::legal::{
+    legal_movement, legal_movement_all, legal_movement_for, movement_options,
+};
 use cabal_engine::order::Order;
 use cabal_engine::parse::parse;
 use cabal_engine::rulebook::Rulebook;
@@ -179,8 +181,48 @@ fn bench_legal_midgame(c: &mut Criterion) {
     group.finish();
 }
 
+/// Start-up: the standard map from the tables generated at build time, against
+/// parsing and validating the JSON document as every start did before.
+fn bench_map(c: &mut Criterion) {
+    let json = include_str!("../data/maps/standard.json");
+    let mut group = c.benchmark_group("map");
+    group.bench_function("standard map from generated tables", |b| {
+        b.iter(|| black_box(Map::standard_uncached()))
+    });
+    group.bench_function("standard map parsed from JSON", |b| {
+        b.iter(|| black_box(Map::from_json(black_box(json)).unwrap()))
+    });
+    group.finish();
+}
+
+/// The whole board at once: one shared convoy search against one per power.
+fn bench_legal_shared(c: &mut Criterion) {
+    let map = Map::standard();
+    let pos = midgame_position(map);
+    let mut group = c.benchmark_group("midgame");
+    group.sample_size(10);
+    group.bench_function("legal orders, all powers, shared search", |b| {
+        b.iter(|| black_box(legal_movement_all(map, black_box(&pos))))
+    });
+    group.bench_function("legal options, all powers, structured", |b| {
+        b.iter(|| black_box(movement_options(map, black_box(&pos))))
+    });
+    group.bench_function("legal orders, one unit", |b| {
+        let unit = pos.units[0].province();
+        b.iter(|| black_box(legal_movement_for(map, black_box(&pos), unit)))
+    });
+    group.bench_function("explain spring 1901 (22 units)", |b| {
+        let opening = Position::initial(map);
+        let o = opening_orders(map);
+        b.iter(|| explain_movement(map, black_box(&opening), Rulebook::default(), black_box(&o)))
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
+    bench_map,
+    bench_legal_shared,
     bench_opening,
     bench_paradox,
     bench_legal,
