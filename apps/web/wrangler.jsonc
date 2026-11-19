@@ -4,7 +4,6 @@
   // With this file present it is the source of truth for the project's settings.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "playcabal",
-  "account_id": "e5e342f3ca2f33158f6f1dd40c039be0",
   "pages_build_output_dir": "./dist",
   "compatibility_date": "2026-08-20",
   // Same-origin API: `/api/*`, including the game WebSocket, goes to the game server.
