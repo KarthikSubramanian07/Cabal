@@ -3,7 +3,7 @@
 One Worker, two Durable Object classes and one Queue.
 
 - **`GameRoom`** (one per game) owns the seats, orders, press, pledges, votes, the phase clock, the replay and every WebSocket of its game. It adjudicates with the Rust engine compiled to WebAssembly, in process.
-- **`Registry`** (a single instance, `idFromName("global")`) is the global index of finished and abandoned games. Rooms hand their final summary to it over RPC.
+- **`Registry`** (a single instance, `idFromName("global")`) is the global index: finished and abandoned games, and the live listing of public games that are open or running. Nothing calls it directly. Rooms and the router go through the `GameIndex` port in `src/game-index.ts`, of which the Registry is the SQLite adapter, so moving the index to D1 is a second adapter and a binding.
 - **`cabal-agent-turns`** carries Claude turns for games that opt into Claude seats. The built-in bot never uses it.
 
 ## Lifecycle rules
@@ -26,7 +26,7 @@ One Worker, two Durable Object classes and one Queue.
 
 ## Cloudflare resources
 
-Everything is declared in `wrangler.jsonc` for the owner's account. Nothing needs a manual migration step: Durable Object classes are created by the `migrations` tags, and the Registry's SQL schema is applied by the object itself (`src/registry.ts`, numbered migrations).
+Everything is declared in `wrangler.jsonc` for the owner's account. Nothing needs a manual migration step: Durable Object classes are created by the `migrations` tags, and the Registry applies its own SQL schema from the numbered files in `migrations/` (plain SQL, valid for D1 as well). Add a file and a line in `src/registry.ts`; never edit a migration that has shipped.
 
 | Binding | Kind | Notes |
 |---|---|---|
@@ -35,18 +35,29 @@ Everything is declared in `wrangler.jsonc` for the owner's account. Nothing need
 | `AGENT_QUEUE` | Queue producer and consumer | `cabal-agent-turns`, dead-letter queue `cabal-agent-turns-dlq` |
 | `CREATE_LIMITER`, `JOIN_LIMITER`, `READ_LIMITER` | Rate limit | per client address |
 | `PRESS_LIMITER` | Rate limit | per game and seat |
+| `CF_VERSION_METADATA` | Worker version metadata | the build id `/health` reports when `BUILD_ID` is not set |
 
 Secrets and variables:
 
+- `BUILD_ID` (optional). Names the deployed build in `/health` and in error logs, for example `wrangler deploy --var BUILD_ID:$(git rev-parse --short HEAD)`. Without it the Worker version id is used.
 - `ANTHROPIC_API_KEY` (secret, optional). Without it every AI seat is played by the built-in bot, whatever a game asks for.
 - `CLAUDE_TURNS_PER_GAME` (optional, default 400). The hard cap on Claude turns (one seat, one phase) one game may take; the bot plays every turn after it.
 - `CLAUDE_USD_PER_GAME` (optional, default 5). The hard cap on what one game may spend on Claude. The worst-case price of a call is reserved before it is made and the real price settled from the usage the API reports, so the cap cannot be overdrawn; a call that never reports back is charged its whole reservation. `0` turns Claude seats off.
 
 Check a change to the config with `pnpm --filter @cabal/server exec wrangler deploy --dry-run`. Deploys are manual (`pnpm deploy:server`).
 
+## API, health and logs
+
+The wire protocol and every HTTP route are specified in [`docs/PROTOCOL.md`](../../docs/PROTOCOL.md), and a test in `@cabal/protocol` fails when that page and the schemas disagree. Clients should use `CabalSocket` and `createApi` from `@cabal/protocol/client`.
+
+- `GET /health` answers `{ ok, protocol, engine, build, registry: { reachable, schema }, time }`. It stays 200 when the index is down and says so in `registry`.
+- Every log line is one JSON object with an `event` field (`game_created`, `phase_adjudicated`, `agent_call`, `registry_handoff`, ...). Room events carry `gameId` and `phase`.
+- An exception anywhere in a request is caught in `src/index.ts`, logged as `unhandled_error` with a `requestId`, the route and the build, and answered with a JSON 500 that carries the same `requestId` and CORS headers.
+- Orders are judged against the board in one place, `src/validate.ts`, from the engine's own legal-order menu. `orders.ack` reports a verdict per order and only legal orders are put on file.
+
 ## Tests
 
-`pnpm --filter @cabal/server test` runs inside workerd against the real Worker, Durable Objects, alarms and queue. `test/lifecycle.test.ts` and `test/security.test.ts` are the regression suites for the lifecycle and security reviews of this server; `test/agents.test.ts` covers Claude seats with a scripted model, so no test calls the API.
+`pnpm --filter @cabal/server test` runs inside workerd against the real Worker, Durable Objects, alarms and queue. `test/lifecycle.test.ts` and `test/security.test.ts` are the regression suites for the lifecycle and security reviews of this server; `test/agents.test.ts` covers Claude seats with a scripted model, so no test calls the API. `test/wire.test.ts` and `test/http.test.ts` pin the contract a client is built against (numbered frames and resume, the welcome, press history, seals, votes, verdicts, listings, health). `test/fullgame.test.ts` plays a whole game through `@cabal/protocol/client`: two players on real WebSockets and five bot seats, from the lobby through an adjustment phase to an agreed draw, with one player dropping and resuming on the way.
 
 ## Socket load probe
 
