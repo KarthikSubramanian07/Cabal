@@ -55,6 +55,26 @@ part of `pnpm test:e2e` (`apps/web/e2e`):
 - The keyboard path: the choices under the map, the coast menu, focus after adjudicating, and
   the arrow keys stepping through results only when focus is on the board.
 
+## Motion, sound and explanations (2026-11-19)
+
+- A resolved phase plays on the board: pieces march, bounce, are knocked aside and are built.
+  It lasts one to three seconds, a **Skip** button stops it at its end state (WCAG 2.2.2), and
+  under `prefers-reduced-motion: reduce` nothing travels: marks appear and each moved piece
+  dissolves into its new place. The results are announced in the live region either way.
+- Order marks differ in shape as well as colour (WCAG 1.4.1): solid moves with a barbed head,
+  dashed supports with a round knot, dotted convoys with a square knot, rings for holds, a cross
+  for every failure. Highlighted units are ringed in brass (the order), dashed brass (helpers) or
+  ringed with sights (against it).
+- Sound is off until the player turns it on with the Sound button over the map (its state is
+  `aria-pressed`); it carries no information that is not also shown and announced.
+- "Why?" on a failed receipt is a disclosure button (`aria-expanded`, `aria-controls`) that opens
+  the explanation inline, as a named region, not a dialog. Strengths are written as numbers as
+  well as tally strokes.
+- The replay scrubber is a native range input; its spoken value names the phase and what
+  happened in it ("Spring 1901 movement results: 1 standoff").
+- Automated: `e2e/feel.spec.ts` runs an axe scan with the explanation open, and checks Skip,
+  reduced motion, the disclosure state and the scrubber's spoken value on desktop and phone.
+
 ## Manual pass (2026-11-10)
 
 - axe-core 4.14 with the WCAG 2.0, 2.1 and 2.2 A and AA rules, in headless Chrome at 1440x900,
