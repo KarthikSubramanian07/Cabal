@@ -8,7 +8,7 @@ use crate::adjudicate::retreat::{RetreatResult, resolve_retreat};
 use std::collections::BTreeMap;
 
 use crate::geo::{Map, Power, SupplyCenter};
-use crate::json::{MilaMessage, MilaPhase, SavedPledge};
+use crate::json::{MilaMessage, MilaPhase, SavedPledge, SavedRejection};
 use crate::order::{AdjustOrder, AnyOrder, Order, RetreatOrder};
 use crate::rulebook::Rulebook;
 use crate::state::{GameState, Phase, PhaseKind, Season};
@@ -67,6 +67,10 @@ pub struct Game {
     pub press: BTreeMap<String, Vec<MilaMessage>>,
     /// Pledges made during the game, with their receipts once issued.
     pub pledges: Vec<SavedPledge>,
+    /// Orders a host set aside before adjudication, keyed by the phase they
+    /// were sent for (`S1901M`). They never reach the resolver; they are kept
+    /// so a saved game shows everything that was asked for.
+    pub rejected: BTreeMap<String, Vec<SavedRejection>>,
     /// The powers sharing a draw. Empty unless `status` is [`Status::Draw`].
     pub draw_members: Vec<Power>,
     /// Version of the engine that started the record.
@@ -85,6 +89,7 @@ impl Game {
             archive: Vec::new(),
             press: BTreeMap::new(),
             pledges: Vec::new(),
+            rejected: BTreeMap::new(),
             draw_members: Vec::new(),
             recorded_by: crate::VERSION.to_string(),
         }
@@ -102,6 +107,7 @@ impl Game {
             archive: Vec::new(),
             press: BTreeMap::new(),
             pledges: Vec::new(),
+            rejected: BTreeMap::new(),
             draw_members: Vec::new(),
             recorded_by: crate::VERSION.to_string(),
         }
@@ -342,6 +348,28 @@ impl Game {
             message.phase = phase.clone();
         }
         self.press.entry(phase).or_default().push(message);
+    }
+
+    /// Keep the orders that were set aside for `phase` before it was
+    /// adjudicated. Replaces what was kept for that phase; an empty list
+    /// removes the entry.
+    pub fn record_rejected(&mut self, phase: Phase, rejected: Vec<SavedRejection>) {
+        if rejected.is_empty() {
+            self.rejected.remove(&phase.to_string());
+        } else {
+            self.rejected.insert(phase.to_string(), rejected);
+        }
+    }
+
+    /// The orders set aside for adjudicated phase `index`, archived phases
+    /// counted first. Empty when there were none or the index is out of range.
+    pub fn rejected_at(&self, index: usize) -> &[SavedRejection] {
+        let name = match index.checked_sub(self.archive.len()) {
+            None => Some(self.archive[index].state.name.clone()),
+            Some(i) => self.history.get(i).map(|r| r.state.phase.to_string()),
+        };
+        name.and_then(|n| self.rejected.get(&n))
+            .map_or(&[], Vec::as_slice)
     }
 
     /// Record a pledge, or replace the one with the same non-empty id (for

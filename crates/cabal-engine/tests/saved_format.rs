@@ -760,3 +760,51 @@ fn rebuilt_retreat_restrictions_are_marked_as_inferred() {
     played.process(&[]).unwrap();
     assert!(!played.state.retreats_inferred);
 }
+
+/// Orders a host set aside before adjudication are part of the record: they
+/// come back from every way of loading the game, for the phase they were
+/// sent in.
+#[test]
+fn rejected_orders_are_saved_with_the_game() {
+    use cabal_engine::json::SavedRejection;
+    use cabal_engine::snapshot::Snapshot;
+
+    let map = Map::standard();
+    let mut game = Game::new(map, Rulebook::default());
+    let garbage = vec![SavedRejection {
+        power: "FRANCE".into(),
+        input: "complete garbage".into(),
+        code: "unparseable".into(),
+        reason: "That is not an order.".into(),
+    }];
+    let phase = game.phase();
+    game.process_movement(&movement(map, &["FRA: A PAR - BUR"]));
+    game.record_rejected(phase, garbage.clone());
+    game.process_movement(&[]);
+    assert_eq!(game.rejected_at(0), garbage.as_slice());
+    assert!(game.rejected_at(1).is_empty());
+    assert!(game.rejected_at(9).is_empty());
+
+    let saved = through_json(&game.to_saved("rejected"));
+    assert_eq!(saved.cabal.as_ref().unwrap().rejected["S1901M"], garbage);
+    for loaded in [
+        Game::from_saved(&saved, Rulebook::default()).unwrap(),
+        Game::resume(&saved, Rulebook::default()).unwrap(),
+        Game::from_snapshot(&game.snapshot(), Some(&saved)).unwrap(),
+    ] {
+        assert_eq!(loaded.rejected_at(0), garbage.as_slice());
+        assert!(loaded.rejected_at(1).is_empty());
+        assert_eq!(loaded.to_saved("rejected"), saved);
+    }
+    assert!(
+        Game::verify_saved(&saved, Rulebook::default())
+            .unwrap()
+            .is_clean()
+    );
+    let _: Snapshot = game.snapshot();
+
+    // a game with nothing set aside writes nothing, and an empty list clears
+    game.record_rejected(phase, Vec::new());
+    let text = serde_json::to_string(&game.to_saved("clean")).unwrap();
+    assert!(!text.contains("rejected"));
+}

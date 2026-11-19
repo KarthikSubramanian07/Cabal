@@ -132,6 +132,10 @@ impl Game {
                 }
             }
         }
+        // what was set aside for past phases lives in the save, not the snapshot
+        if let Some(meta) = history.and_then(|saved| saved.cabal.as_ref()) {
+            game.rejected = meta.rejected.clone();
+        }
         // every phase of the save but its last (the unplayed one) was adjudicated
         let recorded = history.map_or(&[][..], |saved| match saved.phases.split_last() {
             Some((_, earlier)) => earlier,

@@ -12,7 +12,7 @@ use cabal_engine::adjudicate::movement::{
 };
 use cabal_engine::geo::{Map, Power, SupplyCenter, Terrain, UnitKind};
 use cabal_engine::json::{
-    MilaMessage, MilaState, SavedGame, SavedPledge, province_code, state_from_mila,
+    MilaMessage, MilaState, SavedGame, SavedPledge, SavedRejection, province_code, state_from_mila,
     state_to_mila_with,
 };
 use cabal_engine::order::{AnyOrder, Order};
@@ -1286,11 +1286,7 @@ fn legal_text_of(
 }
 
 /// The outcome of adjudicated phase `index` (archived phases count first).
-fn outcome_of(
-    game: &EngineGame,
-    index: usize,
-    rejected: Option<&Vec<RejectedOrder>>,
-) -> Option<PhaseOutcome> {
+fn outcome_of(game: &EngineGame, index: usize) -> Option<PhaseOutcome> {
     let record = game.record_at(index)?;
     let record: &cabal_engine::PhaseRecord = &record;
     // the state this phase led to, not the state the game is in now
@@ -1431,7 +1427,16 @@ fn outcome_of(
         results,
         dislodged,
         standoffs,
-        rejected: rejected.cloned().unwrap_or_default(),
+        rejected: game
+            .rejected_at(index)
+            .iter()
+            .map(|r| RejectedOrder {
+                power: r.power.clone(),
+                input: r.input.clone(),
+                code: r.code.clone(),
+                reason: r.reason.clone(),
+            })
+            .collect(),
         civil_disorder,
         next: state_to_mila_with(map, &after, game.rulebook).into(),
         status: if last {
@@ -1627,16 +1632,11 @@ mod wasm_tests {
 #[wasm_bindgen]
 pub struct Game {
     inner: EngineGame,
-    /// Orders set aside by `process`, by index of the phase they were sent for.
-    rejected: HashMap<usize, Vec<RejectedOrder>>,
 }
 
 impl Game {
     fn wrap(inner: EngineGame) -> Game {
-        Game {
-            inner,
-            rejected: HashMap::new(),
-        }
+        Game { inner }
     }
 
     fn power(&self, name: &str) -> Result<cabal_engine::Power, JsError> {
@@ -1878,15 +1878,27 @@ impl Game {
     pub fn process(&mut self, orders: Ts<OrdersByPower>) -> Result<Ts<PhaseOutcome>, JsError> {
         let orders: OrdersByPower = orders.to_rust()?;
         let submission = read_orders(&self.inner, &orders);
+        let phase = self.inner.phase();
         self.inner
             .process(&submission.orders)
             .map_err(|e| JsError::new(&e.to_string()))?;
+        // kept on the game, so the save carries them and a restored game
+        // still reports them for this phase
+        self.inner.record_rejected(
+            phase,
+            submission
+                .rejected
+                .into_iter()
+                .map(|r| SavedRejection {
+                    power: r.power,
+                    input: r.input,
+                    code: r.code,
+                    reason: r.reason,
+                })
+                .collect(),
+        );
         let last = self.inner.phase_count() - 1;
-        if !submission.rejected.is_empty() {
-            self.rejected.insert(last, submission.rejected);
-        }
-        let outcome =
-            outcome_of(&self.inner, last, self.rejected.get(&last)).expect("phase recorded");
+        let outcome = outcome_of(&self.inner, last).expect("phase recorded");
         via_json(&outcome)
     }
 
@@ -1907,8 +1919,8 @@ impl Game {
     /// Outcome of a past phase by index into the history. `next` and `status`
     /// describe the game right after that phase, not as it stands now.
     pub fn outcome(&self, index: usize) -> Result<Ts<PhaseOutcome>, JsError> {
-        let outcome = outcome_of(&self.inner, index, self.rejected.get(&index))
-            .ok_or_else(|| JsError::new("no such phase"))?;
+        let outcome =
+            outcome_of(&self.inner, index).ok_or_else(|| JsError::new("no such phase"))?;
         via_json(&outcome)
     }
 
@@ -2428,7 +2440,7 @@ mod bot_tests {
             // the text the bot emits must survive the same parser `process` uses
             let typed = typed_orders_checked(&game, &by_power);
             game.process(&typed).unwrap();
-            let outcome = outcome_of(&game, game.phase_count() - 1, None).unwrap();
+            let outcome = outcome_of(&game, game.phase_count() - 1).unwrap();
             for r in &outcome.results {
                 assert_ne!(
                     r.code, "illegal",

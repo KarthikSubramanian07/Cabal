@@ -151,6 +151,22 @@ pub struct SavedPledge {
     pub receipt: Option<Receipt>,
 }
 
+/// An order that was sent for a phase and set aside before adjudication: text
+/// that could not be read, an order for a unit the sender does not have, the
+/// wrong kind of order for the phase. It had no effect on the board and is
+/// kept so the record shows everything that was asked for.
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub struct SavedRejection {
+    pub power: String,
+    /// The text exactly as submitted.
+    pub input: String,
+    /// A stable code such as `unparseable` or `foreign_unit`.
+    pub code: String,
+    /// One plain-English sentence.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reason: String,
+}
+
 /// What Cabal records about a game beyond the MILA layout.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct CabalMeta {
@@ -161,6 +177,9 @@ pub struct CabalMeta {
     pub outcome: SavedOutcome,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pledges: Vec<SavedPledge>,
+    /// Orders set aside before adjudication, by the phase they were sent for.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub rejected: BTreeMap<String, Vec<SavedRejection>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
@@ -221,11 +240,16 @@ where
             .collect(),
         _ => Vec::new(),
     };
+    let rejected = block
+        .remove("rejected")
+        .and_then(|value| BTreeMap::deserialize(value).ok())
+        .unwrap_or_default();
     Ok(Some(CabalMeta {
         engine,
         rulebook,
         outcome,
         pledges,
+        rejected,
     }))
 }
 
@@ -817,6 +841,7 @@ impl Game {
                 rulebook: self.rulebook,
                 outcome: self.saved_outcome(),
                 pledges: self.pledges.clone(),
+                rejected: self.rejected.clone(),
             }),
         }
     }
@@ -837,6 +862,7 @@ impl Game {
         if let Some(meta) = &saved.cabal {
             self.recorded_by = meta.engine.clone();
             self.pledges = meta.pledges.clone();
+            self.rejected = meta.rejected.clone();
         }
     }
 
