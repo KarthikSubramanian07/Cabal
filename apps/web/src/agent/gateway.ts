@@ -1,6 +1,8 @@
 import { type PageMeta, metaFor, writeHead } from "../app/meta.js";
 import { type RouteMatch, matchRoute } from "../app/routes.js";
 import { isGameCode } from "../net/code.js";
+import { hintsFor } from "./hints.js";
+import { centresOf, shareCard } from "./share-card.js";
 import {
   appendVaryAccept,
   markdownPath,
@@ -57,28 +59,13 @@ function htmlAssetPath(pathname: string): string {
   return `${path}/index.html`;
 }
 
-/** The shell with this address's own title, description, canonical link and share card. */
-async function withPageHead(res: Response, path: string, meta: PageMeta = metaFor(path), status = res.status, keepBoard = true): Promise<Response> {
-  let html = writeHead(await res.text(), meta);
-  if (!keepBoard) html = withoutBoardPreloads(html);
+/** The shell with this address's own title, description, canonical link and share card, and its own hints. */
+async function withPageHead(res: Response, path: string, meta: PageMeta = metaFor(path), status = res.status, route: string | null = null): Promise<Response> {
+  const html = hintsFor(writeHead(await res.text(), meta), route);
   const headers = new Headers(res.headers);
   headers.delete("Content-Length");
   headers.set("Content-Type", "text/html; charset=utf-8");
   return new Response(html, { status, headers });
-}
-
-/** Pages that draw the board: they want its chunk and the engine fetched alongside the entry script. */
-const BOARD_ROUTES: ReadonlySet<string> = new Set(["sandbox", "game", "replay"]);
-
-/**
- * The shell's hints for the board (its page chunk, its code and the megabyte engine), dropped for
- * a page that never draws it: on a phone they compete with the page's own script and data. The
- * build drops the same tags from the front door's copy (scripts/emit-agent-site.mjs).
- */
-export function withoutBoardPreloads(html: string): string {
-  return html
-    .replace(/\s*<link rel="modulepreload"[^>]*(?:SandboxPage|board)-[^>]*>/g, "")
-    .replace(/\s*<link rel="preload" as="fetch"[^>]*cabal_engine_bg-[^>]*>/g, "");
 }
 
 /**
@@ -218,6 +205,41 @@ async function proxyApi(request: Request, env: AssetEnv): Promise<Response> {
   return out;
 }
 
+/** A table's share card: `/share/g/K7Q2XZ.png`. */
+const SHARE_CARD = /^\/share\/g\/([A-Za-z0-9]{6})\.png$/;
+
+/** How long a link preview may keep a table's card: a phase moves on in minutes at the fastest. */
+const CARD_MAX_AGE = 300;
+
+const png = (body: Uint8Array | ReadableStream | null, maxAge: number, status = 200) =>
+  new Response(body as BodyInit | null, { status, headers: { "Content-Type": "image/png", "Cache-Control": `public, max-age=${maxAge}` } });
+
+/**
+ * The card for one table (agent/share-card.ts): the neutral board recoloured with the supply
+ * centres its saved game holds now. A code that cannot exist, or that names no game, is a 404; a
+ * server that cannot say gets the neutral board for a minute rather than a broken preview.
+ */
+async function tableCard(env: AssetEnv, url: URL, code: string, request: Request): Promise<Response> {
+  if (!isGameCode(code)) return notFound(env, url, request, false);
+  const base = await fetchAsset(env, url, "/share/board.png", request);
+  if (base.status !== 200) return base;
+  const bytes = new Uint8Array(await base.arrayBuffer());
+  if (!env.SERVER) return png(bytes, 60);
+  try {
+    // The server limits reads per client address, so the card's read counts against the visitor
+    // (or the link previewer) who asked for it, not one bucket every card would share.
+    const headers = new Headers({ Accept: "application/json" });
+    const address = request.headers.get("cf-connecting-ip");
+    if (address) headers.set("cf-connecting-ip", address);
+    const res = await env.SERVER.fetch(new Request(new URL(`/api/games/${code}/centres`, url).toString(), { headers }));
+    if (res.status === 404) return png(bytes, 60, 404);
+    const centres = res.ok ? centresOf(await res.json()) : null;
+    return centres ? png(shareCard(bytes, centres), CARD_MAX_AGE) : png(bytes, 60);
+  } catch {
+    return png(bytes, 60);
+  }
+}
+
 export async function handleAgentRequest(request: Request, env: AssetEnv): Promise<Response> {
   if (isApiPath(new URL(request.url).pathname)) return proxyApi(request, env);
   const res = await route(request, env);
@@ -229,6 +251,9 @@ export async function handleAgentRequest(request: Request, env: AssetEnv): Promi
 async function route(request: Request, env: AssetEnv): Promise<Response> {
   const url = new URL(request.url);
   const path = normalizePath(url.pathname);
+
+  const card = SHARE_CARD.exec(path);
+  if (card) return tableCard(env, url, card[1]!.toUpperCase(), request);
 
   if (isStaticAsset(path)) {
     const asset = await fetchAsset(env, url, path === "/llms.txt" ? "/llms.txt" : path, request);
@@ -270,7 +295,7 @@ async function route(request: Request, env: AssetEnv): Promise<Response> {
       if (shell.status !== 200) return notFound(env, url, request, false);
       const route = matchRoute(path)!;
       const { meta, status } = await appPage(env, url, path, route);
-      const res = withNegotiationHeaders(await withPageHead(shell, path, meta, status, BOARD_ROUTES.has(route.name)));
+      const res = withNegotiationHeaders(await withPageHead(shell, path, meta, status, route.name));
       // Tables and replays are for the people sent the code: keep them out of search indexes.
       if (!meta.index) res.headers.set("X-Robots-Tag", "noindex");
       return res;

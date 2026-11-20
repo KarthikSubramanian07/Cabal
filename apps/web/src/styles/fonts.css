@@ -46,3 +46,29 @@
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
     U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
+
+/*
+ * Stand-ins for Inter Tight while it downloads, scaled to its width and height, so the page does
+ * not reflow when it arrives. A browser also counts text that grows on the swap as a new, later
+ * "largest paint"; on a slow line that was the loading card, seconds after it was drawn. The
+ * stand-ins are a hair wider than the face, so the swap never grows the text. Arial where there
+ * is one (Apple, Windows), Roboto on Android. Measured in Chromium on the sample of the loading
+ * card's words: Inter Tight 9483, Arial 9913, Roboto 9230 units at 100 px; ascent 0.97, descent 0.24.
+ */
+@font-face {
+  font-family: "Inter Tight Arial";
+  src: local("Arial"), local("ArialMT");
+  size-adjust: 96%;
+  ascent-override: 101%;
+  descent-override: 25%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: "Inter Tight Roboto";
+  src: local("Roboto"), local("Roboto-Regular");
+  size-adjust: 103%;
+  ascent-override: 94%;
+  descent-override: 23%;
+  line-gap-override: 0%;
+}

@@ -3,7 +3,7 @@
  * way the app keeps them (localStorage, never a URL), and the sidebar reached on either screen.
  */
 import AxeBuilder from "@axe-core/playwright";
-import { type APIRequestContext, type Browser, type Page, type TestInfo, expect } from "@playwright/test";
+import { type APIRequestContext, type Browser, type BrowserContext, type Page, type TestInfo, expect } from "@playwright/test";
 import { clientHeaders } from "./fixtures.js";
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
@@ -23,6 +23,12 @@ export interface Seat {
   name: string;
 }
 
+/**
+ * An address of its own for one attempt of `tableAs`, which may make dozens of tables to seat its
+ * host: more than the ten a minute the test's own address (fixtures.ts) is allowed.
+ */
+const address = () => ({ "cf-connecting-ip": `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}` });
+
 /** A live table with two people seated and the five other seats left to the bot, started. */
 export async function liveTable(request: APIRequestContext): Promise<{ host: Seat; guest: Seat }> {
   const made = await (await request.post("/api/games", { data: { name: "Ada", settings: { pacing: "live", aiFill: true, visibility: "unlisted" } } })).json();
@@ -32,6 +38,39 @@ export async function liveTable(request: APIRequestContext): Promise<{ host: Sea
   const started = await request.post(`/api/games/${host.gameId}/start`, { headers: { authorization: `Bearer ${host.token}` } });
   expect(started.ok()).toBe(true);
   return { host, guest };
+}
+
+/**
+ * A live table where the host plays `hostPower` and a guest plays `guestPower`, the bot the rest,
+ * started. The server seats a table's creator at random, so tables are made until one seats the
+ * host where the test needs it (a lobby left behind costs nothing on the local server). Each
+ * attempt comes from an address of its own (see `address`).
+ */
+export async function tableAs(request: APIRequestContext, hostPower: string, guestPower: string): Promise<{ host: Seat; guest: Seat }> {
+  for (let i = 0; i < 60; i++) {
+    const made = await (
+      await request.post("/api/games", { data: { name: "Ada", settings: { pacing: "live", aiFill: true, visibility: "unlisted" } }, headers: address() })
+    ).json();
+    if (made.power !== hostPower) continue;
+    const host: Seat = { gameId: made.gameId, power: made.power, token: made.token, name: "Ada" };
+    const joined = await (await request.post(`/api/games/${host.gameId}/join`, { data: { name: "Bea", power: guestPower } })).json();
+    expect(joined.power).toBe(guestPower);
+    const guest: Seat = { gameId: joined.gameId, power: joined.power, token: joined.token, name: "Bea" };
+    const started = await request.post(`/api/games/${host.gameId}/start`, { headers: { authorization: `Bearer ${host.token}` } });
+    expect(started.ok()).toBe(true);
+    return { host, guest };
+  }
+  throw new Error(`no table seated its creator as ${hostPower}`);
+}
+
+/** Every frame a page sends on its game socket, keepalive pings left out. */
+export function framesSent(page: Page): string[] {
+  const sent: string[] = [];
+  page.on("websocket", (ws) => ws.on("framesent", (f) => {
+    const text = typeof f.payload === "string" ? f.payload : f.payload.toString();
+    if (text !== "ping") sent.push(text);
+  }));
+  return sent;
 }
 
 /** Handles are unique on the server, which keeps them between runs: each test makes its own. */
@@ -47,7 +86,13 @@ export async function chooseHandle(page: Page, handle: string) {
 }
 
 /** A person on their own device (this project's kind of device), holding `seat` or watching without one. */
-export async function sitDown(browser: Browser, info: TestInfo, seat: Seat | null, gameId: string): Promise<Page> {
+export async function sitDown(
+  browser: Browser,
+  info: TestInfo,
+  seat: Seat | null,
+  gameId: string,
+  prepare?: (context: BrowserContext) => Promise<void>,
+): Promise<Page> {
   const use = info.project.use;
   const context = await browser.newContext({
     ...(use.viewport ? { viewport: use.viewport } : {}),
@@ -62,6 +107,7 @@ export async function sitDown(browser: Browser, info: TestInfo, seat: Seat | nul
   if (seat) {
     await context.addInitScript((s) => localStorage.setItem(`cabal.seat.${s.gameId}`, JSON.stringify({ ...s, savedAt: Date.now() })), seat);
   }
+  await prepare?.(context);
   const page = await context.newPage();
   await page.goto(`/g/${gameId}`);
   await expect(page.locator("svg.board text.label").first()).toBeVisible({ timeout: 30_000 });

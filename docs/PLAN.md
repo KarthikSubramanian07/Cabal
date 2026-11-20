@@ -156,3 +156,27 @@ How each one is measured, and its recorded value, is tracked on [#57](https://gi
 - A full 7 seat game completes on production with no manual intervention.
 - Time from landing page to a game in progress under 60 seconds (AI seats fill the table).
 - p95 order submit round trip under 150 ms from a browser in Europe or North America.
+
+### Phase 1 metrics
+
+Each line has a repeatable command in [tools/metrics](../tools/metrics/README.md), which also writes this table. Production lines are measured by a maintainer after a deploy (the probes create real games, so CI runs them only against `wrangler dev`); until then a line says where it was measured. A missed target reads **FAIL**.
+
+| Metric | Target | Value | Where | Date | Commit | Result |
+|---|---|---|---|---|---|---|
+| DATC v3.0 | 100 percent, zero skipped | 171 of 171 passed, 0 failed, 0 skipped | local (cargo) | 2026-11-20 | `2b4ff1396e59` | pass |
+| Full 7 seat game | finishes with no manual intervention | finished: draw by vote after 16 phases, 2.5 s, 2 people and 5 bots | local (wrangler dev) | 2026-11-20 | `2b4ff1396e59` | pass |
+| Landing page to a game in progress | under 60 s, AI seats filling the table | 1.8 s | local (wrangler dev), desktop | 2026-11-20 | `2b4ff1396e59` | pass |
+| Landing page to a game in progress | under 60 s, AI seats filling the table | 2.0 s | local (wrangler dev), phone | 2026-11-20 | `2b4ff1396e59` | pass |
+| Order submit round trip | p95 under 150 ms (Europe or North America) | p95 39.9 ms (p50 7, p99 111.3, n 100) | local (wrangler dev) | 2026-11-20 | `2b4ff1396e59` | pass |
+
+**Production: not measured yet.** After the next `pnpm deploy:all`, run the four production commands in the [tools/metrics README](../tools/metrics/README.md#production-runs) and replace the local lines.
+
+Size and start-up, from the same commit (`pnpm engine:build`, `wrangler deploy --dry-run`, `pnpm --filter @cabal/server cold-start -- --runs 5`, on an Apple Silicon laptop; CI's own figures are in each run's summary):
+
+| Measure | Value | Gate |
+|---|---|---|
+| Engine wasm, gzip | 384,182 bytes | 409,000 bytes (`wasm` job) |
+| Worker bundle, gzip | 788,243 bytes (`index.js` 404,020, engine 384,223) | 851,968 bytes (`deploy-dry-run` job) |
+| Engine instantiation in the GameRoom, median | 0 ms | `cold-start` job, [PERFORMANCE.md](PERFORMANCE.md#gameroom-cold-start) |
+| First adjudication, engine only, median | 4 ms | `cold-start` job |
+| First request to a fresh isolate (create a game), median | 52 ms | `cold-start` job |

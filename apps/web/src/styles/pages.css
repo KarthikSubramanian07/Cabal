@@ -149,3 +149,49 @@
 .prose code {
   font-size: 0.9em;
 }
+
+/* ---- /status: the server's own health, read live */
+
+.status-facts {
+  display: grid;
+  margin: var(--space-4) 0;
+  border-top: 1px solid var(--rule);
+}
+
+.status-facts > div {
+  display: grid;
+  grid-template-columns: minmax(8.5em, auto) minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.status-facts dt {
+  color: var(--ink-3);
+  font-size: var(--text-md);
+}
+
+.status-facts dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.status-facts code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.status-checked {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 480px) {
+  .status-facts > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

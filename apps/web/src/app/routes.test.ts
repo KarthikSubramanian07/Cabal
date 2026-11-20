@@ -14,6 +14,7 @@ describe("matchRoute", () => {
     expect(matchRoute("/replay/K7Q2")).toEqual({ name: "replay", params: { code: "K7Q2" } });
     expect(matchRoute("/games")?.name).toBe("games");
     expect(matchRoute("/ledger")?.name).toBe("ledger");
+    expect(matchRoute("/status")?.name).toBe("status");
   });
 
   it("rejects anything outside the table", () => {

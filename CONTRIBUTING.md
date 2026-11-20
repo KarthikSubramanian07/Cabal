@@ -77,18 +77,18 @@ If your login can see more than one account, wrangler asks which to use. Answer 
    ```sh
    pnpm deploy:all       # server, then web (the site binds to the Worker); each builds the wasm engine first
    pnpm deploy:web       # only the site: builds apps/web and publishes dist to Pages, branch main
-   pnpm deploy:server    # only the Worker: D1 migrations to the remote database, then wrangler deploy
+   pnpm deploy:server    # only the Worker: D1 migrations to the remote database, then wrangler deploy stamped with the commit
    ```
 
    Use `deploy:all`, not `pnpm deploy`: a bare `pnpm deploy` is a built-in pnpm command and does something else.
 5. Check it (the health check):
 
    ```sh
-   curl -s https://cabal-server.karthik-e5e.workers.dev/health          # {"ok":true,"protocol":2,...,"index":{"backend":"d1","reachable":true,"schema":12}}
+   curl -s https://cabal-server.karthik-e5e.workers.dev/health          # {"ok":true,"protocol":2,"engine":"0.1.0","build":"<commit>",...}
    curl -s -o /dev/null -w '%{http_code}\n' https://playcabal.pages.dev/  # 200
    ```
 
-   `/health` answers 503 with `ok: false` while the D1 index is unreachable or its schema is older than the build needs. `build` is the Worker version id; it does not name a commit, so note the commit you deployed (`git rev-parse --short HEAD`) in the PR or issue that needed the deploy. Then open https://playcabal.pages.dev on a phone and a desktop and play one order.
+   `/health` answers 503 with `ok: false` while the D1 index is unreachable or its schema is older than the build needs. `build` is the commit that is live: `deploy:server` stamps it as `BUILD_ID` (the first twelve characters of `git rev-parse HEAD`, with `-dirty` if the tree had uncommitted changes, which a production deploy never should), and tags the Worker version with it, so `wrangler deployments list` names it too. `version` is the Worker version id that `wrangler rollback` takes. Check that `build` matches `git rev-parse --short=12 HEAD`. Then open https://playcabal.pages.dev on a phone and a desktop and play one order.
 
 ### Preview deploys
 

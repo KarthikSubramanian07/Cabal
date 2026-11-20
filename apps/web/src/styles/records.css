@@ -233,6 +233,34 @@
   font-size: 12px;
 }
 
+/* The likely range: a flat brass wash behind the line, edged above and below in brass ink. */
+.rating-band {
+  fill: color-mix(in srgb, var(--brass) 22%, transparent);
+  stroke: color-mix(in srgb, var(--brass-deep) 55%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.rating-key {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  max-width: 62ch;
+}
+
+.rating-key-band {
+  flex: none;
+  width: 22px;
+  height: 10px;
+  background: color-mix(in srgb, var(--brass) 22%, transparent);
+  border-top: 1px dashed var(--brass-deep);
+  border-bottom: 1px dashed var(--brass-deep);
+  transform: translateY(1px);
+}
+
 .rating-line {
   fill: none;
   stroke: var(--ink);
@@ -635,4 +663,78 @@ a.score-who {
 a.place-who:hover,
 a.score-who:hover {
   text-decoration-color: currentColor;
+}
+
+/* ---- reporting a player: one quiet line at the foot of the record, a short form in place */
+
+.file-report {
+  margin-top: calc(var(--space-6) * 2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--rule);
+  max-width: 62ch;
+}
+
+.file-report-line,
+.file-report-receipt,
+.file-report-lede {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.file-report-receipt:focus-visible {
+  outline: 2px solid var(--brass-deep);
+  outline-offset: 4px;
+}
+
+.file-report-receipt strong,
+.file-report-lede strong {
+  color: var(--ink);
+}
+
+.file-report-lede {
+  margin-bottom: var(--space-3);
+  font-size: var(--text-md);
+}
+
+.link-button {
+  display: inline;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration-thickness: 2px;
+}
+
+.link-button:focus-visible {
+  outline: 2px solid var(--brass-deep);
+  outline-offset: 2px;
+}
+
+.file-report-form .field textarea {
+  width: 100%;
+  min-height: 88px;
+  padding: 10px 12px;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--paper);
+  font: inherit;
+  font-size: var(--text-md);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.file-report-form .field textarea:focus-visible {
+  outline: 2px solid var(--brass-deep);
+  outline-offset: 2px;
 }

@@ -9,7 +9,12 @@ import {
   layoutLabels,
   placeLabel,
   resolveTap,
+  touchReach,
   unitRadius,
+  MIN_LABEL_PX,
+  MIN_UNIT_PX,
+  TOUCH_REACH_MIN_PX,
+  TOUCH_REACH_PX,
   wholeView,
   zoomView,
 } from "./view.js";
@@ -130,8 +135,37 @@ describe("sizes", () => {
   });
 
   it("is capped so a far-out overview does not turn into a wall of text", () => {
-    expect(labelSize(0.2)).toBeLessThanOrEqual(16);
-    expect(unitRadius(0.2)).toBeLessThanOrEqual(12.5);
+    // Where the cap still leaves codes readable (a short laptop showing the whole board).
+    expect(labelSize(0.48)).toBeLessThanOrEqual(16);
+    expect(unitRadius(0.48)).toBeLessThanOrEqual(12.5);
+    // Further out, no bigger on screen than the smallest readable size.
+    expect(labelSize(0.2) * 0.2).toBeLessThanOrEqual(MIN_LABEL_PX + 0.01);
+    expect(unitRadius(0.2) * 0.2).toBeLessThanOrEqual(MIN_UNIT_PX + 0.01);
+  });
+
+  it("keeps codes readable and pieces visible on the smallest phone at every zoom it reaches", () => {
+    // An iPhone SE's board, from the whole map to the closest zoom.
+    const se = { w: 320, h: 320 };
+    const far = se.w / wholeView(board, se).w;
+    const near = se.w / (board.w / 8);
+    for (let scale = far; scale <= near; scale *= 1.1) {
+      expect(labelSize(scale) * scale).toBeGreaterThanOrEqual(MIN_LABEL_PX - 0.01);
+      expect(unitRadius(scale) * scale).toBeGreaterThanOrEqual(MIN_UNIT_PX - 0.01);
+    }
+    expect(far).toBeLessThan(0.3);
+  });
+});
+
+describe("touchReach", () => {
+  it("reaches at least half a comfortable target at every zoom, phone overview included", () => {
+    for (let scale = 0.25; scale <= 4; scale *= 1.1) expect(touchReach(scale) * scale).toBeGreaterThanOrEqual(TOUCH_REACH_MIN_PX - 0.01);
+  });
+
+  it("is the finger's reach where the cap allows it, and the cap past that", () => {
+    expect(touchReach(0.62) * 0.62).toBeCloseTo(TOUCH_REACH_PX, 5);
+    expect(touchReach(0.5)).toBeCloseTo(48, 5);
+    // A whole board on a phone: the floor, not the cap of 48 board units (15 px).
+    expect(touchReach(0.3) * 0.3).toBeCloseTo(TOUCH_REACH_MIN_PX, 5);
   });
 });
 

@@ -345,6 +345,85 @@ dialog.account .how-body section {
   margin: 0 0 var(--space-3);
 }
 
+/* ---- deleting the account: a register entry about to be struck through */
+
+.account-delete > p {
+  margin: 0 0 var(--space-3);
+}
+
+.strike-slip {
+  position: relative;
+  margin: 18px 0 var(--space-4);
+  padding: 22px 16px 14px;
+  border: 1px solid var(--ink);
+  background: var(--bone);
+}
+
+.strike-stamp {
+  position: absolute;
+  top: -11px;
+  right: 14px;
+  padding: 1px 8px;
+  border: 2px solid var(--vermilion-deep);
+  background: var(--paper);
+  color: var(--vermilion-deep);
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transform: rotate(2deg);
+}
+
+.strike-title {
+  margin: 0 0 var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--ink);
+  font-family: var(--font-display);
+  font-size: 17px;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+.strike-list {
+  margin: 0;
+  padding: 0 0 0 1.1em;
+  font-size: var(--text-md);
+  line-height: 1.5;
+  max-width: 62ch;
+}
+
+.strike-list li + li {
+  margin-top: 6px;
+}
+
+.account-delete .field {
+  margin-bottom: var(--space-3);
+}
+
+.account-farewell {
+  padding: var(--space-2) 0;
+}
+
+.account-farewell:focus-visible {
+  outline: 2px solid var(--brass-deep);
+  outline-offset: 4px;
+}
+
+.account-farewell > p {
+  margin: 0 0 var(--space-3);
+  max-width: 62ch;
+}
+
+.strike-done {
+  font-family: var(--font-display);
+  font-size: 26px;
+}
+
+.strike-done s {
+  text-decoration-thickness: 3px;
+  text-decoration-color: var(--ink);
+}
+
 /* ---- notifications */
 
 .notify-panel > p {

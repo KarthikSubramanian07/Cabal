@@ -1,0 +1,61 @@
+{
+  "ladder": "overall",
+  "points": [
+    {
+      "gameId": "U5X9H9",
+      "power": "AUSTRIA",
+      "result": "draw",
+      "score": 0.05625,
+      "ratingBefore": 1500.0,
+      "rdBefore": 350.0,
+      "ratingAfter": 1500.0,
+      "rdAfter": 350.0,
+      "at": 1795111424241
+    },
+    {
+      "gameId": "GJCBVV",
+      "power": "RUSSIA",
+      "result": "draw",
+      "score": 0.05202312138728324,
+      "ratingBefore": 1500.0,
+      "rdBefore": 350.0,
+      "ratingAfter": 1500.0,
+      "rdAfter": 350.0,
+      "at": 1795111519423
+    },
+    {
+      "gameId": "TDKLFG",
+      "power": "RUSSIA",
+      "result": "draw",
+      "score": 0.1,
+      "ratingBefore": 1500.0,
+      "rdBefore": 350.0,
+      "ratingAfter": 1536.4830065680146,
+      "rdAfter": 243.71,
+      "at": 1795111520672
+    },
+    {
+      "gameId": "VB6EXF",
+      "power": "GERMANY",
+      "result": "draw",
+      "score": 0.049723756906077346,
+      "ratingBefore": 1536.4830065680146,
+      "rdBefore": 243.71,
+      "ratingAfter": 1522.3092587565993,
+      "rdAfter": 168.02,
+      "at": 1795111521899
+    },
+    {
+      "gameId": "Z2BSVX",
+      "power": "ENGLAND",
+      "result": "draw",
+      "score": 0.05084745762711865,
+      "ratingBefore": 1522.3092587565993,
+      "rdBefore": 168.02,
+      "ratingAfter": 1515.0519767810442,
+      "rdAfter": 125.48884519461842,
+      "at": 1795111523118
+    }
+  ],
+  "more": false
+}

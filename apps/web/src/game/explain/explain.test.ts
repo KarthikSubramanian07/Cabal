@@ -4,7 +4,7 @@ import { Game, type State, preview, ready } from "@cabal/engine";
 import { beforeAll, describe, expect, it } from "vitest";
 import { type OrderBook, flatten } from "../book.js";
 import { receiptFor } from "../receipts.js";
-import { explainPhase, hasWhy, indexOfUnit, namePlaces, whyOf, whyOfResult } from "./explain.js";
+import { explainPhase, explainerFor, hasWhy, indexOfUnit, namePlaces, whyOf, whyOfResult } from "./explain.js";
 import { predict } from "./whatIf.js";
 
 beforeAll(async () => {
@@ -183,5 +183,21 @@ describe("what if", () => {
     const p = predict(g.state(), { FRANCE: { "B:PAR": "A PAR B" } })!;
     expect(p.explanation).toBeNull();
     expect(p.outcome.results.some((r) => r.order === "A PAR B" && r.ok)).toBe(true);
+  });
+});
+
+describe("explainerFor", () => {
+  it("uses the engine's account for a movement phase and the result's own for the rest", () => {
+    const state = position({ FRANCE: ["A PAR"], GERMANY: ["A MUN"] });
+    const orders = { FRANCE: { "A PAR": "A PAR - BUR" }, GERMANY: { "A MUN": "A MUN - BUR" } };
+    const outcome = preview(state, { orders: flatten(orders) });
+    const explain = explainerFor(outcome.results, state.name, explainPhase({ phase: state.name, state, orders }), names);
+    const bounced = explain(outcome.results.find((r) => r.power === "FRANCE")!)!;
+    expect(bounced.verdict).toBe(explainFor(state, orders, "FRANCE", "A PAR").verdict);
+    expect(bounced.contest?.against.map((s) => s.unit)).toContain("A MUN");
+    // Without an explanation (a retreat or a winter) the receipt's words stand.
+    const plain = explainerFor(outcome.results, "F1901R", null, names)(outcome.results[0]!)!;
+    expect(plain.contest).toBeNull();
+    expect(plain.verdict).toBe(receiptFor(outcome.results[0]!, "F1901R", names, outcome.results).verdict);
   });
 });

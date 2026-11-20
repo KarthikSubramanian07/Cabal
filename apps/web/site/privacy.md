@@ -18,13 +18,26 @@ Clearing this site's data in your browser removes all of it. Without a recovery 
 - **Your account**: a random id, your handle (and, for a while, a handle you gave up, so old links still work), when the account was made and last used, and for each signed-in device only a SHA-256 hash of its secret. A recovery code is stored only as a hash too.
 - **Your games**: the tables you sit at, the orders, press and sealed pledges you send in them, the results, and, for finished games, your record: rating, how reliably you ordered, and the promises you kept and broke. Records, ratings and the Ledger are public, under your handle. The orders under a seal are readable by the server, so a seal protects you from the other players, not from the server; every seal is opened to its audience when its phase resolves, and to everyone once the game is over.
 - **Notifications**, only if you turn them on: the address your browser's push service gave this device and the keys messages to it are encrypted with, and which kinds you want. Messages say what happened and where; never the text of press or anyone's orders.
-- **Measurements**: counts and timings with no player, address or device attached.
+- **Reports**, if you report a player from their record: who sent it, about whom, why, your note and when, read only by the maintainers. The player is not told who sent it.
+- **New accounts per network address**: to spot one person making many accounts, the server counts the accounts made each day under a keyed hash (HMAC-SHA-256) of the day and your address. The key is a server secret kept apart from the database, so the stored value cannot be turned back into an address by trying them all. It never stores the address, the count changes key every day, and it is deleted after two days.
+- **Measurements**: counts and timings with no player, address or device attached. While you play, your browser times how long each set of orders takes to reach the server and come back, and, on a visit that starts at the front page, how long it took to reach a game in progress. When you leave or hide the page it sends those numbers, and nothing else, in one message; the server keeps only daily totals for each continent (Cloudflare tells it which one the message came from), never the message itself.
+
+- **Error reports**: when a page breaks, your browser tells the server what broke: the error's message, which kind of page it was (a game, the Ledger) but not its address, and the line of Cabal's code where it happened. Nothing names you or this device. The server writes it into its own logs with the continent it came from, keeps nothing else, and a page sends at most five a visit.
 
 The server runs on Cloudflare Workers, Durable Objects and D1. Cloudflare processes ordinary request logs (address, browser, time) to operate the service.
 
 ## Leaving
 
-Sign out of a device from the player menu to end its session; its notifications stop with it. To have an account and its record removed, open an issue as below with your handle and the maintainer will follow up privately.
+Sign out of a device from the player menu to end its session; its notifications stop with it.
+
+To leave for good, open the account card from the player menu (Rename, Recovery code and Sign out all open it), choose **Delete this account** at its foot and type your handle to confirm. It takes effect at once and cannot be undone:
+
+- Your account goes from the server: the handle (free for anyone to take), every device session, the recovery code, your rating and its history, your reliability and Ledger totals, your notification switches and every push subscription.
+- Your seats become ghosts. In a lobby the seat opens again. In a running game it falls into civil disorder, as if you had walked away: it is open to a substitute, and the bot holds it where the table asked for AI seats. Finished games keep their results and their orders, under the name "Ghost" instead of yours.
+- Other players keep what their games gave them. Their ratings moved against yours, and those moves stay, but the record of whom they played no longer points to you.
+- Press you sent stays in each game, signed by the power you played (never by your handle), because the players you sent it to and the receipts that judged your pledges rely on it.
+
+This device then forgets the account, its seats and its notifications. Cloudflare's ordinary request logs age out on their own schedule.
 
 ## Contact
 

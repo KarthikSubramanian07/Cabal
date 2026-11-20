@@ -1,0 +1,14 @@
+{
+  "name": "@cabal/metrics",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Repeatable commands for the phase 1 success metrics (docs/PLAN.md section 8)",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "datc": "node datc.mjs",
+    "order-rtt": "node order-rtt.mjs",
+    "full-game": "node full-game.mjs"
+  }
+}

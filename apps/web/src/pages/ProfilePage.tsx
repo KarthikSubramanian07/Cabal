@@ -3,7 +3,7 @@
  * dependably they order, their trust ledger (promises kept, broken and void across every game),
  * and their recent games, each with a link to its replay. Public: anyone may look anyone up.
  */
-import type { MyGame, PlayerProfile } from "@cabal/protocol";
+import type { MyGame, PlayerProfile, RatingHistoryResponse } from "@cabal/protocol";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { PageLoading } from "../app/PageLoading.jsx";
 import { applyHead, metaFor } from "../app/meta.js";
@@ -15,10 +15,15 @@ import { spacedCode } from "../net/code.js";
 import { useIdentity } from "../profile/Identity.jsx";
 import { PlayerSeal } from "../profile/ProfileMenu.jsx";
 import { RatingChart } from "../profile/RatingChart.jsx";
+import { ReportPlayer } from "../profile/ReportPlayer.jsx";
 import { readPlayer } from "../net/player.js";
 import { friendlyGames, percent, ratingPath, reliabilityLine, resultWord, signed, tableState, trustLine, withOwnCodes } from "../profile/record.js";
 
-type Load = { kind: "loading" } | { kind: "missing" } | { kind: "failed"; message: string } | { kind: "ready"; profile: PlayerProfile; own: MyGame[] | null };
+type Load =
+  | { kind: "loading" }
+  | { kind: "missing" }
+  | { kind: "failed"; message: string }
+  | { kind: "ready"; profile: PlayerProfile; own: MyGame[] | null; history: RatingHistoryResponse | null };
 
 function month(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { month: "long", year: "numeric" });
@@ -28,9 +33,9 @@ function day(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
-function Rating({ profile }: { profile: PlayerProfile }) {
+function Rating({ profile, history }: { profile: PlayerProfile; history: RatingHistoryResponse | null }) {
   const r = profile.rating;
-  const path = ratingPath(profile);
+  const path = ratingPath(history);
   return (
     <section className="file-rating" aria-labelledby="rating-title">
       <h2 id="rating-title">Rating</h2>
@@ -43,7 +48,7 @@ function Rating({ profile }: { profile: PlayerProfile }) {
               {r.established && r.rank ? `Ranked ${r.rank} on the ladder.` : "Not on the ladder until the rating settles: a few more rated games."}
             </span>
           </p>
-          {path.length >= 2 ? <RatingChart points={path} /> : null}
+          {path.length >= 2 ? <RatingChart points={path} more={history?.more ?? false} /> : null}
         </>
       ) : (
         <p className="file-empty">No rated game yet. A game is rated when it is public, ends in a win or a draw after two full years, and has at least three signed-in players.</p>
@@ -233,17 +238,18 @@ export default function ProfilePage({ handle }: { handle: string }) {
     let live = true;
     setLoad({ kind: "loading" });
     (async () => {
-      const profile = await api.profile(handle);
+      // The chart is drawn from the stored history; a history that fails to load only costs the chart.
+      const [profile, history] = await Promise.all([api.profile(handle), api.ratingHistory(handle).catch(() => null)]);
       // On their own record a player also sees every table they sit at, listed or not.
       const me = readPlayer();
       if (me && me.id === profile.player.id) {
         // Their own file from the account, which lists their friendly games as well.
         const [own, file] = await Promise.all([api.myGames(me.secret).catch(() => [] as MyGame[]), api.me(me.secret).catch(() => null)]);
-        return { profile: { ...profile, recent: withOwnCodes(file?.recent ?? profile.recent, own) }, own };
+        return { profile: { ...profile, recent: withOwnCodes(file?.recent ?? profile.recent, own) }, own, history };
       }
-      return { profile, own: null };
+      return { profile, own: null, history };
     })().then(
-      ({ profile, own }) => live && setLoad({ kind: "ready", profile, own }),
+      ({ profile, own, history }) => live && setLoad({ kind: "ready", profile, own, history }),
       (error: unknown) => {
         if (!live) return;
         if (error instanceof ApiError && error.status === 404) setLoad({ kind: "missing" });
@@ -328,12 +334,13 @@ export default function ProfilePage({ handle }: { handle: string }) {
         ) : null}
       </header>
       <div className={`file-grid${p.rating ? "" : " unrated"}`}>
-        <Rating profile={p} />
+        <Rating profile={p} history={load.history} />
         <Reliability profile={p} />
         <Trust profile={p} mine={mine} />
       </div>
       {load.own ? <OwnTables games={load.own} /> : null}
       <Recent profile={p} mine={mine} />
+      {player && !mine ? <ReportPlayer key={p.player.id} handle={p.player.handle} /> : null}
     </main>
   );
 }

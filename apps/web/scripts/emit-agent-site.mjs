@@ -154,6 +154,7 @@ ${bodyHtml}
           <a href="/about">About</a>
           <a href="/contact">Contact</a>
           <a href="/privacy">Privacy</a>
+          <a href="/status">Status</a>
           <a href="/llms.txt">llms.txt</a>
           <a href="https://github.com/KarthikSubramanian07/Cabal">Source</a>
         </span>
@@ -478,7 +479,7 @@ async function bundleServiceWorker(esbuild) {
 /**
  * The front door, prerendered: the app's own markup for `/` (src/landing/prerender.tsx) written into
  * a copy of the shell at dist/landing/index.html, which the Pages worker serves for `/`. The
- * board's preloads are dropped from this copy: the front door has no board, and the engine
+ * pages' preloads are dropped from this copy: the front door has no board, and the engine
  * (a megabyte) must not compete with the headline.
  */
 async function writeLanding(esbuild) {
@@ -511,8 +512,8 @@ async function writeLanding(esbuild) {
   const { renderLanding } = await import(`${pathToFileURL(out).href}?v=${Date.now()}`);
   const markup = renderLanding();
   let html = readFileSync(join(dist, "index.html"), "utf8");
-  html = html.replace(/\s*<link rel="modulepreload"[^>]*(?:SandboxPage|board)-[^>]*>/g, "");
-  html = html.replace(/\s*<link rel="preload" as="fetch"[^>]*cabal_engine_bg-[^>]*>/g, "");
+  // Every hint in the shell names the pages it is for (vite.config.ts); the front door is none of them.
+  html = html.replace(/\s*<link\b[^>]*\sdata-for="[^"]*"[^>]*>/g, "");
   const start = html.indexOf('<div id="root">');
   const end = html.lastIndexOf("</div>", html.indexOf("</body>"));
   if (start < 0 || end < start) throw new Error("emit-agent-site: no #root in dist/index.html");

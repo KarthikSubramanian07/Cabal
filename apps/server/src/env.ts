@@ -50,6 +50,11 @@ export interface Env {
   VAPID_SUBJECT?: string;
   /** Minutes before a deadline a player with no orders in is reminded. Defaults to 60. */
   PUSH_REMINDER_MINUTES?: string;
+  /**
+   * Secret, optional. The HMAC key for counting new accounts per network address (moderation.ts).
+   * Without it a key is derived from `VAPID_PRIVATE_KEY`; with neither, that count is off.
+   */
+  ORIGIN_KEY?: string;
   /** Secret. The bearer token for `GET /api/metrics` and `POST /api/metrics/datc`; they answer 404 without it. */
   ADMIN_TOKEN?: string;
   /** Per-seat limit on press. */

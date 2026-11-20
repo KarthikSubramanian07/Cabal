@@ -19,6 +19,7 @@ import type { ComposeContext, Piece } from "../game/compose.js";
 import { type PhaseKind, parseUnit, phaseKind } from "../game/notation.js";
 import { tidyLegal } from "../game/saved.js";
 import { type Board, loadBoard } from "../map/boardData.js";
+import { type Everyone, NOBODY, legalForEveryone } from "./sketch.js";
 import { settledBook } from "./settle.js";
 
 export type SyncState =
@@ -32,6 +33,11 @@ export type SyncState =
 
 export interface Desk {
   board: Board;
+  /**
+   * The rules engine has arrived. The board is drawn from the map alone, before it: until then
+   * there are no legal orders to offer, and nothing can be settled or judged.
+   */
+  rulesReady: boolean;
   kind: PhaseKind;
   pieces: Piece[];
   /** Legal orders for the seat's power, by unit (adjustments under `""`). */
@@ -54,6 +60,13 @@ export interface Desk {
   settle: () => Promise<boolean>;
   /** The engine's verdict on one typed order: canonical text, legal, and why not. */
   judge: (text: string) => OrderVerdict;
+  /**
+   * Legal orders and allowances for every power on the board, for a what-if sketch that guesses
+   * at the other powers' orders. Worked out on first asking, once per board.
+   */
+  everyone: () => Everyone;
+  /** `judge` for any power: what a typed guess for another power means. */
+  judgeAs: (power: string, text: string) => OrderVerdict;
 }
 
 export type DeskLoad = { status: "loading" } | { status: "error"; error: Error; retry: () => void } | { status: "ready"; desk: Desk };
@@ -106,17 +119,17 @@ export function useDesk(props: Props): DeskLoad {
   const [error, setError] = useState<Error | null>(null);
   const [attempt, setAttempt] = useState(0);
 
+  // The map first, and the engine once the map is in: the board is on screen while the rules,
+  // a megabyte of WebAssembly, are still on their way, rather than both arriving together.
   useEffect(() => {
     let live = true;
     setError(null);
-    Promise.all([engineReady(), loadBoard()]).then(
-      ([, b]) => {
-        if (!live) return;
-        setBoard(b);
-        setEngine(true);
-      },
-      (err: unknown) => live && setError(err instanceof Error ? err : new Error(String(err))),
-    );
+    const fail = (err: unknown) => live && setError(err instanceof Error ? err : new Error(String(err)));
+    loadBoard().then((b) => {
+      if (!live) return;
+      setBoard(b);
+      engineReady().then(() => live && setEngine(true), fail);
+    }, fail);
     return () => {
       live = false;
     };
@@ -295,7 +308,8 @@ export function useDesk(props: Props): DeskLoad {
    * whatever is waiting is filed now rather than after the pause. Resolves true once the server has it all on file.
    */
   const settle = useCallback(async (): Promise<boolean> => {
-    if (!power) return false;
+    // Without the rules there is no telling which decisions are still open.
+    if (!power || !game) return false;
     const disorder = () => {
       try {
         // The rules' own choice: the phase resolved on this seat's orders alone.
@@ -326,10 +340,25 @@ export function useDesk(props: Props): DeskLoad {
 
   const judge = useCallback(
     (text: string): OrderVerdict => {
-      if (!game || !power) return { input: text, canonical: null, legal: false, code: "unparseable", reason: "The board is not ready.", unit: null };
+      if (!game || !power) return { input: text, canonical: null, legal: false, code: "unparseable", reason: engine ? "The board is not ready." : "The rules are still loading. Try again in a moment.", unit: null };
       return game.validateOrders(power, [text])[0]!;
     },
-    [game, power],
+    [game, power, engine],
+  );
+
+  const everyoneCache = useRef<{ game: Game | null; value: Everyone } | null>(null);
+  const everyone = useCallback((): Everyone => {
+    if (!game) return NOBODY;
+    if (everyoneCache.current?.game !== game) everyoneCache.current = { game, value: legalForEveryone(game, kind) };
+    return everyoneCache.current.value;
+  }, [game, kind]);
+
+  const judgeAs = useCallback(
+    (as: string, text: string): OrderVerdict => {
+      if (!game) return { input: text, canonical: null, legal: false, code: "unparseable", reason: "The rules are still loading. Try again in a moment.", unit: null };
+      return game.validateOrders(as, [text])[0]!;
+    },
+    [game],
   );
 
   const ctx = useMemo<ComposeContext>(
@@ -346,9 +375,9 @@ export function useDesk(props: Props): DeskLoad {
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   if (error) return { status: "error", error, retry };
-  if (!board || !engine) return { status: "loading" };
+  if (!board) return { status: "loading" };
   return {
     status: "ready",
-    desk: { board, kind, pieces, legal, allowance, book, ctx, sync, verdicts, syncError, setOrder, removeOrder, clearOrders, holdAll, waive, settle, judge },
+    desk: { board, rulesReady: engine, kind, pieces, legal, allowance, book, ctx, sync, verdicts, syncError, setOrder, removeOrder, clearOrders, holdAll, waive, settle, judge, everyone, judgeAs },
   };
 }

@@ -113,6 +113,21 @@ describe("listing games", () => {
   });
 });
 
+describe("a table's centres", () => {
+  it("answers who holds which supply centres now, the same for anyone, without the saved game", async () => {
+    const seat = await create("Ann", { aiFill: true });
+    const res = await SELF.fetch(`http://cabal/api/games/${seat.gameId}/centres`, { headers: { "cf-connecting-ip": nextIp() } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    const body = (await res.json()) as { gameId: string; phase: string; centers: Record<string, string[]> };
+    expect(body.gameId).toBe(seat.gameId);
+    expect(body.phase).toBe("S1901M");
+    expect([...body.centers.RUSSIA!].sort()).toEqual(["MOS", "SEV", "STP", "WAR"]);
+    expect(Object.keys(body)).toEqual(["gameId", "phase", "centers"]);
+    expect((await SELF.fetch("http://cabal/api/games/ZZZZZZ/centres", { headers: { "cf-connecting-ip": nextIp() } })).status).toBe(404);
+  });
+});
+
 describe("health and failure", () => {
   it("needs exactly the schema the newest migration file makes", () => {
     expect(D1_SCHEMA_REQUIRED).toBe(D1_SCHEMA);
@@ -133,10 +148,19 @@ describe("health and failure", () => {
     for (let i = 0; i < 5; i++) await worker.fetch(new Request("http://cabal/health"), { ...serverEnv, REGISTRY: counting });
     expect(probes).toBe(1);
     expect(health.build.length).toBeGreaterThan(0);
+    // The same answer under /api, where a web app's proxy forwards only /api to the server.
+    expect(HealthResponse.parse(await (await get("/api/health")).json())).toMatchObject({ ok: true, engine: health.engine, build: health.build });
     expect(Math.abs(health.time - Date.now())).toBeLessThan(5_000);
 
     const named = await worker.fetch(new Request("http://cabal/health"), { ...serverEnv, BUILD_ID: "abc1234" });
     expect(((await named.json()) as HealthResponse).build).toBe("abc1234");
+    // The commit and the Worker version are both named, so one curl shows which commit is live.
+    const versioned = await worker.fetch(new Request("http://cabal/health"), {
+      ...serverEnv,
+      BUILD_ID: "3b30e06c5d9a",
+      CF_VERSION_METADATA: { id: "7807fcf8-716d-4af9-8949-897dd3f6ac0f", tag: "3b30e06c5d9a", timestamp: "" },
+    });
+    expect(HealthResponse.parse(await versioned.json())).toMatchObject({ build: "3b30e06c5d9a", version: "7807fcf8-716d-4af9-8949-897dd3f6ac0f" });
 
     // An index that does not answer is reported, and health itself still answers.
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);

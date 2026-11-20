@@ -19,7 +19,7 @@
 
 `diplomacy` `board-game` `negotiation` `rust` `webassembly` `cloudflare-workers` `durable-objects` `d1` `react` `web-push` `game-ai` `datc`
 
-**[Play now](https://playcabal.pages.dev)** · [The sandbox](https://playcabal.pages.dev/sandbox) · [The Ledger](https://playcabal.pages.dev/ledger) · [Architecture](docs/ARCHITECTURE.md) · [Protocol](docs/PROTOCOL.md) · [Rules decisions](docs/RULES.md) · [ADRs](docs/adr/)
+**[Play now](https://playcabal.pages.dev)** · [The sandbox](https://playcabal.pages.dev/sandbox) · [The Ledger](https://playcabal.pages.dev/ledger) · [Architecture](docs/ARCHITECTURE.md) · [Protocol](docs/PROTOCOL.md) · [Rules decisions](docs/RULES.md) · [Integrations](docs/INTEGRATIONS.md) · [ADRs](docs/adr/)
 
 </div>
 

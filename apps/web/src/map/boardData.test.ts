@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import board from "./board.json";
 import { type Board, LABEL_OUTLINE_TOLERANCE, insideOutline, insideRings, outlineOf, pathRings } from "./boardData.js";
-import { labelSize, layoutLabels, unitRadius } from "./view.js";
+import { boardSizes, placeLabels } from "./view.js";
 
 const data = board as unknown as Board;
 
@@ -62,6 +62,7 @@ describe("label layout on the real board", () => {
   const spots = Object.entries(data.provinces)
     .filter(([, p]) => p.kind !== "impassable")
     .map(([code, p]) => {
+      const worth = p.sc ? 0 : p.kind === "sea" ? 2 : 1;
       // Laid out against the thinned outline, as Board.tsx does; judged against the true one.
       const rough = outlineOf(pathRings(p.d, LABEL_OUTLINE_TOLERANCE));
       const exact = pathRings(p.d);
@@ -69,6 +70,7 @@ describe("label layout on the real board", () => {
         code,
         unit: p.unit,
         label: p.label,
+        worth,
         inside: (pt: [number, number]) => insideOutline(rough, pt[0], pt[1]),
         reallyInside: (pt: [number, number]) => insideRings(exact, pt),
       };
@@ -76,22 +78,23 @@ describe("label layout on the real board", () => {
 
   // Every zoom from a far-out overview to as close as the map goes, as Board.tsx sizes it.
   const sizes = new Map<string, readonly [number, number]>();
-  for (let scale = 0.3; scale <= 6; scale *= 1.12) {
-    const r = Math.round(unitRadius(scale) * 4) / 4;
-    const size = Math.round(labelSize(scale) * 4) / 4;
+  // From the whole board on the smallest phone to as close as the map goes.
+  for (let scale = 0.26; scale <= 6; scale *= 1.12) {
+    const { r, size } = boardSizes(scale);
     sizes.set(`${r}/${size}`, [r, size]);
   }
   for (const [r, size] of sizes.values()) {
     it(`writes every code inside the province it names (r ${r}, size ${size})`, () => {
-      const at = layoutLabels(spots, r, size);
-      const outside = spots.filter((s) => !s.reallyInside(at[s.code]!)).map((s) => s.code);
+      const at = placeLabels(spots, r, size);
+      const outside = spots.filter((s) => at[s.code] && !s.reallyInside(at[s.code]!)).map((s) => s.code);
       expect(outside).toEqual([]);
     });
 
     it(`covers no piece position with a code (r ${r}, size ${size})`, () => {
-      const at = layoutLabels(spots, r, size);
+      const at = placeLabels(spots, r, size);
       const covered: string[] = [];
       for (const s of spots) {
+        if (!at[s.code]) continue;
         const [x, y] = at[s.code]!;
         for (const other of spots) {
           const dx = Math.max(Math.abs(other.unit[0] - x) - size * 1.02, 0);
@@ -102,4 +105,15 @@ describe("label layout on the real board", () => {
       expect(covered).toEqual([]);
     });
   }
+
+  it("draws every code up to the cap, and on a far-out overview many supply centres' and none that would clash", () => {
+    const { r, size } = boardSizes(1);
+    expect(Object.keys(placeLabels(spots, r, size))).toHaveLength(spots.length);
+    const far = boardSizes(0.26);
+    expect(far.size).toBeGreaterThan(16);
+    const at = placeLabels(spots, far.r, far.size);
+    const centres = spots.filter((s) => s.worth === 0);
+    expect(centres.filter((s) => at[s.code]).length).toBeGreaterThanOrEqual(centres.length * 0.4);
+    expect(Object.keys(at).length).toBeLessThan(spots.length);
+  });
 });

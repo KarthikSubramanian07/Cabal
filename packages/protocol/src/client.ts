@@ -21,6 +21,7 @@ import {
   type CreateGameRequest,
   CreateGameResponse,
   type DatcReport,
+  DeleteMeResponse,
   GameListing,
   GameRecord,
   GameSummary,
@@ -36,6 +37,8 @@ import {
   NotificationPreferences,
   NotificationsResponse,
   PlayerProfile,
+  PlayerReportResponse,
+  type PlayerReportRequest,
   PlayerSession,
   type PledgeInput,
   type PowerName,
@@ -43,6 +46,7 @@ import {
   PushKeyResponse,
   type PushSubscriptionRequest,
   type Recipient,
+  RatingHistoryResponse,
   RecoveryCodeResponse,
   SeatTokenResponse,
   ServerMessage,
@@ -115,6 +119,12 @@ export interface CabalSocketOptions {
   pongTimeoutMs?: number;
   /** How long `request` waits for its reply. Default 15 s. */
   requestTimeoutMs?: number;
+  /**
+   * Told how long each answered request took, from sending it to its reply (not an `error`), by
+   * the frame type sent: `orders.set` to `orders.ack` is the order round trip. A listener that
+   * throws is ignored.
+   */
+  onReply?: (sent: ClientMessage["t"], ms: number) => void;
   /** Injectable clock, randomness and timers, for tests. */
   now?: () => number;
   random?: () => number;
@@ -133,6 +143,9 @@ interface Pending {
   resolve: (frame: ServerMessage) => void;
   reject: (error: Error) => void;
   timer: unknown;
+  /** The frame type sent, and when, for `onReply`. */
+  sent: ClientMessage["t"];
+  at: number;
 }
 
 const OPEN = 1;
@@ -267,7 +280,7 @@ export class CabalSocket {
         this.pending.delete(id);
         reject(new CabalError("timeout", `no reply to ${frame.t}`));
       }, this.options.requestTimeoutMs ?? 15_000);
-      this.pending.set(id, { resolve: resolve as (frame: ServerMessage) => void, reject, timer });
+      this.pending.set(id, { resolve: resolve as (frame: ServerMessage) => void, reject, timer, sent: frame.t, at: this.now() });
       if (!this.send({ ...frame, id } as ClientMessage)) {
         this.pending.delete(id);
         this.clearTimer(timer);
@@ -573,8 +586,16 @@ export class CabalSocket {
     if (!waiting) return;
     this.pending.delete(frame.id);
     this.clearTimer(waiting.timer);
-    if (frame.t === "error") waiting.reject(new CabalError(frame.p.code, frame.p.message));
-    else waiting.resolve(frame);
+    if (frame.t === "error") {
+      waiting.reject(new CabalError(frame.p.code, frame.p.message));
+      return;
+    }
+    try {
+      this.options.onReply?.(waiting.sent, this.now() - waiting.at);
+    } catch {
+      // timing is a bystander; the reply is delivered whatever it does
+    }
+    waiting.resolve(frame);
   }
 }
 
@@ -634,7 +655,8 @@ export function createApi(options: ApiOptions = {}) {
   const as = (secret?: string) => (secret ? { token: secret } : {});
 
   return {
-    health: () => call(HealthResponse, "GET", "/health"),
+    /** The deployment's health; `/api/health` so it also answers through the web app's `/api` proxy. */
+    health: () => call(HealthResponse, "GET", "/api/health"),
     /** With a player secret the creator sits under their handle and `name` may be left out. */
     createGame: (body: z.input<typeof CreateGameRequest>, secret?: string) => call(CreateGameResponse, "POST", "/api/games", { body, ...as(secret) }),
     joinGame: (gameId: string, body: JoinGameRequest, secret?: string) => call(JoinGameResponse, "POST", `/api/games/${gameId}/join`, { body, ...as(secret) }),
@@ -663,11 +685,19 @@ export function createApi(options: ApiOptions = {}) {
     /** Restore an account on this device from its recovery code. */
     recoverPlayer: (code: string) => call(PlayerSession, "POST", "/api/players/recover", { body: { code } }),
     profile: (handle: string) => call(PlayerProfile, "GET", `/api/players/${encodeURIComponent(handle)}`),
+    /** A player's rating after each rated game, oldest first. */
+    ratingHistory: (handle: string, limit?: number) =>
+      call(RatingHistoryResponse, "GET", `/api/players/${encodeURIComponent(handle)}/ratings${query({ limit })}`),
     me: (secret: string) => call(MeResponse, "GET", "/api/me", { token: secret }),
     rename: (secret: string, handle: string) => call(MeResponse, "PATCH", "/api/me", { token: secret, body: { handle } }),
     /** A new recovery code, shown once; the previous one stops working. */
     issueRecoveryCode: (secret: string) => call(RecoveryCodeResponse, "POST", "/api/me/recovery", { token: secret }),
     logout: (secret: string, everywhere = false) => call(z.null(), "POST", "/api/me/logout", { token: secret, body: { everywhere } }),
+    /** Report a player to the maintainers. */
+    reportPlayer: (secret: string, handle: string, report: PlayerReportRequest) =>
+      call(PlayerReportResponse, "POST", `/api/players/${encodeURIComponent(handle)}/report`, { token: secret, body: report }),
+    /** Delete the account for good. `handle` must be its handle as it is now. */
+    deleteAccount: (secret: string, handle: string) => call(DeleteMeResponse, "DELETE", "/api/me", { token: secret, body: { handle } }),
     myGames: (secret: string) => call(MyGamesResponse, "GET", "/api/me/games", { token: secret }).then((r) => r.games),
     leaderboard: (p: { offset?: number; limit?: number } = {}) => call(LeaderboardResponse, "GET", `/api/leaderboard${page(p)}`),
     trustLedger: (p: { offset?: number; limit?: number } = {}) => call(TrustLeaderboardResponse, "GET", `/api/ledger${page(p)}`),
