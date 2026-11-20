@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { App } from "./app/App.jsx";
+import { startErrorReports } from "./net/errors.js";
 import { startTimings } from "./net/timings.js";
 import { listenForInstall } from "./pwa/InstallButton.jsx";
 import { registerServiceWorker } from "./pwa/register.js";
@@ -16,6 +17,8 @@ registerServiceWorker();
 listenForInstall();
 // Anonymous phase 1 timings (net/timings.ts): started before anything else, so the clock is honest.
 startTimings();
+// Anonymous reports of what broke and nothing caught (net/errors.ts).
+startErrorReports();
 
 function start(): void {
   const app = (

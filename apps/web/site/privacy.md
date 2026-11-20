@@ -22,6 +22,8 @@ Clearing this site's data in your browser removes all of it. Without a recovery 
 - **New accounts per network address**: to spot one person making many accounts, the server counts the accounts made each day under a SHA-256 of the day and your address. It never stores the address, the count changes key every day, and it is deleted after two days.
 - **Measurements**: counts and timings with no player, address or device attached. While you play, your browser times how long each set of orders takes to reach the server and come back, and, on a visit that starts at the front page, how long it took to reach a game in progress. When you leave or hide the page it sends those numbers, and nothing else, in one message; the server keeps only daily totals for each continent (Cloudflare tells it which one the message came from), never the message itself.
 
+- **Error reports**: when a page breaks, your browser tells the server what broke: the error's message, which kind of page it was (a game, the Ledger) but not its address, and the line of Cabal's code where it happened. Nothing names you or this device. The server writes it into its own logs with the continent it came from, keeps nothing else, and a page sends at most five a visit.
+
 The server runs on Cloudflare Workers, Durable Objects and D1. Cloudflare processes ordinary request logs (address, browser, time) to operate the service.
 
 ## Leaving
