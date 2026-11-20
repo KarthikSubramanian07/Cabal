@@ -171,6 +171,12 @@ function Slip({ d, newest, paused, onOpen, onDismiss }: { d: Dispatch; newest: b
       <div className="slip-acts">
         <button type="button" className="btn small" onClick={() => onOpen(d)} aria-keyshortcuts={newest && shortcuts ? NEWS_KEY.toUpperCase() : undefined}>
           {d.kind === "resolved" ? "See the results" : d.kind === "receipt" ? "See the seal" : "Read it"}
+          {/* The key, shown as the order tools show theirs; said through aria-keyshortcuts instead. */}
+          {newest && shortcuts ? (
+            <kbd className="keys-only" aria-hidden="true">
+              {NEWS_KEY.toUpperCase()}
+            </kbd>
+          ) : null}
         </button>
         {/* Named "Dismiss" alone, and described by the slip's title, so it says which slip it closes. */}
         <button type="button" className="slip-close" aria-label="Dismiss" aria-describedby={titleId} onClick={() => onDismiss(d.key)}>
