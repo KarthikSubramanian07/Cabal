@@ -46,6 +46,16 @@ A run writes, under `--out` (default `arena-out`):
 The nightly `Stress` workflow plays ten games in process and one through `wrangler dev` with bot
 seats only (no secrets, no spend) and publishes the report as an artifact.
 
+## In a real game
+
+`cabal-server` plays every AI seat with the bot inside the `GameRoom`. A game that opts into
+Claude (`aiBrain: "claude"`, on a server holding `ANTHROPIC_API_KEY`) also asks the
+`cabal-agent-turns` queue for each AI seat's turn, and its consumer
+(`apps/server/src/agent-consumer.ts`) plays it with a `Player` and a `ClaudeBrain` under the
+game's spend cap. A seat whose player has missed two movement phases (civil disorder) is taken
+over the same way until the player orders again; their returning orders always win. Whatever
+fails, the bot's orders are already on file.
+
 ## Prompt
 
 - A unit with more than twelve legal orders is framed as candidates: where its moves lead, then
