@@ -321,6 +321,14 @@
   outline-offset: 1px;
 }
 
+/* Pointing at the cell, or tabbing to it, inks the name it leads to, as any link in the room. */
+.chair-link:hover ~ .chair-name,
+.chair-link:focus-visible ~ .chair-name {
+  color: var(--ink);
+  text-decoration-color: currentColor;
+  text-decoration-thickness: 2px;
+}
+
 /* Over the map on a phone the strip stays two lines tall; the name is in each cell's label. */
 .chairs.at-stage .chair-name {
   display: none;
