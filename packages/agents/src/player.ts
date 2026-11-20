@@ -48,6 +48,14 @@ export const Decision = z.object({
     }),
   ),
   diary: z.string().describe("One or two sentences for your private diary."),
+  plan: z
+    .string()
+    .optional()
+    .describe("Only when the task asks for it: your plan for the year, two or three sentences."),
+  yearSummary: z
+    .string()
+    .optional()
+    .describe("Only when the task asks for it: the year your diary covers, in two sentences."),
 });
 export type Decision = z.infer<typeof Decision>;
 
@@ -61,6 +69,11 @@ export interface BrainRequest {
   prompt: string;
   kind: "M" | "R" | "A";
   step: Step;
+  /**
+   * The same turn as structured data: board, menu, press and memory. A brain that reads the board
+   * rather than the prose (the heuristic bot) needs it; a language model ignores it.
+   */
+  situation?: PromptInput;
 }
 
 export interface BrainReply {
@@ -68,6 +81,11 @@ export interface BrainReply {
   /** Null when the brain is not a metered model (a scripted or local brain). */
   usage: Usage | null;
   model: string | null;
+  /**
+   * Set when the brain that was asked could not answer and a stand-in did (see `FailoverBrain`):
+   * why, and what the failed attempt cost, so the bill still counts it.
+   */
+  failover?: { reason: string; usage: Usage | null; model: string | null };
 }
 
 /** Anything that can turn a prompt into a decision; the Claude client is the default, tests inject a fake. */
@@ -100,9 +118,12 @@ export interface ClaudeBrainOptions {
   model?: string;
   /** One effort for every request, or one per kind of request. Defaults to `DEFAULT_EFFORT`. */
   effort?: Effort | Partial<EffortPlan>;
-  /** Request timeout in milliseconds (the SDK default is ten minutes). */
+  /** Request timeout in milliseconds. Defaults to `CLAUDE_TIMEOUT_MS` (the SDK's own is ten minutes). */
   timeoutMs?: number;
-  /** SDK retries on 408, 409, 429 and 5xx (the SDK default is 2). */
+  /**
+   * SDK retries on 408, 409, 429 and 5xx. Defaults to none (the SDK's own default is 2): a spend
+   * cap reserves the worst case of one request per decision, and a retry would be a second bill.
+   */
   maxRetries?: number;
   client?: Anthropic;
 }
@@ -146,6 +167,9 @@ export const byteLength = (text: string): number => utf8.encode(text).byteLength
 
 export const DEFAULT_MODEL = "claude-opus-5-5";
 
+/** How long one decision may take before it is given up (and charged its whole reservation). */
+export const CLAUDE_TIMEOUT_MS = 120_000;
+
 export function requestKind(kind: "M" | "R" | "A", step: Step): keyof EffortPlan {
   if (kind === "R") return "retreat";
   if (kind === "A") return "adjustment";
@@ -165,8 +189,9 @@ export class ClaudeBrain implements Brain {
       opts.client ??
       new Anthropic({
         ...(opts.apiKey ? { apiKey: opts.apiKey } : {}),
-        ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
-        ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+        timeout: opts.timeoutMs ?? CLAUDE_TIMEOUT_MS,
+        // One decision is one request, so the reservation made for it bounds what it can cost.
+        maxRetries: opts.maxRetries ?? 0,
       });
     this.model = opts.model ?? DEFAULT_MODEL;
     this.effort =
@@ -245,6 +270,8 @@ function normalise(text: string): string {
   return text
     .trim()
     .toUpperCase()
+    // A note the model copied from the menu's framing, `A PAR - BUR (EMPTY)`, is not part of the order.
+    .replace(/\s*[([][^()[\]]*[)\]]$/, "")
     .replace(/^[A-Z]+:\s*/, "")
     .replace(/[.;,]+$/, "")
     .replace(/\s*-+>\s*/g, " - ")
@@ -341,6 +368,8 @@ export interface Played {
   costMicros: number;
   /** The prompt that was sent, for logs and evaluations. */
   prompt: string;
+  /** Why the brain asked for was replaced by a stand-in this turn, or null (see `FailoverBrain`). */
+  failover: string | null;
 }
 
 export class Player {
@@ -401,16 +430,30 @@ export class Player {
       diary: this.diary.slice(-MEMORY_LIMITS.diaryEntries),
       relationships: [...this.relationships].map(([power, r]) => ({ power, ...r })),
     };
+    const year = yearOf(input.phase);
+    const kind = phaseKind(input.phase);
+    // The first movement decision of a year is also the year's planning step, and the moment the
+    // diary of the years before it is folded into one line each.
+    const planning = year !== null && kind === "M" && !this.diary.some((entry) => entry.startsWith(`${year} plan: `));
+    const stale = year === null ? [] : staleYears(this.diary, year);
+    if (year !== null) {
+      full.plan = this.diary.find((entry) => entry.startsWith(`${year} plan: `))?.slice(`${year} plan: `.length) ?? null;
+      full.diary = full.diary.filter((entry) => !entry.startsWith(`${year} plan: `));
+    }
+    full.planning = planning;
+    full.summarise = planning ? (stale.at(-1) ?? null) : null;
     const prompt = userPrompt(full);
     let decision: Decision;
     let failure: BrainFailure | null = null;
     let usage: Usage | null = null;
     let model: string | null = null;
+    let failover: NonNullable<BrainReply["failover"]> | null = null;
     try {
-      const reply = await this.brain.decide({ system: systemPrompt(input.map), prompt, kind: phaseKind(input.phase), step });
+      const reply = await this.brain.decide({ system: systemPrompt(input.map), prompt, kind, step, situation: full });
       decision = reply.decision;
       usage = reply.usage;
       model = reply.model;
+      failover = reply.failover ?? null;
     } catch (e) {
       failure = e instanceof BrainFailure ? e : new BrainFailure(e instanceof Error ? e.message : String(e), "unknown");
       usage = failure.usage;
@@ -434,11 +477,19 @@ export class Player {
       relationships: decision.relationships.map((r) => ({ ...r, stance: clampStance(r.stance) })),
     };
     for (const r of decision.relationships) this.remember(r);
+    if (failure === null && year !== null) {
+      // One line per finished year, written by the model when it was asked to, else mechanically.
+      this.diary = consolidate(this.diary, stale, full.summarise === null ? null : (decision.yearSummary ?? null));
+      const plan = planning ? (decision.plan ?? "").trim() : "";
+      if (plan) this.diary = [...this.diary, `${year} plan: ${plan}`.slice(0, MEMORY_LIMITS.diaryChars)];
+    }
     const entry = decision.diary.trim();
     if (entry) {
       const line = `${input.phase}${step === "negotiate" ? " (talks)" : ""}: ${entry}`.slice(0, MEMORY_LIMITS.diaryChars);
-      this.diary = [...this.diary, line].slice(-MEMORY_LIMITS.diaryEntries);
+      this.diary = [...this.diary, line];
     }
+    this.diary = this.diary.slice(-MEMORY_LIMITS.diaryEntries);
+    const failed = failover?.usage && failover.model ? costMicros(failover.model, failover.usage) : 0;
     return {
       decision,
       validated,
@@ -447,10 +498,63 @@ export class Player {
       step,
       model,
       usage,
-      costMicros: usage && model ? costMicros(model, usage) : 0,
+      costMicros: (usage && model ? costMicros(model, usage) : 0) + failed,
       prompt,
+      failover: failover?.reason ?? null,
     };
   }
+}
+
+/** The year of a phase name (`S1901M` -> 1901), or null for a name that is not one. */
+export function yearOf(phase: string): number | null {
+  const m = /^[SFW](\d{4})[MRA]$/.exec(phase);
+  return m ? Number(m[1]) : null;
+}
+
+/** The year a diary entry belongs to: `S1901M: ...`, `1901 plan: ...` or `1901 in brief: ...`. */
+function entryYear(entry: string): number | null {
+  const m = /^(?:[SFW](\d{4})[MRA]\b|(\d{4}) (?:plan|in brief):)/.exec(entry);
+  return m ? Number(m[1] ?? m[2]) : null;
+}
+
+/** Years before `year` that still have more than their one-line brief in the diary, oldest first. */
+export function staleYears(diary: string[], year: number): number[] {
+  const years = new Set<number>();
+  for (const entry of diary) {
+    const y = entryYear(entry);
+    if (y !== null && y < year && !entry.startsWith(`${y} in brief: `)) years.add(y);
+  }
+  return [...years].sort((a, b) => a - b);
+}
+
+/**
+ * Fold each stale year's entries into one `YEAR in brief:` line, in place of its first entry. The
+ * newest stale year takes `summary` when the model wrote one; every other year, and that one when
+ * it did not, is folded mechanically: its entries joined and clipped.
+ */
+export function consolidate(diary: string[], years: number[], summary: string | null): string[] {
+  if (years.length === 0) return diary;
+  const newest = years.at(-1);
+  const out: string[] = [];
+  const folded = new Set<number>();
+  for (const entry of diary) {
+    const y = entryYear(entry);
+    if (y === null || !years.includes(y)) {
+      out.push(entry);
+      continue;
+    }
+    if (folded.has(y)) continue;
+    folded.add(y);
+    const written = y === newest ? (summary ?? "").trim() : "";
+    const text =
+      written ||
+      diary
+        .filter((e) => entryYear(e) === y)
+        .map((e) => e.replace(/^[^:]*: /, ""))
+        .join(" / ");
+    out.push(`${y} in brief: ${text}`.slice(0, MEMORY_LIMITS.diaryChars));
+  }
+  return out;
 }
 
 /** Seven default personas, one per power, written to be memorable at the table. */

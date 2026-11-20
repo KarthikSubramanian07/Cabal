@@ -19,6 +19,7 @@
     "test": "pnpm -r test",
     "test:e2e": "pnpm --filter @cabal/web test:e2e",
     "test:e2e:live": "pnpm --filter @cabal/web test:e2e:live",
+    "arena": "pnpm --filter @cabal/agents arena",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "deploy:web": "pnpm engine:build && pnpm --filter @cabal/web build && pnpm --filter @cabal/web exec wrangler pages deploy dist --project-name playcabal --branch main",
     "deploy:server": "pnpm engine:build && pnpm --filter @cabal/server run deploy",

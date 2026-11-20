@@ -3,12 +3,23 @@
  * dialog describes each choice with them, and the games list summarises with them, so one
  * setting is always called the same thing.
  */
-import type { GameSettings, Pacing, PowerName, PressMode, Scoring } from "@cabal/protocol";
+import type { GameSettings, Pacing, PowerName, PressMode, Scoring, SeatView } from "@cabal/protocol";
 
 export const POWERS: readonly PowerName[] = ["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"];
 
 export function powerLabel(power: string): string {
   return power.charAt(0) + power.slice(1).toLowerCase();
+}
+
+/** Who sits at a place card: a name, an empty chair, or which brain is playing or covering it. */
+export function occupant(seat: Pick<SeatView, "kind" | "name" | "brain" | "autopilot">): string {
+  if (seat.kind === "open") return "Open seat";
+  if (seat.kind === "ai") return seat.brain === "claude" ? "Played by Claude" : "Played by the bot";
+  if (seat.kind === "civil_disorder") {
+    if (!seat.autopilot) return `${seat.name ?? "Player"}, in civil disorder`;
+    return `${seat.name ?? "Player"}, ${seat.brain === "claude" ? "Claude" : "the bot"} covering`;
+  }
+  return seat.name ?? "Player";
 }
 
 /** `600` as `10 minutes`, `86400` as `1 day`, `172800` as `2 days`. */

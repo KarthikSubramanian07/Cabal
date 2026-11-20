@@ -42,7 +42,12 @@ impl Phase {
         Phase::new(1901, Season::Spring, PhaseKind::Movement)
     }
 
-    /// Parse `S1901M`, `F1902R`, `W1903A`.
+    /// The calendar's last year. A game still going at the end of its fall ends in a draw, so
+    /// no phase name ever needs a fifth digit and no two phases of a game share a name.
+    pub const LAST_YEAR: u16 = 9999;
+
+    /// Parse `S1901M`, `F1902R`, `W1903A`. The year is exactly four digits, so that every phase
+    /// the engine plays prints and reads back as itself.
     pub fn parse(s: &str) -> Option<Phase> {
         let s = s.trim().to_ascii_uppercase();
         let b = s.as_bytes();
@@ -55,8 +60,14 @@ impl Phase {
             b'W' => Season::Winter,
             _ => return None,
         };
-        let year: u16 = s[1..5].parse().ok()?;
-        let kind = match b[5] {
+        // Checked as bytes: a wider character must never be sliced through, and
+        // `u16::from_str` alone would also take a sign.
+        let digits = &b[1..b.len() - 1];
+        if !digits.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        let year: u16 = std::str::from_utf8(digits).ok()?.parse().ok()?;
+        let kind = match b[b.len() - 1] {
             b'M' => PhaseKind::Movement,
             b'R' => PhaseKind::Retreat,
             b'A' => PhaseKind::Adjustment,
@@ -78,7 +89,7 @@ impl fmt::Display for Phase {
             PhaseKind::Retreat => 'R',
             PhaseKind::Adjustment => 'A',
         };
-        write!(f, "{s}{}{k}", self.year)
+        write!(f, "{s}{:04}{k}", self.year)
     }
 }
 
@@ -260,6 +271,38 @@ mod tests {
         assert_eq!(p, Phase::new(1905, Season::Fall, PhaseKind::Retreat));
         assert_eq!(p.to_string(), "F1905R");
         assert_eq!(Phase::first().to_string(), "S1901M");
+    }
+
+    #[test]
+    fn phase_text_round_trips_for_every_year_it_accepts() {
+        for year in [0, 7, 950, 1901, Phase::LAST_YEAR] {
+            for season in [Season::Spring, Season::Fall, Season::Winter] {
+                let phase = Phase::new(year, season, PhaseKind::Movement);
+                assert_eq!(Phase::parse(&phase.to_string()), Some(phase), "{phase}");
+            }
+        }
+        assert_eq!(
+            Phase::new(950, Season::Spring, PhaseKind::Movement).to_string(),
+            "S0950M"
+        );
+        assert_eq!(Phase::parse("S0950M").map(|p| p.year), Some(950));
+        // A year is four digits, nothing else: `u16::from_str` alone would take a sign.
+        // Found by the fuzzer: a name with a character wider than a byte is refused, not a panic.
+        for text in [
+            "S\u{3f2}190M",
+            "S19\u{3f2}1M",
+            "S190\u{3f2}M",
+            "\u{3f2}19011M",
+            "S1901\u{3f2}",
+        ] {
+            assert_eq!(Phase::parse(text), None, "{text}");
+        }
+        for text in [
+            "S+950M", "S-950M", "S 950M", "S95_0M", "S950M", "S01901M", "S10000M", "S65535M",
+            "S65536M", "S190111M",
+        ] {
+            assert_eq!(Phase::parse(text), None, "{text}");
+        }
     }
 
     #[test]

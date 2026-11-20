@@ -2,7 +2,20 @@ import { ApiError } from "@cabal/protocol/client";
 import { resolveSettings } from "@cabal/protocol";
 import { describe, expect, it } from "vitest";
 import { failureText, socketUrl } from "../net/api.js";
-import { ago, describeTerms, duration, phaseLabel, powerLabel, shortTerms, timeLeft } from "./terms.js";
+import { ago, describeTerms, duration, occupant, phaseLabel, powerLabel, shortTerms, timeLeft } from "./terms.js";
+
+describe("who sits at a place card", () => {
+  it("names the player, and which brain covers a seat in civil disorder", () => {
+    expect(occupant({ kind: "human", name: "Bea", brain: null })).toBe("Bea");
+    expect(occupant({ kind: "open", name: null, brain: null })).toBe("Open seat");
+    expect(occupant({ kind: "ai", name: "Automaton", brain: "claude" })).toBe("Played by Claude");
+    expect(occupant({ kind: "ai", name: "Automaton", brain: "bot" })).toBe("Played by the bot");
+    expect(occupant({ kind: "civil_disorder", name: "Bea", brain: null, autopilot: false })).toBe("Bea, in civil disorder");
+    expect(occupant({ kind: "civil_disorder", name: "Bea", brain: "claude", autopilot: true })).toBe("Bea, Claude covering");
+    expect(occupant({ kind: "civil_disorder", name: "Cyd", brain: "bot", autopilot: true })).toBe("Cyd, the bot covering");
+    expect(occupant({ kind: "civil_disorder", name: null, brain: null, autopilot: true })).toBe("Player, the bot covering");
+  });
+});
 
 describe("terms of a table", () => {
   it("says durations the way people do", () => {

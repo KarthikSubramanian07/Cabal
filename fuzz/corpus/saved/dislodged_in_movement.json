@@ -1,0 +1,125 @@
+{
+ "id": "dislodged_in_movement",
+ "map": "standard",
+ "rules": [
+  "2023"
+ ],
+ "phases": [
+  {
+   "name": "S1901M",
+   "state": {
+    "name": "S0950M",
+    "units": {
+     "AUSTRIA": [
+      "A VIE"
+     ],
+     "GERMANY": [
+      "*A MUN"
+     ],
+     "ITALY": [],
+     "RUSSIA": [
+      "A BUD",
+      "A VIE"
+     ],
+     "TURKEY": []
+    },
+    "centers": {
+     "AUSTRIA": [],
+     "ENGLAND": [],
+     "FRANCE": [],
+     "GERMANY": [],
+     "ITALY": [],
+     "RUSSIA": [],
+     "TURKEY": []
+    },
+    "homes": {
+     "AUSTRIA": [
+      "BUD",
+      "TRI",
+      "VIE"
+     ],
+     "ENGLAND": [
+      "EDI",
+      "LON",
+      "LVP"
+     ],
+     "FRANCE": [
+      "BRE",
+      "MAR",
+      "PAR"
+     ],
+     "GERMANY": [
+      "BER",
+      "KIE",
+      "MUN"
+     ],
+     "ITALY": [
+      "NAP",
+      "ROM",
+      "VEN"
+     ],
+     "RUSSIA": [
+      "MOS",
+      "SEV",
+      "STP",
+      "WAR"
+     ],
+     "TURKEY": [
+      "ANK",
+      "CON",
+      "SMY"
+     ]
+    },
+    "retreats": {},
+    "builds": {
+     "AUSTRIA": {
+      "count": 0,
+      "homes": []
+     },
+     "ENGLAND": {
+      "count": 0,
+      "homes": []
+     },
+     "FRANCE": {
+      "count": -1,
+      "homes": []
+     },
+     "GERMANY": {
+      "count": 0,
+      "homes": []
+     },
+     "ITALY": {
+      "count": 0,
+      "homes": []
+     },
+     "RUSSIA": {
+      "count": 0,
+      "homes": []
+     },
+     "TURKEY": {
+      "count": 0,
+      "homes": []
+     }
+    }
+   },
+   "orders": {},
+   "results": {},
+   "messages": []
+  }
+ ],
+ "cabal": {
+  "engine": "0.1.0",
+  "rulebook": {
+   "edition": "e2023",
+   "convoy_intent": "same_power_fleet",
+   "disband_distance": "owned_centers",
+   "convoy_fallback": false,
+   "build_anywhere": false,
+   "fog_of_war": false,
+   "victory_centers": 18
+  },
+  "outcome": {
+   "result": "active"
+  }
+ }
+}

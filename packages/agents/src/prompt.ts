@@ -43,6 +43,17 @@ export interface PromptInput {
   myPledges: string[][];
   /** Public trust ledger of other powers: kept / broken counts. */
   trust: Record<string, { kept: number; broken: number }>;
+  /** This year's plan, written at its first movement decision; null before then. */
+  plan?: string | null;
+  /** True for the first movement decision of a year: the turn also writes the year's plan. */
+  planning?: boolean;
+  /** A finished year whose diary entries this turn should sum up (they are folded into one line). */
+  summarise?: number | null;
+  /**
+   * True when this seat belongs to a person who has missed their turns and the model is covering it
+   * until they return. The turn gives orders only: the room sends none of its press or pledges.
+   */
+  covering?: boolean;
 }
 
 export const SYSTEM_PROMPT = `You are playing Cabal, a game of Diplomacy with receipts.
@@ -160,9 +171,68 @@ export function boardReport(input: PromptInput): string {
   return lines.join("\n");
 }
 
+/**
+ * A unit with more legal orders than this is framed as candidates: a line saying where its moves
+ * lead, then its orders grouped as hold and moves, supports for its own side, supports for other
+ * powers, and convoys. A fleet in the middle of the board can have forty orders, nearly all of
+ * them supports for units it has no reason to help; flat, those bury the three moves that matter.
+ */
+export const CROWDED_UNIT = 12;
+
+/** `SPA/SC` -> `SPA`; `A MAR` -> `MAR`. */
+const provinceId = (text: string): string => text.replace(/^[AF] /, "").slice(0, 3);
+
+/** Who stands in a province and whose centre it is, from `power`'s point of view. */
+function describeProvince(id: string, input: PromptInput): string {
+  const { state, map, power } = input;
+  const occupant = Object.entries(state.units).find(([, units]) => units.some((u) => provinceId(u) === id))?.[0];
+  const parts = [occupant === undefined ? "empty" : occupant === power ? "your unit" : `${occupant} unit`];
+  if (map.provinces.find((p) => p.id === id)?.supply_center != null) {
+    const owner = Object.entries(state.centers).find(([, centres]) => centres.includes(id))?.[0];
+    parts.push(owner === undefined ? "neutral centre" : owner === power ? "your centre" : `${owner} centre`);
+  }
+  return parts.join(", ");
+}
+
+/** The power that owns the unit a support or convoy is for: `A MAR S A PAR - BUR` -> owner of `A PAR`. */
+function helpedPower(order: string, input: PromptInput): string | undefined {
+  const helped = / [SC] ([AF] [A-Z]{3})/.exec(order)?.[1];
+  if (helped === undefined) return undefined;
+  const id = provinceId(helped);
+  return Object.entries(input.state.units).find(([, units]) => units.some((u) => provinceId(u) === id))?.[0];
+}
+
+function candidates(unit: string, orders: string[], input: PromptInput): string[] {
+  const holds = orders.filter((o) => o.endsWith(" H"));
+  const moves = orders.filter((o) => / - /.test(o) && !/ [SC] /.test(o));
+  const supports = orders.filter((o) => / S /.test(o));
+  const own = supports.filter((o) => helpedPower(o, input) === input.power);
+  const others = supports.filter((o) => helpedPower(o, input) !== input.power);
+  const convoys = orders.filter((o) => / C /.test(o));
+  const rest = orders.filter((o) => !holds.includes(o) && !moves.includes(o) && !supports.includes(o) && !convoys.includes(o));
+  const reach = [...new Set(moves.map((o) => o.split(" - ")[1]!.replace(/ VIA$/, "")))].map(
+    (to) => `${to} (${describeProvince(provinceId(to), input)})`,
+  );
+  const lines = [`${unit}: ${orders.length} orders. Moves reach ${reach.length ? reach.join("; ") : "nowhere"}.`];
+  const group = (label: string, list: string[]) => {
+    if (list.length === 0) return;
+    if (label) lines.push(`  [${label}]`);
+    for (const o of list) lines.push(`  ${o}`);
+  };
+  group("", [...holds, ...moves, ...rest]);
+  group("supports for your own units", own);
+  group("supports for other powers' units", others);
+  group("convoys", convoys);
+  return lines;
+}
+
 export function legalMenu(input: PromptInput): string {
   const lines: string[] = [];
   for (const [unit, orders] of Object.entries(input.legal.by_unit)) {
+    if (unit && orders.length > CROWDED_UNIT) {
+      lines.push(...candidates(unit, orders, input));
+      continue;
+    }
     lines.push(`${unit || "adjustments (choose as many as the allowance, each for a different province)"}:`);
     for (const o of orders) lines.push(`  ${o}`);
   }
@@ -170,7 +240,38 @@ export function legalMenu(input: PromptInput): string {
   return lines.join("\n");
 }
 
+/** What the first movement decision of a year asks for on top of its usual task. */
+function planningTask(input: PromptInput): string {
+  if (!input.planning) return "";
+  const year = /\d{4}/.exec(input.phase)?.[0] ?? "this year";
+  const lines = [
+    `\n\nThis is your first decision of ${year}. Also fill \`plan\`: what you mean to have by the winter, with whom and`,
+    `against whom, in two or three sentences. It is shown to you for the rest of the year.`,
+  ];
+  if (input.summarise != null) {
+    lines.push(
+      `Also fill \`yearSummary\`: ${input.summarise} as your diary tells it, in two sentences. It replaces those`,
+      `diary entries, so keep what you will need: who helped you, who lied, what you owe.`,
+    );
+  }
+  return lines.join("\n");
+}
+
 function task(input: PromptInput): string {
+  return baseTask(input) + planningTask(input) + coveringTask(input);
+}
+
+/** Said last, so it overrides the invitations to send press in the task above. */
+export const COVERING_NOTE = `You are covering this seat for its player, who has missed their turns and may come back at any
+moment. Give orders only: leave \`messages\` empty and \`pledge\` null. Nothing you write would be sent,
+because it would be read as the player's own words and any pledge would count on their record. The
+press above is only what was said to the whole table.`;
+
+function coveringTask(input: PromptInput): string {
+  return input.covering ? `\n\n${COVERING_NOTE}` : "";
+}
+
+function baseTask(input: PromptInput): string {
   if (input.step === "negotiate") {
     return `This is the opening of the phase: negotiate. Nothing is final yet. Read the press above, decide what
 you want from each neighbour, and write the press you want to send now: proposals, answers, warnings.
@@ -276,6 +377,7 @@ export function userPrompt(input: PromptInput): string {
     `# Trust ledger\n${trust || "empty"}`,
     `# Your relationships\n${rel}`,
     `# Your diary\n${diary}`,
+    ...(input.plan !== undefined ? [`# Your plan for this year\n${input.plan?.trim() || (input.planning ? "none yet: write it now" : "none")}`] : []),
     `# Task\n${task(input)}`,
   ].join("\n\n");
 }
