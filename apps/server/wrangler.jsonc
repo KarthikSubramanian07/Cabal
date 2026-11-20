@@ -17,8 +17,8 @@
     "VAPID_PUBLIC_KEY": "BJjrRWlws87Gk0wWOB0uOu62eA5vg50PTgvR9gwWJXs7cbE9BGmC2fRkF5LFmk2QpHFKeB0iOeNGAmp_Yo-ibsE",
     "VAPID_SUBJECT": "https://playcabal.pages.dev",
     "PUSH_REMINDER_MINUTES": "60",
-    // Sign in with Google: the web OAuth client ID (public; no secret is used). Empty turns it off.
-    "GOOGLE_CLIENT_ID": ""
+    // Sign in with Google: the web OAuth client ID of the Google Cloud project cabal-515312 (public; no secret is used). Empty turns it off.
+    "GOOGLE_CLIENT_ID": "537050516417-amjguq4be29lobd5dpii80ha04fd5bgc.apps.googleusercontent.com"
   },
   "durable_objects": {
     "bindings": [
