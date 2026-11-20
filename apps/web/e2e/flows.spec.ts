@@ -38,7 +38,7 @@ test.describe("convoys", () => {
     await tap(page, "NWY");
     await tap(page, "NTH");
     await tool(page, "Convoy").click();
-    await expect(hint(page)).toContainText("click the army");
+    await expect(hint(page)).toContainText(/(click|tap) the army/);
     await tap(page, "YOR");
     await tap(page, "NWY");
 
@@ -111,7 +111,7 @@ test.describe("convoy routes", () => {
     if (isPhone(info)) await byConvoy.click();
     else await page.keyboard.press("v");
     await expect(byConvoy).toHaveAttribute("aria-pressed", "true");
-    await expect(hint(page)).toHaveText("A WAL by convoy: click where the fleets should land it.");
+    await expect(hint(page)).toHaveText(/^A WAL by convoy: (click|tap) where the fleets should land it\.$/);
     // Only coasts a fleet can reach are lit: Liverpool, next door by land, is not one of them.
     await expect(page.locator("svg.board path.target")).not.toHaveCount(0);
     await expect(page.getByRole("button", { name: /^By convoy to Liverpool/ })).toHaveCount(0);
@@ -178,7 +178,7 @@ test.describe("retreats and adjustments", () => {
     await primary(page).click();
 
     await expect(primary(page)).toHaveText("Resolve Fall 1901 retreats");
-    await expect(hint(page)).toContainText("Click a dislodged unit");
+    await expect(hint(page)).toContainText(/(Click|Tap) a dislodged unit/);
     await expect(page.locator("svg.board-live g.unit.dislodged")).toHaveCount(1);
     await tap(page, "TRI");
     await tap(page, "ALB");

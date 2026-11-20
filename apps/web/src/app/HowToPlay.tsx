@@ -1,3 +1,4 @@
+import { PressWord, pressWord } from "./pointer.js";
 import { useEffect, useRef } from "react";
 import { ADJUDICATION_CASES, CABAL_CASES, DATC_CASES } from "./adjudication.js";
 
@@ -14,6 +15,9 @@ export function HowToPlay({
   onShortcuts: (on: boolean) => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  // "Tap" on a touch screen, "Click" with a mouse.
+  const tap = pressWord();
+  const Tap = PressWord();
 
   useEffect(() => {
     const d = ref.current;
@@ -45,12 +49,12 @@ export function HowToPlay({
             <tbody>
               <tr>
                 <th>Move</th>
-                <td>Click a unit, then the province it should move to.</td>
+                <td>{Tap} a unit, then the province it should move to.</td>
               </tr>
               <tr>
                 <th>Hold</th>
                 <td>
-                  Click the unit twice, or choose Hold
+                  {Tap} the unit twice, or choose Hold
                   <span className="keys-only">
                     {" "}
                     (<kbd>H</kbd>)
@@ -61,30 +65,30 @@ export function HowToPlay({
               <tr>
                 <th>Support</th>
                 <td>
-                  Click your unit, choose Support
+                  {Tap} your unit, choose Support
                   <span className="keys-only">
                     {" "}
                     (<kbd>S</kbd>)
                   </span>
-                  , click the unit you are helping, then its destination. Click that unit a second time to support
+                  , {tap} the unit you are helping, then its destination. {Tap} that unit a second time to support
                   it holding.
                 </td>
               </tr>
               <tr>
                 <th>Convoy</th>
                 <td>
-                  Click a fleet at sea, choose Convoy
+                  {Tap} a fleet at sea, choose Convoy
                   <span className="keys-only">
                     {" "}
                     (<kbd>C</kbd>)
                   </span>
-                  , click the army, then where it lands.
+                  , {tap} the army, then where it lands.
                 </td>
               </tr>
               <tr>
                 <th>By convoy</th>
                 <td>
-                  To send an army by sea, click it and choose By convoy
+                  To send an army by sea, {tap} it and choose By convoy
                   <span className="keys-only">
                     {" "}
                     (<kbd>V</kbd>)
@@ -97,7 +101,7 @@ export function HowToPlay({
               <tr>
                 <th>Retreat</th>
                 <td>
-                  Click the dislodged unit, then an empty neighbour. Choose Disband
+                  {Tap} the dislodged unit, then an empty neighbour. Choose Disband
                   <span className="keys-only">
                     {" "}
                     (<kbd>D</kbd>)
@@ -107,7 +111,9 @@ export function HowToPlay({
               </tr>
               <tr>
                 <th>Build</th>
-                <td>Click an empty home supply centre you still own. Click a unit to disband it.</td>
+                <td>
+                  {Tap} an empty home supply centre you still own. {Tap} a unit to disband it.
+                </td>
               </tr>
               <tr>
                 <th>Cancel</th>
@@ -142,8 +148,11 @@ export function HowToPlay({
           </p>
           <label className="setting">
             <input type="checkbox" checked={shortcuts} onChange={(e) => onShortcuts(e.target.checked)} />
-            Single-key shortcuts (<kbd>M</kbd> <kbd>S</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>D</kbd> <kbd>N</kbd> <kbd>/</kbd> <kbd>Space</kbd>). Turn them off if
-            you use speech input or they get in your way.
+            {/* One run of text: the label lays out as a row, and loose words and keys would each become a column. */}
+            <span>
+              Single-key shortcuts (<kbd>M</kbd> <kbd>S</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>D</kbd> <kbd>N</kbd> <kbd>/</kbd> <kbd>Space</kbd>). Turn them off
+              if you use speech input or they get in your way.
+            </span>
           </label>
         </section>
         <section>

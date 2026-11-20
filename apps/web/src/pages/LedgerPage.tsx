@@ -191,12 +191,35 @@ export default function LedgerPage() {
   return (
     <main className="ledger-page" id="main" tabIndex={-1}>
       <header className="ledger-head">
-        <h1 ref={heading} tabIndex={-1}>
-          The Ledger
-        </h1>
-        <p className="room-lede">
-          Every promise sealed at a Cabal table is opened when its phase resolves and stamped kept, broken or void. Here is who keeps their word, and, for comparison, who wins.
-        </p>
+        <div className="ledger-intro">
+          <h1 ref={heading} tabIndex={-1}>
+            The Ledger
+          </h1>
+          <p className="room-lede">
+            Every promise sealed at a Cabal table is opened when its phase resolves and stamped kept, broken or void. Here is who keeps their word, and, for comparison, who wins.
+          </p>
+        </div>
+        {/* What each stamp means, beside the title on a wide screen and under it on a narrow one. */}
+        <dl className="ledger-key" aria-label="How a promise is stamped">
+          <div>
+            <dt>
+              <span className="key-stamp kept">Kept</span>
+            </dt>
+            <dd>Every pledged order was on file when the phase resolved.</dd>
+          </div>
+          <div>
+            <dt>
+              <span className="key-stamp broken">Broken</span>
+            </dt>
+            <dd>Any pledged order was missing.</dd>
+          </div>
+          <div>
+            <dt>
+              <span className="key-stamp void">Void</span>
+            </dt>
+            <dd>The promise bound nothing that phase, so it counts for nothing.</dd>
+          </div>
+        </dl>
       </header>
       <div className="ledger-tabs" role="tablist" aria-label="Standings">
         <button type="button" role="tab" id="tab-trust" aria-selected={board === "trust"} aria-controls="panel-standings" onClick={() => pick("trust")}>

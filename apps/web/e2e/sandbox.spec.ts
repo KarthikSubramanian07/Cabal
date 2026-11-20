@@ -110,7 +110,8 @@ test.describe("classic board", () => {
     await openHelp(page);
     const dialog = page.getByRole("dialog", { name: "How to play" });
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("Click a unit, then the province it should move to.");
+    // A touch screen is told to tap, a mouse to click.
+    await expect(dialog).toContainText(/(Click|Tap) a unit, then the province it should move to\./);
     await dialog.getByRole("button", { name: "Close" }).click();
     await expect(dialog).toBeHidden();
   });
