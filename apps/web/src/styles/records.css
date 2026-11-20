@@ -369,9 +369,73 @@
 /* ---------------------------------------------------------------- the Ledger */
 
 .ledger-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 22rem);
+  gap: var(--space-5) var(--space-8);
+  align-items: end;
   padding-bottom: var(--space-5);
   margin-bottom: var(--space-5);
   border-bottom: 2px solid var(--ink);
+}
+
+/* The key to the stamps: a small card of the three verdicts, set against the title. */
+.ledger-key {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--ink);
+  background: var(--paper);
+}
+
+.ledger-key > div {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+}
+
+.ledger-key dt,
+.ledger-key dd {
+  margin: 0;
+}
+
+.ledger-key dd {
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+
+.key-stamp {
+  display: inline-block;
+  padding: 3px 7px 2px;
+  border: 1.5px solid currentColor;
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-transform: uppercase;
+  transform: rotate(-2deg);
+}
+
+.key-stamp.kept {
+  color: var(--kept);
+}
+
+.key-stamp.broken {
+  color: var(--vermilion-deep);
+  transform: rotate(1.5deg);
+}
+
+.key-stamp.void {
+  color: var(--ink-3);
+}
+
+@media (max-width: 860px) {
+  .ledger-head {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
 }
 
 .ledger-head h1 {
@@ -448,9 +512,12 @@
 }
 
 .ledger-empty {
+  display: grid;
+  justify-items: center;
   padding: var(--space-8) var(--space-6);
   border: 1px dashed var(--ink-3);
   background: var(--paper);
+  text-align: center;
 }
 
 .ledger-empty p:not(.stamp) {
