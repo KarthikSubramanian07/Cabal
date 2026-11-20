@@ -13,7 +13,8 @@ import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, us
 import { PageLoading } from "../app/PageLoading.jsx";
 import { shortcutsEnabled } from "../app/prefs.js";
 import { OrderEntry, type WriteResult } from "../components/OrderEntry.jsx";
-import { OrderList, PhaseStepper, Results } from "../components/Sidebar.jsx";
+import { OrderList, PhaseStepper, Results, whyKey } from "../components/Sidebar.jsx";
+import { explainPhase, explainerFor } from "../game/explain/explain.js";
 import { type Draft, type Mode, type Step, canGoByConvoy, click, disbandSelected, holdSelected, setMode, typedOrder, viaAlternative } from "../game/compose.js";
 import { choicePrompt, choicesFor, describeOrder, phaseLine } from "../game/describe.js";
 import { continueLabel, describePhase, parseOrder, parseUnit, provinceOf, titleCase } from "../game/notation.js";
@@ -223,6 +224,23 @@ function Floor({
 
   const record = viewing !== null ? history[viewing] : undefined;
   const playing = !record && canOrder;
+
+  // ---- why an order failed: the engine's account of the phase on show
+
+  /** The receipt whose "why" panel is open. */
+  const [whyOpen, setWhyOpen] = useState<string | null>(null);
+  useEffect(() => setWhyOpen(null), [viewing]);
+  const places = desk.board.provinces;
+  // Re-running a phase to explain it takes the rules engine, which arrives after the board.
+  const explainShown = useMemo(
+    () => (record && rulesReady ? explainerFor(record.outcome.results, record.phase, explainPhase(record), places) : null),
+    [record, rulesReady, places],
+  );
+  const openWhy = useMemo(() => {
+    if (!whyOpen || !record || !explainShown) return null;
+    const r = record.outcome.results.find((x, i) => whyKey(x, i) === whyOpen);
+    return r ? explainShown(r) : null;
+  }, [whyOpen, record, explainShown]);
 
   // ---- composing, exactly as in the sandbox, for one power
 
@@ -565,6 +583,7 @@ function Floor({
               standoffs={record?.outcome.standoffs}
               results={record ? `${viewing}-${record.phase}` : undefined}
               ids={record ? units.phases[viewing!] : units.live}
+              highlight={openWhy?.highlight}
               focus={focus}
               onProvince={onProvince}
             />
@@ -728,7 +747,7 @@ function Floor({
             <div role="tabpanel" id="panel-orders" aria-labelledby="tab-orders" hidden={tab !== "orders"} className="live-panel">
               {readied ? <NotifyOffer moment="ready" /> : null}
               {record ? (
-                <Results record={record} names={desk.board.provinces} />
+                <Results record={record} names={places} explain={explainShown ?? undefined} open={whyOpen} onOpen={setWhyOpen} />
               ) : me && canOrder ? (
                 <section>
                   <h2>{titleCase(me)}</h2>
