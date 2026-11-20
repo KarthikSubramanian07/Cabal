@@ -707,4 +707,70 @@ describe("AI takeover of a seat in civil disorder", () => {
     expect(await seatOf(ann.gameId, power)).toMatchObject({ kind: "human", brain: null, autopilot: false });
     b.close();
   }, 60_000);
+
+  /**
+   * A Claude game with Bob's seat already in civil disorder when it starts. Turns are queued but
+   * never delivered, so the test plays the consumer's part by hand.
+   */
+  async function covered(settings: Record<string, unknown> = {}) {
+    const queued: AgentTurn[] = [];
+    const ann = await create("Ann", { aiFill: true, readyAdvance: true, aiBrain: "claude", ...settings });
+    const bob = await join(ann.gameId, "Bob");
+    const power = bob.power as "FRANCE";
+    await inRoom(ann.gameId, (room) => {
+      room.env = {
+        ...room.env,
+        ANTHROPIC_API_KEY: "test-key",
+        AGENT_QUEUE: { sendBatch: async (messages: { body: AgentTurn }[]) => void queued.push(...messages.map((m) => m.body)) } as never,
+      };
+    });
+    await sql(ann.gameId, "UPDATE seats SET kind = 'civil_disorder', missed = 2, player_id = 'p_bob_absent' WHERE power = ?", power);
+    await start(ann);
+    // Bob is a signed-in player whose stint carries his trust ledger.
+    await sql(ann.gameId, "UPDATE stints SET player_id = 'p_bob_absent' WHERE power = ?", power);
+    return { ann, bob, power, queued };
+  }
+
+  it("asks the agent covering a seat for orders only, never to join the talks", async () => {
+    const { ann, power, queued } = await covered();
+    // Five AI seats open the phase with talks; the covered seat waits for the order step.
+    await until(async () => queued.filter((t) => t.step === "negotiate").length === 5, "the AI seats' talks to be queued");
+    expect(queued.filter((t) => t.power === power)).toEqual([]);
+    expect(await sql(ann.gameId, "SELECT step FROM agent_calls WHERE power = ?", power)).toEqual([{ step: "order" }]);
+    expect(await stubOf(ann.gameId).agentBrief(power, "S1901M", "negotiate")).toBeNull();
+    expect(await seatOf(ann.gameId, power)).toMatchObject({ ready: false, brain: "claude" });
+    // When the talks close the covered seat is asked for its orders with every other AI seat.
+    await inRoom(ann.gameId, (room) => {
+      const internals = room as unknown as { beginOrderStep(why: string): void; settle(): void };
+      internals.beginOrderStep("test");
+      internals.settle();
+    });
+    await until(async () => queued.some((t) => t.power === power), "the covered seat's order step");
+    expect(queued.filter((t) => t.power === power)).toEqual([{ gameId: ann.gameId, power, phase: "S1901M", step: "order" }]);
+  }, 60_000);
+
+  it("never lets the agent write press or pledge in the absent player's name", async () => {
+    // A short phase has no talks: the covered seat is asked for its orders at once.
+    const { ann, power, queued } = await covered({ pacing: "live", movementSeconds: 120 });
+    await until(async () => queued.some((t) => t.power === power), "a turn for the covered seat");
+    const room = stubOf(ann.gameId);
+    const brief = (await room.agentBrief(power, "S1901M", "order"))!;
+    expect(brief).toMatchObject({ power, step: "order" });
+    const holds = brief.state.units[power]!.map((u) => `${u} H`);
+    const report = { model: CLAUDE_MODEL, usage: USAGE, billed: "yes" } as const;
+    const decision = { orders: holds, messages: [{ to: ann.power, body: "Bob here: I hold, trust me." }, { to: "ALL", body: "France is back." }], pledge: { to: ann.power, orders: holds, sealed: true } };
+    const outcome = await room.agentSubmit(power, "S1901M", "order", decision, report);
+    // The orders stand; every word and the pledge are refused.
+    expect(outcome).toMatchObject({ applied: true, pledge: "dropped" });
+    expect(outcome.orders.accepted.sort()).toEqual([...holds].sort());
+    expect(outcome.messages).toEqual([
+      { to: ann.power, sent: false, code: "covered_seat" },
+      { to: "ALL", sent: false, code: "covered_seat" },
+    ]);
+    expect(await sql(ann.gameId, "SELECT id FROM press WHERE sender = ?", power)).toEqual([]);
+    expect(await sql(ann.gameId, "SELECT id FROM pledges WHERE pledger = ?", power)).toEqual([]);
+    // Bob's trust ledger carries nothing he did not promise himself.
+    const record = await inRoom(ann.gameId, (r) => (r as unknown as { playersRecord(): { power: string; playerId: string | null; ledger: unknown }[] }).playersRecord());
+    expect(record.find((s) => s.power === power)).toMatchObject({ playerId: "p_bob_absent", ledger: { kept: 0, broken: 0, void: 0 } });
+  }, 60_000);
 });

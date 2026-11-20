@@ -2534,20 +2534,25 @@ export class GameRoom extends DurableObject<Env> {
     const deliberate = brain.deliberates && this.activeHumans().length > 0;
     const talks = this.phaseKind() === "M" && meta.settings.press !== "gunboat" && phaseMs >= NEGOTIATE_MIN_PHASE_MS;
     const asked: PowerName[] = [];
+    const talkers: PowerName[] = [];
     for (const seat of this.seats()) {
       if (seat.eliminated === 1 || !(seat.kind === "ai" || this.autopilot(seat)) || !canAct(game, seat.power)) continue;
       this.writeOrders(phase, seat.power, brain.orders(game, seat.power, meta.id), "bot");
-      if (deliberate && this.aiPlayed(seat) && this.reserveTurn(phase, seat.power, talks ? ["negotiate", "order"] : ["order"])) {
+      // A seat covered for an absent player only orders: nobody may talk or promise in their name.
+      const talking = talks && seat.kind === "ai";
+      if (deliberate && this.aiPlayed(seat) && this.reserveTurn(phase, seat.power, talking ? ["negotiate", "order"] : ["order"])) {
         asked.push(seat.power);
+        if (talking) talkers.push(seat.power);
       } else {
         this.sql.exec("UPDATE seats SET ready = 1 WHERE power = ?", seat.power);
       }
     }
     if (asked.length > 0) {
-      if (talks) {
+      if (talkers.length > 0) {
+        // Covered seats wait with their order step reserved; it is asked for when the talks close.
         meta.ai = { step: "negotiate", listenUntil: now + listenMs(phaseMs) };
         meta.aiDueAt = Math.min(now + NEGOTIATE_LIMIT_MS, meta.deadlineAt);
-        this.dispatch(phase, asked, "negotiate");
+        this.dispatch(phase, talkers, "negotiate");
       } else {
         meta.ai = { step: "order", listenUntil: now };
         meta.aiDueAt = Math.min(now + AI_TURN_LIMIT_MS, meta.deadlineAt);
@@ -3313,8 +3318,15 @@ export class GameRoom extends DurableObject<Env> {
           // In the talks the orders are a plan: a pledge may name any of the seat's legal orders.
           const pledgeable = step === "order" ? new Set(outcome.orders.accepted) : null;
           const pledgeTo = decision.pledge?.to.trim().toUpperCase() ?? null;
+          // The agent covering an absent player's seat gives orders only. Its words would be read as
+          // theirs and its pledges would be kept or broken on their trust ledger, so none is sent.
+          const covering = seat!.kind === "civil_disorder";
           for (const message of decision.messages.slice(0, LIMITS.agentMessages)) {
             const to = message.to.trim().toUpperCase();
+            if (covering) {
+              outcome.messages.push({ to: to.slice(0, 16), sent: false, code: "covered_seat" });
+              continue;
+            }
             const body = message.body.trim().slice(0, LIMITS.agentBodyChars);
             if (!body || (to !== "ALL" && !(POWERS as readonly string[]).includes(to)) || to === power) {
               outcome.messages.push({ to: to.slice(0, 16), sent: false, code: "bad_message" });
