@@ -70,6 +70,43 @@ test.describe("the social layer, live", () => {
     await scan(ada, "press with a quote");
   });
 
+  test("a second dispatch from the same power is said again", async ({ browser, request }, info) => {
+    const { host, guest } = await liveTable(request);
+    const ada = await sitDown(browser, info, host, host.gameId);
+    const bea = await sitDown(browser, info, guest, guest.gameId);
+    const Host = titleCase(host.power);
+    const Guest = titleCase(guest.power);
+
+    // Everything Bea's screen reader is told about news, as it is told.
+    await bea.evaluate(() => {
+      const region = document.querySelector(".dispatch-said")!;
+      const heard: string[] = [];
+      (window as unknown as { heard: string[] }).heard = heard;
+      new MutationObserver(() => heard.push(region.textContent ?? "")).observe(region, { childList: true, characterData: true, subtree: true });
+    });
+    const heard = () => bea.evaluate(() => (window as unknown as { heard: string[] }).heard.filter(Boolean));
+
+    await tab(ada, "Press");
+    await ada.getByRole("group", { name: "Threads" }).getByRole("button", { name: Guest }).click();
+    const write = async (words: string) => {
+      await ada.getByLabel(`Message ${Guest}`).fill(words);
+      await ada.getByLabel(`Message ${Guest}`).press("Enter");
+    };
+    const board = bea.getByRole("region", { name: "News from the table" });
+
+    await write("First: shall we talk about Galicia?");
+    await expect(board.getByRole("listitem")).toContainText("First: shall we talk about Galicia?");
+    await expect.poll(heard).toEqual([`New dispatch from ${Host}.`]);
+    await board.getByRole("button", { name: "Dismiss" }).click();
+    await expect(board).toHaveCount(0);
+
+    // The same news in the same words: said again, not taken for the last one.
+    await write("Second: or about Rumania?");
+    await expect(board.getByRole("listitem")).toContainText("Second: or about Rumania?");
+    await expect.poll(heard).toEqual([`New dispatch from ${Host}.`, `New dispatch from ${Host}.`]);
+    for (const p of [ada, bea]) await p.context().close();
+  });
+
   test("each signed-in seat shows its trust and leads to the player's record", async ({ browser, request }, info) => {
     const make = async (stem: string) => (await (await request.post("/api/players", { data: { handle: uniqueHandle(stem) } })).json()) as { player: { id: string; handle: string }; secret: string };
     const ann = await make("Ann");

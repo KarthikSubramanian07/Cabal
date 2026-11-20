@@ -28,6 +28,24 @@ export function useDispatches(view: RoomView, ctx: DispatchContext): Dispatches 
   const before = useRef(view);
   const context = useRef(ctx);
   context.current = ctx;
+  const saying = useRef<number | null>(null);
+
+  // The same words twice (a second message from the same power) must still be said twice: the
+  // region is emptied first and filled a moment later, so it changes every time.
+  const say = useCallback((words: string) => {
+    if (saying.current !== null) window.clearTimeout(saying.current);
+    setSaid("");
+    saying.current = window.setTimeout(() => {
+      saying.current = null;
+      setSaid(words);
+    }, 50);
+  }, []);
+  useEffect(
+    () => () => {
+      if (saying.current !== null) window.clearTimeout(saying.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     const prev = before.current;
@@ -37,8 +55,8 @@ export function useDispatches(view: RoomView, ctx: DispatchContext): Dispatches 
     if (news.length === 0) return;
     setUp((current) => pinDispatches(current, news));
     const words = news.map((d) => d.say).filter((s): s is string => Boolean(s));
-    if (words.length) setSaid(words.join(" "));
-  }, [view]);
+    if (words.length) say(words.join(" "));
+  }, [view, say]);
 
   // Opening a thread reads it: its slip has nothing more to say.
   useEffect(() => {
