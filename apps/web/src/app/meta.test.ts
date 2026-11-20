@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { SHARE_IMAGE, SHARE_IMAGE_ALT, metaFor, writeHead } from "./meta.js";
+import { SHARE_IMAGE, SHARE_IMAGE_ALT, metaFor, replayIndexable, writeHead } from "./meta.js";
 
 describe("metaFor", () => {
   it("gives every page its own title, description and canonical address", () => {
@@ -28,6 +28,17 @@ describe("metaFor", () => {
   it("drops a trailing slash from the canonical address and splits a table code", () => {
     expect(metaFor("/ledger/").canonical).toBe("https://playcabal.pages.dev/ledger");
     expect(metaFor("/g/k7q2xz").title).toBe("Table K7Q 2XZ — Cabal");
+  });
+});
+
+describe("replayIndexable", () => {
+  it("is true only for a public game that has ended", () => {
+    expect(replayIndexable({ status: "finished", settings: { visibility: "public" } })).toBe(true);
+    expect(replayIndexable({ status: "abandoned", settings: { visibility: "public" } })).toBe(true);
+    expect(replayIndexable({ status: "active", settings: { visibility: "public" } })).toBe(false);
+    expect(replayIndexable({ status: "finished", settings: { visibility: "unlisted" } })).toBe(false);
+    expect(replayIndexable({ status: "finished", settings: { visibility: "private" } })).toBe(false);
+    expect(replayIndexable({})).toBe(false);
   });
 });
 

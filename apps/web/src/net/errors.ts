@@ -3,7 +3,9 @@
  * the server's logs and not only their console. A report names the kind of failure, its message,
  * the page by route name (never the address, which can hold a game code or a handle) and the
  * stack's top frame without the origin. Nothing names the player or the device; the privacy page
- * says so.
+ * says so. The game code and handle in the page's address, and the handle this device is signed in
+ * under, are masked wherever the message quotes them (`<code>`, `<handle>`), before it leaves; the
+ * server masks what else it can tell is a code or a handle (apps/server `scrubMessage`).
  *
  * At most `MAX_REPORTS` go from one page load, and the same failure goes once: a render loop or a
  * timer that throws every second must not become a flood. Every browser API is optional; a report
@@ -11,6 +13,7 @@
  */
 import type { ClientErrorReport } from "@cabal/protocol";
 import { matchRoute } from "../app/routes.js";
+import { readPlayer } from "./player.js";
 
 /** Reports one page load may send. */
 export const MAX_REPORTS = 5;
@@ -20,6 +23,23 @@ export interface ErrorDeps {
   sendBeacon?: ((url: string, data: Blob) => boolean) | undefined;
   /** The page's path, read when the failure happens. */
   path: () => string;
+  /** Handles this page knows of, read when the failure happens: the one the device is signed in under. */
+  handles?: () => readonly string[];
+}
+
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Mask each of these words where it stands whole (not inside a longer name), in any case. A code or
+ * handle is letters, digits, `_` and `-`, so those are what may not touch it on either side.
+ */
+export function maskWords(text: string, words: readonly { word: string; as: string }[]): string {
+  let out = text;
+  for (const { word, as } of words) {
+    if (word.length < 3) continue;
+    out = out.replace(new RegExp(`(?<![A-Za-z0-9_-])${escape(word)}(?![A-Za-z0-9_-])`, "gi"), as);
+  }
+  return out;
 }
 
 /** What failed to load: a dynamic import or a lazy chunk, in the words browsers use. */
@@ -48,14 +68,21 @@ export function createErrorReporter(deps: ErrorDeps) {
 
   /** Build the report for a failure, or null when there is nothing worth sending. */
   function reportFor(kind: "crash" | "error" | "rejection", error: unknown): ClientErrorReport | null {
+    const route = matchRoute(deps.path());
+    // The page's own code and handle, and the account's handle, never leave in a message.
+    const known = [
+      ...(route?.params["code"] ? [{ word: route.params["code"], as: "<code>" }] : []),
+      ...[route?.params["handle"], ...(deps.handles?.() ?? [])].filter((h): h is string => !!h).map((word) => ({ word, as: "<handle>" })),
+    ];
     // An origin in a message (a failed import names its URL) says which site, never which page: cut it.
-    const message = messageOf(error).replace(/\bhttps?:\/\/[^\s/]+/g, "").replace(/\s+/g, " ").trim().slice(0, 300);
+    const message = maskWords(messageOf(error).replace(/\bhttps?:\/\/[^\s/]+/g, "").replace(/\s+/g, " ").trim(), known).slice(0, 300);
     if (!message) return null;
-    const where = topFrame(error instanceof Error ? error.stack : undefined);
+    const frame = topFrame(error instanceof Error ? error.stack : undefined);
+    const where = frame ? maskWords(frame, known) : undefined;
     return {
       kind: CHUNK.test(message) ? "chunk" : kind,
       message,
-      route: matchRoute(deps.path())?.name ?? "none",
+      route: route?.name ?? "none",
       ...(where ? { where } : {}),
     };
   }
@@ -80,6 +107,10 @@ export function createErrorReporter(deps: ErrorDeps) {
 export const errors = createErrorReporter({
   sendBeacon: typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function" ? (url, data) => navigator.sendBeacon(url, data) : undefined,
   path: () => (typeof window === "undefined" ? "/" : window.location.pathname),
+  handles: () => {
+    const player = readPlayer();
+    return player ? [player.handle] : [];
+  },
 });
 
 /** Report what nothing else caught: uncaught errors and unhandled promise rejections. */

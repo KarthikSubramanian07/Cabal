@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { handleKey, handleProblem, pickHandle } from "../src/handles.js";
+import { handleKey, handleProblem, maskHandles, pickHandle } from "../src/handles.js";
 
 describe("handles", () => {
   it("accepts ordinary names, whatever their case", () => {
@@ -43,5 +43,34 @@ describe("handles", () => {
   it("picks a valid, unreserved handle for a player who did not choose one", () => {
     for (let i = 0; i < 200; i++) expect(handleProblem(pickHandle())).toBeNull();
     expect(pickHandle(() => 0)).toBe("Envoy-1000");
+  });
+
+  it("masks handles where they can be told from other words, as codes are masked", () => {
+    // In a record's address, with or without the API's prefix and whatever follows.
+    expect(maskHandles("no profile at /u/Talleyrand")).toBe("no profile at /u/<handle>");
+    expect(maskHandles("GET /api/players/von_Bismarck/ratings failed")).toBe("GET /api/players/<handle>/ratings failed");
+    expect(maskHandles("open('/u/Metternich-1815')")).toBe("open('/u/<handle>')");
+    // After the word handle, given with a colon, an equals sign or quotes.
+    expect(maskHandles('no player with handle "Talleyrand"')).toBe('no player with handle "<handle>"');
+    expect(maskHandles("rename failed: handle: Talleyrand")).toBe("rename failed: handle: <handle>");
+    expect(maskHandles("handle=Talleyrand&x=1")).toBe("handle=<handle>&x=1");
+    // A handle picked for a guest, in any case, wherever it stands.
+    expect(maskHandles("Envoy-4821 left the table")).toBe("<handle> left the table");
+    expect(maskHandles(`seat of ${pickHandle(() => 0.5).toUpperCase()}`)).toBe("seat of <handle>");
+    // Masking twice changes nothing.
+    expect(maskHandles(maskHandles("/u/Talleyrand and Envoy-4821"))).toBe("/u/<handle> and <handle>");
+  });
+
+  it("leaves ordinary messages alone", () => {
+    for (const text of [
+      "Cannot read properties of undefined (reading 'units')",
+      "Unhandled rejection: handle the click first",
+      "FRANCE cannot move: failed",
+      "Failed to fetch dynamically imported module",
+      "at deleteAccount (src/players.ts:236:9)",
+      "Envoy is not defined",
+    ]) {
+      expect(maskHandles(text), text).toBe(text);
+    }
   });
 });

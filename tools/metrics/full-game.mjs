@@ -16,9 +16,9 @@ import { isMain, line, option, record } from "./lib/report.mjs";
 
 const yearOf = (phase) => Number(/^[SFW](\d{4})/.exec(phase)?.[1] ?? 0);
 
-export async function playFullGame(origin, { humans = 2, untilYear = 1905, timeoutMs = 600_000, log = () => undefined } = {}) {
+export async function playFullGame(origin, { humans = 2, untilYear = 1905, timeoutMs = 600_000, settings = {}, log = () => undefined } = {}) {
   const startedAt = Date.now();
-  const game = await createGame(origin, { humans, settings: { pacing: "live" }, stem: "Full game probe" });
+  const game = await createGame(origin, { humans, settings: { pacing: "live", ...settings }, stem: "Full game probe" });
   await startGame(origin, game);
   const seats = await Promise.all(game.seats.map((s) => connectSeat(origin, game.gameId, s.token)));
   const phases = new Set();

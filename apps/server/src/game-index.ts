@@ -56,6 +56,12 @@ export interface GameIndex {
   listListings(options: ListLive): Promise<GameListing[]>;
   /** Note a signed-in player's seat, so their own games list shows it while it runs. Idempotent. */
   recordSeat(claim: SeatClaim): Promise<void>;
+  /**
+   * The handle each of these accounts goes by now, keyed by id. An id missing from the answer is an
+   * account that no longer exists (it was deleted). Null where this store keeps no players at all,
+   * so nobody may be taken for gone.
+   */
+  currentHandles(playerIds: readonly string[]): Promise<Map<string, string> | null>;
   /** Highest migration applied; also the health probe. */
   schemaVersion(): Promise<number>;
   /**
@@ -80,6 +86,7 @@ function registryIndex(stub: NonNullable<ReturnType<typeof registryStub>>): Game
     listListings: async (options) => stub().listListings(options),
     // The Registry has no players.
     recordSeat: async () => undefined,
+    currentHandles: async () => null,
     schemaVersion: async () => stub().schemaVersion(),
     admitClaudeGame: async (request) => stub().admitClaudeGame(request),
     releaseClaudeGame: async (request) => void (await stub().releaseClaudeGame(request)),
@@ -92,7 +99,7 @@ function registryIndex(stub: NonNullable<ReturnType<typeof registryStub>>): Game
  * `/health` is not ok, and answers 503, while the bound database is behind it, so a build deployed
  * before its migrations were applied is caught by the first health check.
  */
-export const D1_SCHEMA_REQUIRED = 13;
+export const D1_SCHEMA_REQUIRED = 14;
 
 export function indexBackend(env: Env): "d1" | "registry" | "none" {
   return env.DB ? "d1" : env.REGISTRY ? "registry" : "none";

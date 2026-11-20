@@ -3,7 +3,7 @@ import { SELF } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index.js";
 import { coldStart, timedFirst } from "../src/engine.js";
-import { requestIdFrom } from "../src/log.js";
+import { describeError, requestIdFrom } from "../src/log.js";
 import type { AgentTurn } from "../src/env.js";
 import { Client, create, deadlineIn, nextIp, serverEnv, start, untilPhase } from "./helpers.js";
 
@@ -68,6 +68,27 @@ describe("request ids", () => {
   it("logs a route as a label, never a path with a game code in it", async () => {
     const { lines } = await capture(async () => SELF.fetch("http://cabal/api/games/ZZZZZZ", { headers: { "cf-connecting-ip": nextIp() } }));
     expect(lines.find((l) => l.event === "request")).toMatchObject({ route: "GET /api/games/:id" });
+  });
+
+  it("logs a record's address with its handle masked, as a code is", async () => {
+    const { lines } = await capture(async () => {
+      for (const path of ["/api/players/Talleyrand", "/api/players/Talleyrand/ratings"]) await SELF.fetch(`http://cabal${path}`, { headers: { "cf-connecting-ip": nextIp() } });
+      await SELF.fetch("http://cabal/api/players/recover", { method: "POST", body: "{}", headers: { "cf-connecting-ip": nextIp() } });
+    });
+    expect(lines.filter((l) => l.event === "request").map((l) => l.route)).toEqual([
+      "GET /api/players/:handle",
+      "GET /api/players/:handle/ratings",
+      "POST /api/players/recover",
+    ]);
+    expect(JSON.stringify(lines)).not.toContain("Talleyrand");
+  });
+
+  it("masks the handles a thrown error quotes, in its message and its stack", () => {
+    const error = new Error('no seat for handle "Talleyrand" (Envoy-4821, /u/Talleyrand)');
+    const described = describeError(error);
+    expect(described.error).toBe('Error: no seat for handle "<handle>" (<handle>, /u/<handle>)');
+    expect(described.stack).not.toMatch(/Talleyrand|Envoy-4821/);
+    expect(describeError("Courier-1000 left").error).toBe("<handle> left");
   });
 
   it("gives socket frames and alarms ids of their own, so a room's lines group by what woke it", async () => {

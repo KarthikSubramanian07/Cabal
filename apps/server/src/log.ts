@@ -8,9 +8,11 @@
  * which request it belongs to. The Worker hands its id to a room in the `x-request-id` header,
  * and to a room's RPC methods as an argument, so one id follows a request across the hop.
  *
- * Logs never carry secrets, seat tokens, player secrets, press bodies or client addresses.
+ * Logs never carry secrets, seat tokens, player secrets, press bodies or client addresses, and a
+ * thrown value's message and stack have their handles masked (handles.ts `maskHandles`).
  */
 import { AsyncLocalStorage } from "node:async_hooks";
+import { maskHandles } from "./handles.js";
 
 export type Service = "worker" | "room" | "queue" | "registry";
 
@@ -68,8 +70,10 @@ export function log(event: string, fields: Record<string, unknown> = {}, level: 
   else console.info(line);
 }
 
-/** What is safe and useful to log about a thrown value. */
+/** What is safe and useful to log about a thrown value: handles it quotes are masked. */
 export function describeError(error: unknown): { error: string; stack?: string } {
-  if (error instanceof Error) return { error: `${error.name}: ${error.message}`, ...(error.stack ? { stack: error.stack.slice(0, 2000) } : {}) };
-  return { error: String(error) };
+  if (error instanceof Error) {
+    return { error: maskHandles(`${error.name}: ${error.message}`), ...(error.stack ? { stack: maskHandles(error.stack).slice(0, 2000) } : {}) };
+  }
+  return { error: maskHandles(String(error)) };
 }
