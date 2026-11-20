@@ -104,9 +104,15 @@
   letter-spacing: 0.02em;
 }
 
+/* The largest text on a loading page, so its largest contentful paint. The shell paints it at once
+   and React paints it again when it takes over, usually after Inter Tight has arrived: in the face
+   it measured a hair larger than in the stand-in, and the browser counted the second card as a new,
+   later largest paint (3.2 s on Lighthouse's phone). In the stand-in alone it measures the same both
+   times, so the first paint stands. */
 .loading-note {
   margin: 0;
   color: var(--ink-2);
+  font-family: var(--font-ui-standin);
   font-size: var(--text-lg);
   line-height: 1.5;
 }

@@ -55,3 +55,34 @@ test("the socket is dialled while the summary is still on its way", async ({ bro
   expect(dialledEarly).toBe(true);
   await page.context().close();
 });
+
+test("a slow phone's largest paint is the shell's loading card, not React's copy of it", async ({ browser, request }, info) => {
+  test.skip(info.project.name !== "phone", "the slow phone");
+  const { host } = await liveTable(request);
+  // Lighthouse's phone: a 412-pixel screen, a slowed line and a four-times slower processor, so
+  // React takes over after Inter Tight has arrived and paints the card again in it.
+  const context = await browser.newContext({ viewport: { width: 412, height: 823 }, deviceScaleFactor: 1.75, isMobile: true, hasTouch: true, serviceWorkers: "block" });
+  await context.addInitScript(() => {
+    const w = window as unknown as { lcp: { t: number; size: number; el: string }[] };
+    w.lcp = [];
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries() as (PerformanceEntry & { size: number; element: Element | null })[]) {
+        w.lcp.push({ t: Math.round(e.startTime), size: e.size, el: e.element?.className ?? "" });
+      }
+    }).observe({ type: "largest-contentful-paint", buffered: true });
+  });
+  const page = await context.newPage();
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("Network.enable");
+  await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
+  await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 150, downloadThroughput: (1638.4 * 1024) / 8, uploadThroughput: (750 * 1024) / 8 });
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+  // A spectator, as Lighthouse sees the page.
+  await page.goto(`/g/${host.gameId}`, { waitUntil: "commit" });
+  await expect(page.locator("svg.board text.label").first()).toBeVisible({ timeout: 60_000 });
+  await page.waitForTimeout(1000);
+  const entries = await page.evaluate(() => (window as unknown as { lcp: { t: number; size: number; el: string }[] }).lcp);
+  // One largest paint: the card the shell drew at once. React's copy measures the same.
+  expect(entries.map((e) => e.el)).toEqual(["loading-note"]);
+  await context.close();
+});

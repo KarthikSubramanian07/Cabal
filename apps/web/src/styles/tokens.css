@@ -48,6 +48,9 @@
 
   /* ---- type */
   --font-ui: "Inter Tight Variable", "Inter Tight Arial", "Inter Tight Roboto", system-ui, sans-serif;
+  /* Inter Tight's metric-matched stand-ins alone (styles/fonts.css): for text that must measure the
+     same before and after the face arrives, such as the loading card. */
+  --font-ui-standin: "Inter Tight Arial", "Inter Tight Roboto", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   --font-display: "Archivo Black", "Arial Black", sans-serif;
 
