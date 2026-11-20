@@ -900,6 +900,50 @@ export type MyGame = z.infer<typeof MyGame>;
 export const MyGamesResponse = z.object({ games: z.array(MyGame) });
 export type MyGamesResponse = z.infer<typeof MyGamesResponse>;
 
+/** One rated game's mark on a player's rating: where it stood before and after. */
+export const RatingPoint = z.object({
+  /** Rated games are always public, so the code is always shown. */
+  gameId: z.string(),
+  /** The power the player held, when the index still has the seat. */
+  power: PowerName.nullable(),
+  result: GameResult.nullable(),
+  /** This player's share of the result. */
+  score: z.number().nullable(),
+  ratingBefore: z.number(),
+  rdBefore: z.number(),
+  ratingAfter: z.number(),
+  rdAfter: z.number(),
+  /** When the game ended. */
+  at: z.number().int(),
+});
+export type RatingPoint = z.infer<typeof RatingPoint>;
+
+/** `GET /api/players/:handle/ratings`: the player's rating history, oldest first. */
+export const RatingHistoryResponse = z.object({
+  ladder: z.string(),
+  points: z.array(RatingPoint),
+  /** True when older rated games exist than the ones listed (`limit`, default 50, at most 200). */
+  more: z.boolean(),
+});
+export type RatingHistoryResponse = z.infer<typeof RatingHistoryResponse>;
+
+/**
+ * `DELETE /api/me`: delete the account for good. `handle` must be the account's handle as it reads
+ * now, so a stray request cannot delete anyone.
+ */
+export const DeleteMeRequest = z.object({ handle: z.string().min(1).max(40) });
+export type DeleteMeRequest = z.infer<typeof DeleteMeRequest>;
+
+/** What a deletion did: the seats that became ghosts, by game. */
+export const DeleteMeResponse = z.object({
+  deleted: z.literal(true),
+  /** Games where a seat was held (or had been): every one now shows a ghost in its place. */
+  games: z.number().int(),
+  /** Games whose room could not be reached; their seat is anonymised when the game is recorded. */
+  unreached: z.number().int(),
+});
+export type DeleteMeResponse = z.infer<typeof DeleteMeResponse>;
+
 /** `GET /api/leaderboard`: established ratings, best first. */
 export const LeaderboardResponse = z.object({
   ladder: z.string(),

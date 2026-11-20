@@ -21,6 +21,7 @@ import {
   type CreateGameRequest,
   CreateGameResponse,
   type DatcReport,
+  DeleteMeResponse,
   GameListing,
   GameRecord,
   GameSummary,
@@ -43,6 +44,7 @@ import {
   PushKeyResponse,
   type PushSubscriptionRequest,
   type Recipient,
+  RatingHistoryResponse,
   RecoveryCodeResponse,
   SeatTokenResponse,
   ServerMessage,
@@ -662,11 +664,16 @@ export function createApi(options: ApiOptions = {}) {
     /** Restore an account on this device from its recovery code. */
     recoverPlayer: (code: string) => call(PlayerSession, "POST", "/api/players/recover", { body: { code } }),
     profile: (handle: string) => call(PlayerProfile, "GET", `/api/players/${encodeURIComponent(handle)}`),
+    /** A player's rating after each rated game, oldest first. */
+    ratingHistory: (handle: string, limit?: number) =>
+      call(RatingHistoryResponse, "GET", `/api/players/${encodeURIComponent(handle)}/ratings${query({ limit })}`),
     me: (secret: string) => call(MeResponse, "GET", "/api/me", { token: secret }),
     rename: (secret: string, handle: string) => call(MeResponse, "PATCH", "/api/me", { token: secret, body: { handle } }),
     /** A new recovery code, shown once; the previous one stops working. */
     issueRecoveryCode: (secret: string) => call(RecoveryCodeResponse, "POST", "/api/me/recovery", { token: secret }),
     logout: (secret: string, everywhere = false) => call(z.null(), "POST", "/api/me/logout", { token: secret, body: { everywhere } }),
+    /** Delete the account for good. `handle` must be its handle as it is now. */
+    deleteAccount: (secret: string, handle: string) => call(DeleteMeResponse, "DELETE", "/api/me", { token: secret, body: { handle } }),
     myGames: (secret: string) => call(MyGamesResponse, "GET", "/api/me/games", { token: secret }).then((r) => r.games),
     leaderboard: (p: { offset?: number; limit?: number } = {}) => call(LeaderboardResponse, "GET", `/api/leaderboard${page(p)}`),
     trustLedger: (p: { offset?: number; limit?: number } = {}) => call(TrustLeaderboardResponse, "GET", `/api/ledger${page(p)}`),

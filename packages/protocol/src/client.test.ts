@@ -464,6 +464,19 @@ describe("createApi", () => {
     for (const call of calls) expect(call.url).not.toContain("secret");
   });
 
+  it("reads a rating history and deletes an account, the confirming handle in the body", async () => {
+    const calls: { url: string; init: RequestInit | undefined }[] = [];
+    const point = { gameId: "ABCDEF", power: "FRANCE", result: "draw", score: 0.5, ratingBefore: 1500, rdBefore: 350, ratingAfter: 1540, rdAfter: 290, at: 3 };
+    const replies: Response[] = [Response.json({ ladder: "overall", points: [point], more: false }), Response.json({ deleted: true, games: 2, unreached: 0 })];
+    const api = createApi({ fetch: async (url, init) => (calls.push({ url, init }), replies.shift()!) });
+    expect((await api.ratingHistory("Tal leyrand", 20)).points).toEqual([point]);
+    expect(calls[0]!.url).toBe("/api/players/Tal%20leyrand/ratings?limit=20");
+    expect(await api.deleteAccount("cps_secret", "Talleyrand")).toEqual({ deleted: true, games: 2, unreached: 0 });
+    expect(calls[1]).toMatchObject({ url: "/api/me", init: { method: "DELETE" } });
+    expect(JSON.parse(calls[1]!.init!.body as string)).toEqual({ handle: "Talleyrand" });
+    expect((calls[1]!.init!.headers as Record<string, string>).authorization).toBe("Bearer cps_secret");
+  });
+
   it("covers push, notification preferences and metrics, with secrets as bearers only", async () => {
     const calls: { url: string; init: RequestInit | undefined }[] = [];
     const preferences = { deadline: true, phase: false, press: true, started: true, finished: true };
