@@ -412,7 +412,7 @@ dialog.how.create {
   grid-template-areas:
     "stamp stamp"
     "title share"
-    "line line";
+    "line qr";
   align-items: end;
   gap: 0 var(--space-6);
   padding-bottom: var(--space-5);
@@ -476,6 +476,90 @@ dialog.how.create {
   color: var(--ink-3);
   font-size: var(--text-sm);
   text-align: right;
+}
+
+/* The invite as a QR code: a calling card, ink on paper, with the code a person can read out. */
+.share-qr {
+  grid-area: qr;
+  display: flex;
+  align-self: start;
+  justify-content: flex-end;
+}
+
+.table-head .table-line {
+  align-self: start;
+}
+
+.share-qr[hidden] {
+  display: none;
+}
+
+.invite-qr {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 15ch);
+  align-items: end;
+  gap: var(--space-4);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-1) var(--space-5) var(--space-1) var(--space-1);
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  animation: qr-deal var(--dur-base) var(--ease-out);
+}
+
+.invite-qr.loading {
+  width: 168px;
+  height: 168px;
+  border-style: dashed;
+  border-color: var(--rule);
+  animation: none;
+}
+
+.invite-qr svg {
+  display: block;
+  width: 168px;
+  height: 168px;
+}
+
+.qr-paper {
+  fill: var(--paper);
+}
+
+.qr-ink {
+  fill: var(--ink);
+}
+
+.invite-qr figcaption {
+  display: grid;
+  gap: var(--space-2);
+  padding-bottom: 2px;
+}
+
+.qr-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.qr-hint {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+  line-height: 1.35;
+}
+
+@keyframes qr-deal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .invite-qr {
+    animation: none;
+  }
 }
 
 .notice {
@@ -859,7 +943,8 @@ dialog.how.create {
       "stamp"
       "title"
       "line"
-      "share";
+      "share"
+      "qr";
   }
 
   .share {
@@ -869,6 +954,16 @@ dialog.how.create {
 
   .share-said {
     text-align: left;
+  }
+
+  .share-qr {
+    justify-content: flex-start;
+  }
+
+  .invite-qr {
+    grid-template-columns: 168px minmax(0, 1fr);
+    align-items: center;
+    width: 100%;
   }
 
   .seating {
