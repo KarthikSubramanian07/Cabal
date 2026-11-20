@@ -9,7 +9,8 @@ import { type RouteMatch, matchRoute } from "./routes.js";
 
 export const SITE = "https://playcabal.pages.dev";
 export const SHARE_IMAGE = `${SITE}/og.png`;
-export const SHARE_IMAGE_ALT = "Seven wax seals in the colours of the great powers on an ink table, one of them cracked, beside the Cabal wordmark.";
+/** What og.png shows (scripts/assets.mjs draws it); index.html carries the same words. */
+export const SHARE_IMAGE_ALT = "Shake hands. Seal it. Break it. A dispatch from England to France, sealed in wax and stamped broken, over the English Channel.";
 
 export interface PageMeta {
   /** The whole <title>, brand included. */
@@ -21,6 +22,17 @@ export interface PageMeta {
   index: boolean;
   /** `website` for the front door, `article` for pages about one player or one game. */
   type: "website" | "article";
+  /** The share card, absolute, and what it shows; the site's own card when absent. */
+  image?: { url: string; alt: string };
+}
+
+/** A table's own share card: its board and its supply centres as they stand (agent/share-card.ts). */
+export function tableCard(code: string): { url: string; alt: string } {
+  const c = code.toUpperCase();
+  return {
+    url: `${SITE}/share/g/${encodeURIComponent(c)}.png`,
+    alt: `The board of Diplomacy table ${spaced(c)} as it stands, each supply centre in its owner's colour, beside a tally of centres held by each of the seven powers.`,
+  };
 }
 
 const BRAND = "Cabal";
@@ -91,6 +103,7 @@ export function metaForRoute(route: RouteMatch | null, path: string): PageMeta {
         // A table is a private room for its players; its code is shared on purpose, not published.
         index: false,
         type: "article",
+        image: tableCard(p["code"] ?? ""),
       };
     }
     case "status":
@@ -110,6 +123,7 @@ export function metaForRoute(route: RouteMatch | null, path: string): PageMeta {
         canonical,
         index: false,
         type: "article",
+        image: tableCard(p["code"] ?? ""),
       };
     }
   }
@@ -117,6 +131,10 @@ export function metaForRoute(route: RouteMatch | null, path: string): PageMeta {
 
 export function metaFor(path: string): PageMeta {
   return metaForRoute(matchRoute(path), path);
+}
+
+function imageOf(meta: PageMeta): { url: string; alt: string } {
+  return meta.image ?? { url: SHARE_IMAGE, alt: SHARE_IMAGE_ALT };
 }
 
 function escapeAttr(text: string): string {
@@ -129,6 +147,7 @@ function escapeAttr(text: string): string {
  * ones are added before </head>.
  */
 export function writeHead(html: string, meta: PageMeta): string {
+  const image = imageOf(meta);
   const tags: [RegExp, string][] = [
     [/<title>[^<]*<\/title>/, `<title>${escapeAttr(meta.title)}</title>`],
     [/<meta name="description"[^>]*>/, `<meta name="description" content="${escapeAttr(meta.description)}" />`],
@@ -140,6 +159,10 @@ export function writeHead(html: string, meta: PageMeta): string {
     [/<meta property="og:description"[^>]*>/, `<meta property="og:description" content="${escapeAttr(meta.description)}" />`],
     [/<meta name="twitter:title"[^>]*>/, `<meta name="twitter:title" content="${escapeAttr(meta.title)}" />`],
     [/<meta name="twitter:description"[^>]*>/, `<meta name="twitter:description" content="${escapeAttr(meta.description)}" />`],
+    [/<meta property="og:image" [^>]*>/, `<meta property="og:image" content="${escapeAttr(image.url)}" />`],
+    [/<meta property="og:image:alt"[^>]*>/, `<meta property="og:image:alt" content="${escapeAttr(image.alt)}" />`],
+    [/<meta name="twitter:image" [^>]*>/, `<meta name="twitter:image" content="${escapeAttr(image.url)}" />`],
+    [/<meta name="twitter:image:alt"[^>]*>/, `<meta name="twitter:image:alt" content="${escapeAttr(image.alt)}" />`],
   ];
   let out = html;
   const missing: string[] = [];
@@ -185,4 +208,9 @@ export function applyHead(meta: PageMeta, doc: Document = document): void {
   set('meta[property="og:description"]', meta$("property", "og:description"), "content", meta.description);
   set('meta[name="twitter:title"]', meta$("name", "twitter:title"), "content", meta.title);
   set('meta[name="twitter:description"]', meta$("name", "twitter:description"), "content", meta.description);
+  const image = imageOf(meta);
+  set('meta[property="og:image"]', meta$("property", "og:image"), "content", image.url);
+  set('meta[property="og:image:alt"]', meta$("property", "og:image:alt"), "content", image.alt);
+  set('meta[name="twitter:image"]', meta$("name", "twitter:image"), "content", image.url);
+  set('meta[name="twitter:image:alt"]', meta$("name", "twitter:image:alt"), "content", image.alt);
 }
