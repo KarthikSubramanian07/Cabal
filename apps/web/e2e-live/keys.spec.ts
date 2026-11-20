@@ -84,4 +84,21 @@ test.describe("the room by keyboard, live", () => {
     await expect(page.locator(".orders .row.given code")).toHaveCount(1);
     await page.context().close();
   });
+
+  test("on a phone, closing a sketch keeps focus in the sheet rather than on the toolbar under it", async ({ browser, request }, info) => {
+    test.skip(info.project.name !== "phone", "the sheet covers the toolbar on a phone");
+    const { host } = await liveTable(request);
+    const page = await sitDown(browser, info, host, host.gameId);
+    const whatIf = page.locator(".toolbar").getByRole("button", { name: "What if" });
+    await expect(whatIf).toBeVisible({ timeout: 30_000 });
+    await whatIf.focus();
+    await page.keyboard.press("Enter");
+    await tab(page, "Orders");
+    const panel = page.getByRole("region", { name: "What if" });
+    await panel.getByRole("button", { name: "Discard" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(panel).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: /^Orders/ })).toBeFocused();
+    await page.context().close();
+  });
 });

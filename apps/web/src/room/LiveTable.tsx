@@ -458,15 +458,17 @@ function Floor({
 
   // A sketch closed from inside its own panel (Discard, Use my sketched orders) takes the focused
   // button with it: focus goes back to the What if button that opened it, or to the choices,
-  // rather than falling to the page.
+  // rather than falling to the page. On a phone with the sheet up, the toolbar sits under the
+  // sheet (focus there would be hidden), so focus stays in the sheet, on its Orders tab.
   const wasSketching = useRef(whatIf.on);
   useEffect(() => {
     const closed = wasSketching.current && !whatIf.on;
     wasSketching.current = whatIf.on;
     if (!closed) return;
     if (document.activeElement && document.activeElement !== document.body) return;
-    (whatIfTool.current ?? choicesRef.current)?.focus();
-  }, [whatIf.on]);
+    const covered = sheet && Boolean(window.matchMedia?.("(max-width: 1000px)").matches);
+    (covered ? document.getElementById("tab-orders") : (whatIfTool.current ?? choicesRef.current))?.focus();
+  }, [whatIf.on, sheet]);
 
   // ---- keyboard, as in the sandbox
 
