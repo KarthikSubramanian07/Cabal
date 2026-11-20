@@ -15,9 +15,14 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { inflateSync } from "node:zlib";
 import { encodeIndexed } from "../src/agent/png.ts";
+import { composeBoard } from "../src/map/variant.ts";
 
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
-const board = JSON.parse(readFileSync(here("../src/map/board.json"), "utf8"));
+// The standard map's provinces on the board's geometry, as the game draws them.
+const board = composeBoard(
+  JSON.parse(readFileSync(here("../../../crates/cabal-engine/data/maps/standard.json"), "utf8")),
+  JSON.parse(readFileSync(here("../src/map/board.json"), "utf8")),
+);
 const wordmark = readFileSync(here("../../../docs/brand/wordmark.svg"), "utf8");
 const font = (path) => readFileSync(here(`../node_modules/${path}`)).toString("base64");
 

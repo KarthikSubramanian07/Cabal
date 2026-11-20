@@ -163,22 +163,32 @@ export interface LabelSpot {
   label: Point;
   /** Whether a point lies inside the province. A code should stay in the province it names. */
   inside?: ((point: Point) => boolean) | undefined;
+  /**
+   * Never left out, however crowded the map: when no spot inside the province is clear, the
+   * code is set beside it, clear of the other codes and the pieces, with a leader to `anchor`.
+   * Supply centres are kept, so a far-out overview still names every centre.
+   */
+  keep?: boolean | undefined;
+  /** What a leader points at (the supply centre); the piece position when not given. */
+  anchor?: Point | undefined;
 }
 
+type LabelBox = { x0: number; y0: number; x1: number; y1: number };
+
 /** Roughly how much room a three-letter code takes at a given size. */
-function labelBox(at: Point, size: number): { x0: number; y0: number; x1: number; y1: number } {
+function labelBox(at: Point, size: number): LabelBox {
   const halfW = size * 1.02;
   const halfH = size * 0.45;
   return { x0: at[0] - halfW, y0: at[1] - halfH, x1: at[0] + halfW, y1: at[1] + halfH };
 }
 
-function boxHitsCircle(box: ReturnType<typeof labelBox>, c: Point, r: number): boolean {
+function boxHitsCircle(box: LabelBox, c: Point, r: number): boolean {
   const nx = clampNumber(c[0], box.x0, box.x1);
   const ny = clampNumber(c[1], box.y0, box.y1);
   return Math.hypot(c[0] - nx, c[1] - ny) < r;
 }
 
-function boxesOverlap(a: ReturnType<typeof labelBox>, b: ReturnType<typeof labelBox>): boolean {
+function boxesOverlap(a: LabelBox, b: LabelBox): boolean {
   return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
 }
 
@@ -197,37 +207,69 @@ const RINGS: readonly (readonly [number, readonly number[]])[] = [
   [1.9, [90, 270, 0, 180, 45, 135, 315, 225]],
 ];
 
+/** How far out a code set beside its province may go, in clearances, and at which angles. */
+const CALLOUT_REACH = [0.7, 1, 1.35, 1.75, 2.2, 2.8, 3.5] as const;
+const CALLOUT_TURNS = [90, 270, 0, 180, 45, 135, 315, 225, 22, 68, 112, 158, 202, 248, 292, 338] as const;
+
+export interface LabelOptions {
+  /**
+   * Leave out a code that has no spot clear of the codes already placed and of the pieces
+   * (unless its spot is `keep`). For a far-out overview, where every code at a readable size
+   * would be a wall of text: the codes that fit are drawn (put the ones that matter first),
+   * and zooming in brings the rest.
+   */
+  drop?: boolean | undefined;
+}
+
 /**
  * Place every province code for a piece radius and text size. Each code first tries the
  * side of the piece the map maker chose, then the other sides, and takes the first spot
  * that covers no piece position and no code already placed. Where the map is too crowded
  * for a clean answer (the English Midlands) it takes the least bad one.
  */
-export function layoutLabels(
-  spots: readonly LabelSpot[],
-  radius: number,
-  size: number,
-  /**
-   * Leave out a code that has no spot clear of the codes already placed and of the pieces. For
-   * a far-out overview, where every code at a readable size would be a wall of text: the codes
-   * that fit are drawn (put the ones that matter first), and zooming in brings the rest.
-   */
-  options: { drop?: boolean } = {},
-): Record<string, Point> {
-  const placed: { code: string; box: ReturnType<typeof labelBox> }[] = [];
+export function layoutLabels(spots: readonly LabelSpot[], radius: number, size: number, options: LabelOptions = {}): Record<string, Point> {
+  const placed: LabelBox[] = [];
   const out: Record<string, Point> = {};
+  // Every piece position, occupied or not, so a code keeps its place whoever stands where.
+  const pieces = spots.map((s) => s.unit);
+  // Fleets are drawn a little wider than the radius.
+  const reach = radius * 1.2 + 1;
   const vertical = radius * 1.1 + size * 0.62 + 1.5;
   const sideways = radius + size * 1.02 + 2;
-  for (const spot of spots) {
+  const covers = (box: LabelBox) => {
+    let n = 0;
+    for (const p of pieces) if (boxHitsCircle(box, p, reach)) n++;
+    return n;
+  };
+  const crowds = (box: LabelBox) => {
+    let n = 0;
+    for (const p of placed) if (boxesOverlap(box, p)) n++;
+    return n;
+  };
+  const clean = (spot: LabelSpot, at: Point) => {
+    const box = labelBox(at, size);
+    return (
+      crowds(box) === 0 &&
+      covers(box) === 0 &&
+      !(spot.inside && [[0, 0] as const, ...EDGES].some(([dx, dy]) => !spot.inside!([at[0] + dx * size, at[1] + dy * size])))
+    );
+  };
+  const put = (code: string, at: Point) => {
+    out[code] = at;
+    placed.push(labelBox(at, size));
+  };
+
+  /** The best spot round the piece, inside the province if it can be. */
+  const nearest = (spot: LabelSpot): Point => {
     const preferred = placeLabel(spot.unit, spot.label, radius, size);
     const [ux, uy] = spot.unit;
     // Below, above and beside first (how a map is usually lettered), then all round the piece,
     // then further out for a long thin province whose near spots fall outside it.
     const candidates: Point[] = [preferred];
-    for (const [reach, turns] of RINGS) {
+    for (const [far, turns] of RINGS) {
       for (const turn of turns) {
         const a = (turn * Math.PI) / 180;
-        candidates.push([ux + Math.cos(a) * sideways * reach, uy + Math.sin(a) * vertical * reach]);
+        candidates.push([ux + Math.cos(a) * sideways * far, uy + Math.sin(a) * vertical * far]);
       }
     }
     let best = preferred;
@@ -236,12 +278,9 @@ export function layoutLabels(
       const box = labelBox(at, size);
       let cost = i * 0.004; // earlier candidates win ties
       // Cheapest checks first, and stop as soon as this spot cannot beat the best so far.
-      for (const p of placed) if (boxesOverlap(box, p.box)) cost += 1;
+      cost += crowds(box);
       if (cost >= bestCost) continue;
-      for (const other of spots) {
-        // Fleets are drawn a little wider than the radius.
-        if (boxHitsCircle(box, other.unit, radius * 1.2 + 1)) cost += 2;
-      }
+      cost += covers(box) * 2;
       if (cost >= bestCost) continue;
       if (spot.inside) {
         // Most of all, a code belongs inside its own province: its middle, and its edges.
@@ -257,19 +296,68 @@ export function layoutLabels(
         if (cost < 0.5) break;
       }
     }
-    const box = labelBox(best, size);
-    if (
-      options.drop &&
-      (placed.some((p) => boxesOverlap(box, p.box)) ||
-        spots.some((o) => boxHitsCircle(box, o.unit, radius * 1.2 + 1)) ||
-        (spot.inside && [[0, 0] as const, ...EDGES].some(([dx, dy]) => !spot.inside!([best[0] + dx * size, best[1] + dy * size]))))
-    ) {
-      continue;
+    return best;
+  };
+
+  /**
+   * A kept code with no clear spot in its province: the nearest spot round its anchor that is
+   * clear of every code and piece, wherever it falls, or the least crowded one.
+   */
+  const beside = (spot: LabelSpot): Point => {
+    const [ax, ay] = spot.anchor ?? spot.unit;
+    let best: Point = [ax, ay + vertical];
+    let bestCost = Number.POSITIVE_INFINITY;
+    for (const [ring, far] of CALLOUT_REACH.entries()) {
+      for (const [i, turn] of CALLOUT_TURNS.entries()) {
+        const a = (turn * Math.PI) / 180;
+        const at: Point = [ax + Math.cos(a) * sideways * far, ay + Math.sin(a) * vertical * far];
+        const box = labelBox(at, size);
+        // Each step out costs more than any order of turns, and a clash more than any step.
+        let cost = ring + i * 0.01 + crowds(box) * 20 + covers(box) * 10;
+        if (spot.inside && !spot.inside(at)) cost += 0.5;
+        if (cost < bestCost) {
+          best = at;
+          bestCost = cost;
+        }
+      }
+      if (bestCost < ring + 1) break; // a clear spot at this reach: no need to look further out
     }
-    out[spot.code] = best;
-    placed.push({ code: spot.code, box });
+    return best;
+  };
+
+  // Kept codes with no clear spot inside their provinces are set beside them once every kept
+  // code has had its chance inside, and before anything less important is laid.
+  let kept: LabelSpot[] = [];
+  const flush = () => {
+    for (const spot of kept) put(spot.code, beside(spot));
+    kept = [];
+  };
+  for (const spot of spots) {
+    if (!spot.keep) flush();
+    const at = nearest(spot);
+    if (!options.drop || clean(spot, at)) put(spot.code, at);
+    else if (spot.keep) kept.push(spot);
   }
+  flush();
   return out;
+}
+
+/**
+ * Where to draw the leader from a code set outside its province to the place it names: from
+ * the anchor to the nearest edge of the code, stopping short of both. Null when the code sits
+ * close enough to need none.
+ */
+export function leaderFor(at: Point, anchor: Point, size: number): [Point, Point] | null {
+  const box = labelBox(at, size);
+  const pad = size * 0.25;
+  const nx = clampNumber(anchor[0], box.x0 - pad, box.x1 + pad);
+  const ny = clampNumber(anchor[1], box.y0 - pad, box.y1 + pad);
+  const dx = nx - anchor[0];
+  const dy = ny - anchor[1];
+  const length = Math.hypot(dx, dy);
+  if (length < size * 0.6) return null;
+  const gap = Math.min(size * 0.3, length / 3);
+  return [[anchor[0] + (dx / length) * gap, anchor[1] + (dy / length) * gap], [nx, ny]];
 }
 
 export interface TapCandidate {
@@ -319,8 +407,9 @@ export interface RankedSpot extends LabelSpot {
 /**
  * Every province code the board draws at this size. Up to the cap, all of them. Past it the
  * codes are at a readable floor and could not all fit, so they are placed most important first
- * (supply centres, then land, then sea) and a code with no clear spot inside its province is
- * left for the player to zoom in to.
+ * (supply centres, then land, then sea). A supply centre's code is always drawn: inside its
+ * province when there is room, else beside it (see `leaderFor`). Any other code with no clear
+ * spot inside its province is left for the player to zoom in to.
  */
 export function placeLabels(spots: readonly RankedSpot[], radius: number, size: number): Record<string, Point> {
   if (size <= LABEL_CAP) return layoutLabels(spots, radius, size);
