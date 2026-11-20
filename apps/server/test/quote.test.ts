@@ -3,6 +3,7 @@
  * attaches the original's words itself, so a quote can never put words in anybody's mouth.
  */
 import { describe, expect, it } from "vitest";
+import { QUOTE_CHARS, graphemes } from "@cabal/protocol";
 import { Client, create, join, start } from "./helpers.js";
 
 /** A started game with three people seated and connected (the rest played by the bot). */
@@ -73,8 +74,30 @@ describe("quoting a message", () => {
     const original = (await a.next("press", (m) => m.id === "l1")).p;
     b.send({ t: "press.send", id: "l2", p: { to: ann.power, body: "Quoting you.", quote: original.id } });
     const reply = (await b.next("press", (m) => m.id === "l2")).p;
-    expect(reply.quote!.excerpt.length).toBeLessThanOrEqual(280);
+    expect(graphemes(reply.quote!.excerpt)).toHaveLength(QUOTE_CHARS);
     expect(reply.quote!.excerpt.endsWith("…")).toBe(true);
     expect(long.startsWith(reply.quote!.excerpt.slice(0, -1).trimEnd())).toBe(true);
+  });
+
+  it("counts characters as a reader does, and never cuts an emoji or an accent in two", async () => {
+    const { ann, bob, a, b } = await three();
+    // A family emoji is eleven UTF-16 units and seven code points; e and its accent are two code points.
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}";
+    const accented = "e\u0301";
+    const quoted = async (body: string, n: string) => {
+      a.send({ t: "press.send", id: `o${n}`, p: { to: bob.power, body } });
+      const original = (await a.next("press", (m) => m.id === `o${n}`)).p;
+      b.send({ t: "press.send", id: `q${n}`, p: { to: ann.power, body: "Quoting you.", quote: original.id } });
+      return (await b.next("press", (m) => m.id === `q${n}`)).p.quote!.excerpt;
+    };
+    // Exactly 280 of them fit whole, though they take far more than 280 units.
+    const fits = family.repeat(QUOTE_CHARS);
+    expect(await quoted(fits, "1")).toBe(fits);
+    // One more and the excerpt is 279 of them and the ellipsis: 280 characters, none split.
+    expect(await quoted(family.repeat(QUOTE_CHARS + 1), "2")).toBe(`${family.repeat(QUOTE_CHARS - 1)}…`);
+    expect(await quoted(accented.repeat(QUOTE_CHARS + 1), "3")).toBe(`${accented.repeat(QUOTE_CHARS - 1)}…`);
+    // A cut that lands inside the last emoji keeps it whole or leaves it out, never half of it.
+    const edge = await quoted(`${"a".repeat(QUOTE_CHARS - 2)}${family}${family} and the rest`, "4");
+    expect(edge).toBe(`${"a".repeat(QUOTE_CHARS - 2)}${family}…`);
   });
 });
