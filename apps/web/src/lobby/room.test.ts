@@ -1,7 +1,7 @@
 import { type PressView, type SeatView, ServerMessage, resolveSettings } from "@cabal/protocol";
 import type { Frame } from "@cabal/protocol/client";
 import { describe, expect, it } from "vitest";
-import { applyFrame, canStart, fromSummary, humanSeats, markThreadRead, openSeats } from "./room.js";
+import { afterSummaryFailure, applyFrame, canStart, fromSummary, humanSeats, markThreadRead, openSeats } from "./room.js";
 import { POWERS } from "./terms.js";
 
 const STATE = { name: "S1901M", units: {}, centers: {}, homes: {}, retreats: {}, builds: {} };
@@ -204,5 +204,21 @@ describe("the room view", () => {
     expect(view.deadlineAt).toBe(160);
     view = applyFrame(view, frame({ t: "finished", seq: 6, p: { result: "draw", winners: ["FRANCE"], scores: { FRANCE: 1 }, reason: "vote" } }), 0)!;
     expect(view).toMatchObject({ status: "finished", deadlineAt: null, finished: { result: "draw", reason: "vote" } });
+  });
+});
+
+describe("a summary that fails", () => {
+  type Load = { kind: "loading" } | { kind: "missing" } | { kind: "unreachable"; message: string } | { kind: "ready"; view: string };
+  const down: Load = { kind: "unreachable", message: "The game server is not answering." };
+
+  it("leaves the room the socket's welcome already drew", () => {
+    const ready: Load = { kind: "ready", view: "the board" };
+    expect(afterSummaryFailure<Load>(ready, down)).toBe(ready);
+    expect(afterSummaryFailure<Load>(ready, { kind: "missing" })).toBe(ready);
+  });
+
+  it("is the page when nothing has answered yet", () => {
+    expect(afterSummaryFailure<Load>({ kind: "loading" }, down)).toBe(down);
+    expect(afterSummaryFailure<Load>({ kind: "loading" }, { kind: "missing" })).toEqual({ kind: "missing" });
   });
 });

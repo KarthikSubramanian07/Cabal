@@ -249,6 +249,16 @@ export function applyFrame(view: RoomView | null, frame: Frame, now: number): Ro
   }
 }
 
+/**
+ * What a failed summary leaves on screen. The socket is dialled alongside the summary, so its
+ * welcome may already have drawn the table: a summary that fails after that (a 429 from the read
+ * limit the two share, a 5xx, a dropped line) is news about the summary alone, and the live room
+ * the socket delivered stays. Before the socket has answered, the failure is the page.
+ */
+export function afterSummaryFailure<L extends { kind: string }>(current: L, failed: L): L {
+  return current.kind === "ready" ? current : failed;
+}
+
 /** The viewer has read a thread up to now: the count the server will confirm, at once. */
 export function markThreadRead(view: RoomView, thread: string): RoomView {
   if (!view.unread[thread]) return view;

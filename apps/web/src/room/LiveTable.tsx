@@ -13,13 +13,17 @@ import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, us
 import { PageLoading } from "../app/PageLoading.jsx";
 import { shortcutsEnabled } from "../app/prefs.js";
 import { OrderEntry, type WriteResult } from "../components/OrderEntry.jsx";
-import { OrderList, PhaseStepper, Results } from "../components/Sidebar.jsx";
-import { type Draft, type Mode, type Step, canGoByConvoy, click, disbandSelected, holdSelected, setMode, typedOrder, viaAlternative } from "../game/compose.js";
-import { choicePrompt, choicesFor, describeOrder, phaseLine } from "../game/describe.js";
+import { OrderPicker, type PickerState, placePicker } from "../components/OrderPicker.jsx";
+import { OrderList, PhaseStepper, Results, whyKey } from "../components/Sidebar.jsx";
+import { explainPhase, explainerFor } from "../game/explain/explain.js";
+import { type ComposeContext, type Draft, type Mode, type Step, canGoByConvoy, click, disbandSelected, holdSelected, setMode, typedOrder, viaAlternative } from "../game/compose.js";
+import { useWhatIf } from "../game/explain/whatIf.js";
+import type { State } from "../engine.js";
+import { choicePrompt, choicesFor, describeBoard, describeOrder, phaseLine } from "../game/describe.js";
 import { continueLabel, describePhase, parseOrder, parseUnit, provinceOf, titleCase } from "../game/notation.js";
 import type { PhaseRecord } from "../game/saved.js";
 import { type Speed, advance, dwell, playFrom } from "../game/replay.js";
-import { normaliseTyped, type Suggestion } from "../game/typed.js";
+import { normaliseTyped, routeTyped, type Suggestion } from "../game/typed.js";
 import { trackUnits } from "../game/unitIds.js";
 import { Board, type DrawnOrder } from "../map/Board.jsx";
 import { resultsTiming } from "../map/motion.js";
@@ -28,7 +32,7 @@ import { SeatingPlan } from "../lobby/SeatingPlan.jsx";
 import { describeTerms, phaseLabel, powerLabel } from "../lobby/terms.js";
 import type { Room } from "../lobby/useRoom.js";
 import { api } from "../net/api.js";
-import { clockFace, clockWords, urgency } from "./clock.js";
+import { ClockCrier, PhaseClock, SheetClock } from "./Countdown.jsx";
 import { DrawVote } from "./DrawVote.jsx";
 import { GameOver } from "./GameOver.jsx";
 import { mergeRecords, missingPhases, recordsFromReplay } from "./history.js";
@@ -41,31 +45,12 @@ import { DispatchBoard, useDispatches } from "../toast/DispatchBoard.jsx";
 import { useNarrow } from "../app/useNarrow.js";
 import { filedLine } from "./settle.js";
 import { useDesk } from "./useDesk.js";
+import { sameOrders, sketchCount, sketchGhosts, sketchMarks, sketchPowers, sketchSyncLine } from "./sketch.js";
+import { WhatIfPanel } from "./WhatIfPanel.jsx";
 
 type Tab = "orders" | "press" | "table";
 
-interface Picker {
-  x: number;
-  y: number;
-  title: string;
-  key: string;
-  options: string[];
-  openedAt: number;
-  openedBy: { x: number; y: number } | null;
-}
-
 const IDLE: Draft = { step: "idle" };
-
-/** A clock that redraws every second while it is on screen. */
-function useSecond(on: boolean): number {
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    if (!on) return;
-    const t = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(t);
-  }, [on]);
-  return now;
-}
 
 /** The browser's own idea of whether it is online. */
 function useOnline(): boolean {
@@ -150,7 +135,7 @@ function Floor({
   const [sheet, setSheet] = useState(false);
   const [thread, setThread] = useState<Recipient>("ALL");
   const [draft, setDraft] = useState<Draft>(IDLE);
-  const [picker, setPicker] = useState<Picker | null>(null);
+  const [picker, setPicker] = useState<PickerState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [viewing, setViewing] = useState<number | null>(null);
   const [replaying, setReplaying] = useState(false);
@@ -161,10 +146,16 @@ function Floor({
   const [readied, setReadied] = useState(() => readiedThisVisit.has(view.gameId));
   const boardWrap = useRef<HTMLDivElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
-  const pickerRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<HTMLInputElement>(null);
-  const now = useSecond(running);
-  const serverNow = now + view.clockOffsetMs;
+  const choicesRef = useRef<HTMLElement>(null);
+  /** Set when a keyboard choice (or Escape) removed the focused button, so focus moves on. */
+  const moveFocus = useRef(false);
+  /** Set by a tap on the map, which must not pull focus (and the page) down to the choices. */
+  const byPointer = useRef(false);
+  /** The toolbar's What if button: where focus returns when a sketch closes under it. */
+  const whatIfTool = useRef<HTMLButtonElement>(null);
+  /** The seat's real orders when the sketch opened, to notice a change made on another device. */
+  const openedFrom = useRef<Readonly<Record<string, string>>>({});
 
   const announce = useCallback((text: string) => {
     setAnnouncement("");
@@ -190,8 +181,10 @@ function Floor({
   // Fetched while some phase cannot be drawn from what this device has; once it can, the results
   // frames carry each new phase and nothing is downloaded again.
   const gap = useMemo(() => missingPhases(saved, view.resolved, view.history.map((h) => h.phase)).length > 0, [saved, view.resolved, view.history]);
+  // Reading a saved game takes the rules engine, which arrives after the board.
+  const rulesReady = desk.rulesReady;
   useEffect(() => {
-    if (historyCount === 0 || !gap) return;
+    if (historyCount === 0 || !gap || !rulesReady) return;
     let live = true;
     const timer = window.setTimeout(() => {
       api.replay(view.gameId, room.seat?.token).then(
@@ -210,7 +203,7 @@ function Floor({
       live = false;
       window.clearTimeout(timer);
     };
-  }, [view.gameId, historyCount, gap, room.seat?.token]);
+  }, [view.gameId, historyCount, gap, room.seat?.token, rulesReady]);
 
   const history = useMemo(
     () => mergeRecords(saved, view.resolved, view.history.map((h) => h.phase)),
@@ -238,29 +231,84 @@ function Floor({
   const record = viewing !== null ? history[viewing] : undefined;
   const playing = !record && canOrder;
 
+  // ---- what if: the seat's orders and guesses at everyone else's, predicted here, never sent
+
+  const whatIf = useWhatIf(view.state as unknown as State, kind);
+  const sketching = whatIf.on && playing && rulesReady;
+  const deskEveryone = desk.everyone;
+  const everyone = useMemo(() => (sketching ? deskEveryone() : null), [sketching, deskEveryone]);
+  /** Whose orders the choices under the map write while sketching (the seat's own otherwise). */
+  const [guessing, setGuessing] = useState<string | null>(null);
+  const active = (sketching ? guessing : null) ?? me;
+  const sketchFor = useMemo(() => (everyone && me ? sketchPowers(everyone, me, kind) : []), [everyone, me, kind]);
+  // A new phase leaves the sketch behind.
+  const stopSketch = whatIf.stop;
+  useEffect(() => {
+    stopSketch();
+    setGuessing(null);
+  }, [view.phase, stopSketch]);
+  const prediction = sketching ? whatIf.prediction : null;
+
+  // ---- why an order failed: the engine's account of the phase on show (or of the sketch)
+
+  /** The receipt whose "why" panel is open. */
+  const [whyOpen, setWhyOpen] = useState<string | null>(null);
+  useEffect(() => setWhyOpen(null), [viewing, sketching]);
+  const places = desk.board.provinces;
+  // Re-running a phase to explain it takes the rules engine, which arrives after the board.
+  const explainShown = useMemo(
+    () => (record && rulesReady ? explainerFor(record.outcome.results, record.phase, explainPhase(record), places) : null),
+    [record, rulesReady, places],
+  );
+  const explainSketch = useMemo(
+    () => (prediction ? explainerFor(prediction.outcome.results, view.phase, prediction.explanation, places) : null),
+    [prediction, view.phase, places],
+  );
+  const openWhy = useMemo(() => {
+    if (!whyOpen) return null;
+    const results = record ? record.outcome.results : prediction?.outcome.results;
+    const fn = record ? explainShown : explainSketch;
+    const r = results?.find((x, i) => whyKey(x, i) === whyOpen);
+    return r && fn ? fn(r) : null;
+  }, [whyOpen, record, prediction, explainShown, explainSketch]);
+
   // ---- composing, exactly as in the sandbox, for one power
 
-  const ctx = desk.ctx;
+  const ctx = useMemo<ComposeContext>(
+    () =>
+      sketching && everyone
+        ? { phase: kind, pieces: desk.pieces, legal: everyone.legal, active: active ?? undefined, allowance: everyone.allowance, orders: whatIf.orders }
+        : desk.ctx,
+    [sketching, everyone, kind, desk.pieces, desk.ctx, active, whatIf.orders],
+  );
+  /** Write an order: into the sketch while one is open, else to the desk, which files it. */
+  const { setOrder: sketchOrder, removeOrder: unsketchOrder } = whatIf;
+  const deskSet = desk.setOrder;
+  const writeOrder = useCallback(
+    (power: string, key: string, text: string) => (sketching ? sketchOrder(power, key, text) : deskSet(key, text)),
+    [sketching, sketchOrder, deskSet],
+  );
   const apply = useCallback(
     (step: Step, client?: { x: number; y: number }) => {
       setDraft(step.draft);
+      if (sketching && step.draft.step !== "idle") setGuessing(step.draft.power);
       const effect = step.effect;
       if (effect.kind === "order") {
-        desk.setOrder(effect.key, effect.text);
+        writeOrder(effect.power, effect.key, effect.text);
+        if (sketching) setGuessing(effect.power);
         setMessage(null);
         announce(describeOrder(effect.text));
       } else if (effect.kind === "choose") {
-        const rect = boardWrap.current?.getBoundingClientRect();
-        const frame = boardWrap.current?.querySelector(".board-frame")?.getBoundingClientRect();
-        const half = 100;
-        const tall = 34 + effect.options.length * 44;
-        const x = client && rect ? client.x - rect.left : rect ? rect.width / 2 : 40;
-        const y = client && rect ? client.y - rect.top : rect ? rect.height / 3 : 40;
-        const maxY = frame && rect ? frame.bottom - rect.top - tall - 12 : y;
+        const at = placePicker(
+          boardWrap.current?.getBoundingClientRect(),
+          boardWrap.current?.querySelector(".board-frame")?.getBoundingClientRect(),
+          effect.options.length,
+          client,
+        );
         setPicker({
-          x: rect ? Math.min(Math.max(x, half), rect.width - half) : x,
-          y: Math.max(0, Math.min(y, maxY)),
+          ...at,
           title: effect.title,
+          power: effect.power,
           key: effect.key,
           options: effect.options,
           openedAt: performance.now(),
@@ -274,13 +322,14 @@ function Floor({
         setMessage(null);
       }
     },
-    [desk, announce],
+    [writeOrder, sketching, announce],
   );
 
   const onProvince = useCallback(
     (code: string, client: { x: number; y: number }) => {
       if (!playing) return;
       setPicker(null);
+      byPointer.current = true;
       apply(click(ctx, draft, code), client);
     },
     [ctx, draft, apply, playing],
@@ -288,6 +337,8 @@ function Floor({
 
   const mode = useCallback((m: Mode) => apply(setMode(ctx, draft, m)), [ctx, draft, apply]);
   const cancel = useCallback(() => {
+    // If the focused control (a picker option, Cancel) is about to vanish, move focus on.
+    if (document.activeElement?.closest(".picker, .choices, [data-vanishes]")) moveFocus.current = true;
     setDraft(IDLE);
     setPicker(null);
     setMessage(null);
@@ -299,7 +350,7 @@ function Floor({
   const targets = useMemo(() => {
     const set = new Set<string>();
     if (draft.step === "idle") return set;
-    for (const text of desk.legal[draft.unit] ?? []) {
+    for (const text of ctx.legal[draft.power]?.[draft.unit] ?? []) {
       const o = parseOrder(text);
       if (!o) continue;
       if (draft.step === "unit" && o.type === "move" && (!draft.via || o.via)) set.add(provinceOf(o.dest));
@@ -315,11 +366,11 @@ function Floor({
       }
     }
     return set;
-  }, [desk.legal, draft]);
+  }, [ctx.legal, draft]);
 
   const hot = useMemo(() => {
     const set = new Set<string>();
-    for (const [unit, options] of Object.entries(desk.legal)) {
+    for (const [unit, options] of Object.values(ctx.legal).flatMap((byUnit) => Object.entries(byUnit))) {
       if (unit) {
         const ref = parseUnit(unit);
         if (ref && options.length) set.add(ref.province);
@@ -331,7 +382,7 @@ function Floor({
       }
     }
     return set;
-  }, [desk.legal]);
+  }, [ctx.legal]);
 
   const focus = useMemo(() => {
     if (!me || !view.state) return undefined;
@@ -344,35 +395,80 @@ function Floor({
   }, [view.state, me]);
 
   const suggestions = useMemo<Suggestion[]>(
-    () => (me ? Object.values(desk.legal).flatMap((orders) => orders.map((text) => ({ power: me, text }))) : []),
-    [desk.legal, me],
+    () => Object.entries(ctx.legal).flatMap(([power, byUnit]) => Object.values(byUnit).flatMap((orders) => orders.map((text) => ({ power, text })))),
+    [ctx.legal],
   );
 
   const writeTyped = useCallback(
     (inputs: string[]): WriteResult => {
       const result: WriteResult = { written: [], refused: [] };
-      if (!me) return result;
-      const orders = { [me]: { ...desk.book } };
+      if (!me || !active) return result;
+      // Later orders in one batch see the earlier ones, for the winter allowance.
+      const orders: Record<string, Record<string, string>> = Object.fromEntries(Object.entries(ctx.orders ?? {}).map(([p, o]) => [p, { ...o }]));
+      let last: string | null = null;
       for (const input of inputs) {
-        const verdict = desk.judge(normaliseTyped(input));
+        const typed = normaliseTyped(input);
+        // In a sketch an order can be a guess for any power; otherwise it is the seat's own.
+        const { power, verdict } = sketching ? routeTyped((p) => desk.judgeAs(p, typed), active, sketchFor) : { power: me, verdict: desk.judge(typed) };
         if (!verdict.legal || !verdict.canonical) {
           result.refused.push({ input, reason: verdict.reason });
           continue;
         }
-        const step = typedOrder({ ...ctx, orders }, me, verdict.canonical);
+        const step = typedOrder({ ...ctx, orders }, power, verdict.canonical);
         if (step.effect.kind !== "order") {
           result.refused.push({ input, reason: step.effect.kind === "message" ? step.effect.text : verdict.reason });
           continue;
         }
-        desk.setOrder(step.effect.key, step.effect.text);
-        orders[me] = { ...orders[me], [step.effect.key]: step.effect.text };
+        writeOrder(power, step.effect.key, step.effect.text);
+        orders[power] = { ...orders[power], [step.effect.key]: step.effect.text };
         result.written.push(step.effect.text);
+        last = power;
       }
-      if (result.written.length) setDraft(IDLE);
+      if (last) {
+        setDraft(IDLE);
+        if (sketching) setGuessing(last);
+      }
       return result;
     },
-    [me, desk, ctx],
+    [me, active, desk, ctx, sketching, sketchFor, writeOrder],
   );
+
+  // Keyboard path: after a choice, a shortcut or a cancel, focus the first new choice instead of
+  // leaving focus on a button that no longer exists (it would fall to the page and start over).
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
+    // The coast picker takes focus itself.
+    if (picker) return;
+    // An order given on the map leaves focus where it was: moving it to the choices under the
+    // map would scroll the page and slide the board out from under the finger.
+    const pointed = byPointer.current;
+    byPointer.current = false;
+    const lost = !pointed && (!document.activeElement || document.activeElement === document.body);
+    if (!moveFocus.current && !lost) return;
+    moveFocus.current = false;
+    const panel = choicesRef.current;
+    const first = panel?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+    (first ?? panel)?.focus();
+    first?.scrollIntoView({ block: "nearest" });
+  }, [draft, picker, viewing]);
+
+  // A sketch closed from inside its own panel (Discard, Use my sketched orders) takes the focused
+  // button with it: focus goes back to the What if button that opened it, or to the choices,
+  // rather than falling to the page. On a phone with the sheet up, the toolbar sits under the
+  // sheet (focus there would be hidden), so focus stays in the sheet, on its Orders tab.
+  const wasSketching = useRef(whatIf.on);
+  useEffect(() => {
+    const closed = wasSketching.current && !whatIf.on;
+    wasSketching.current = whatIf.on;
+    if (!closed) return;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    const covered = sheet && Boolean(window.matchMedia?.("(max-width: 1000px)").matches);
+    (covered ? document.getElementById("tab-orders") : (whatIfTool.current ?? choicesRef.current))?.focus();
+  }, [whatIf.on, sheet]);
 
   // ---- keyboard, as in the sandbox
 
@@ -419,9 +515,12 @@ function Floor({
   const given = record ? new Set(Object.values(record.orders).flatMap((o) => Object.values(o))) : null;
   const drawn: DrawnOrder[] = record
     ? record.outcome.results.filter((r) => given!.has(r.order) || (!r.ok && parseOrder(r.order)?.type !== "hold")).map((r) => ({ power: r.power, text: r.order, ok: r.ok }))
-    : me
-      ? Object.values(desk.book).map((text) => ({ power: me, text }))
-      : [];
+    : sketching
+      ? sketchMarks(whatIf.orders, prediction)
+      : me
+        ? Object.values(desk.book).map((text) => ({ power: me, text }))
+        : [];
+  const ghosts = useMemo(() => sketchGhosts(prediction), [prediction]);
   const units = useMemo(() => trackUnits(history, view.state as unknown as PhaseRecord["state"]), [history, view.state]);
 
   const resultsMs = record ? resultsTiming(drawn).total : 0;
@@ -451,8 +550,8 @@ function Floor({
 
   // ---- the clock and the seats
 
-  const msLeft = view.deadlineAt ? view.deadlineAt - serverNow : null;
-  const urgent = msLeft !== null ? urgency(msLeft) : "calm";
+  // The clock itself ticks in its own components (Countdown.tsx): nothing here redraws each second.
+  const deadlineAt = running && view.deadlineAt ? view.deadlineAt : null;
   const { ready: readyCount, acting } = readiness(view.seats);
   const centres = useMemo(() => {
     const out: Record<string, number> = {};
@@ -462,21 +561,45 @@ function Floor({
   const finalScores = over && view.finished?.result !== "abandoned" ? view.finished?.scores : undefined;
   const names = useMemo(() => Object.fromEntries(view.seats.map((s) => [s.power, s.name])) as Partial<Record<PowerName, string | null>>, [view.seats]);
 
-  // Say the clock once a minute in the last five, for people who cannot glance at it.
-  const lastSaid = useRef<number | null>(null);
-  useEffect(() => {
-    if (msLeft === null || msLeft > 5 * 60_000 || msLeft <= 0) return;
-    const minute = Math.ceil(msLeft / 60_000);
-    if (lastSaid.current === minute) return;
-    lastSaid.current = minute;
-    if (minute === 5 || minute === 1) announce(clockWords(msLeft));
-  }, [msLeft, announce]);
-
   // ---- the order desk's figures
 
   const orderable = Object.keys(desk.legal).filter((u) => u !== "");
   const due = kind === "A" ? Math.abs(desk.allowance) : orderable.length;
   const givenCount = Object.keys(desk.book).length;
+  /** The units the choices under the map offer: the guessed power's while sketching. */
+  const activeUnits = sketching && active ? Object.keys(ctx.legal[active] ?? {}).filter((u) => u !== "") : orderable;
+  const activeBook = sketching && active ? (whatIf.orders[active] ?? {}) : desk.book;
+  const activeAllowance = sketching && active ? (everyone?.allowance[active] ?? 0) : desk.allowance;
+
+  /** Open a sketch from the orders written so far, or close it and leave them as they were. */
+  const toggleWhatIf = () => {
+    if (whatIf.on) {
+      whatIf.stop();
+      setGuessing(null);
+      announce("What if closed. Your orders are as they were; nothing was sent.");
+    } else if (me) {
+      cancel();
+      openedFrom.current = desk.book;
+      whatIf.start({ [me]: desk.book });
+      announce("What if: sketch your orders and guess at everyone else's to see how the phase would resolve. Nothing is sent.");
+    }
+  };
+  /** Make the seat's own sketched orders its real orders. They are filed like any other change. */
+  const adoptSketch = () => {
+    if (!me) return;
+    const mine = whatIf.orders[me] ?? {};
+    // Another device holding this seat changed the real orders while the sketch was open.
+    const changedElsewhere = !sameOrders(openedFrom.current, desk.book);
+    desk.clearOrders();
+    for (const [key, text] of Object.entries(mine)) desk.setOrder(key, text);
+    whatIf.stop();
+    setGuessing(null);
+    announce(
+      changedElsewhere
+        ? "Your sketched orders are now your orders, and are being filed. They replace changes made on another device while you sketched."
+        : "Your sketched orders are now your orders, and are being filed.",
+    );
+  };
   const isReady = Boolean(seat?.ready);
   const inDisorder = seat?.kind === "civil_disorder";
 
@@ -507,14 +630,15 @@ function Floor({
         : filedLine({ kind, allowance: desk.allowance, given: givenCount, due });
 
   const sheetNote = (() => {
-    const parts: string[] = [];
+    const parts: ReactNode[] = [];
     if (record) parts.push("Results");
-    else if (running && msLeft !== null) parts.push(view.status === "paused" ? "Paused" : `${clockFace(msLeft)} left`);
+    else if (sketching) parts.push(`What if: ${sketchCount(whatIf.orders)} ${sketchCount(whatIf.orders) === 1 ? "order" : "orders"} sketched`);
+    else if (deadlineAt !== null) parts.push(view.status === "paused" ? "Paused" : <SheetClock key="clock" deadlineAt={deadlineAt} offsetMs={view.clockOffsetMs} />);
     else if (over) parts.push(view.finished?.result === "solo" ? `${powerLabel(view.finished.winners[0] ?? "")} won` : view.finished?.result === "draw" ? "Drawn" : "Abandoned");
-    if (!record && me && canOrder && due > 0) parts.push(`${Math.min(givenCount, due)} of ${due} ${kind === "A" ? (desk.allowance > 0 ? "builds" : "disbands") : "orders"}`);
+    if (!record && !sketching && me && canOrder && due > 0) parts.push(`${Math.min(givenCount, due)} of ${due} ${kind === "A" ? (desk.allowance > 0 ? "builds" : "disbands") : "orders"}`);
     if (!record && isReady) parts.push("ready");
     if (unread > 0) parts.push(`${unread} unread`);
-    return parts.join(", ");
+    return parts.flatMap((part, i) => (i === 0 ? [part] : [", ", part]));
   })();
 
   const hint: ReactNode = (() => {
@@ -522,9 +646,11 @@ function Floor({
     if (!me) return "You are watching this game.";
     if (over) return "The game is over.";
     if (!canOrder) return seat?.eliminated ? "You are out of the game. You can still talk and vote." : "Waiting for the board.";
+    if (!rulesReady) return "Reading the rules. Your orders open in a moment.";
     if (message) return message;
     if (picker) return `${picker.title}: choose from the menu.`;
-    if (due === 0) return kind === "A" ? "Nothing to build or disband this winter." : kind === "R" ? "None of your units has to retreat." : "You have no units to order.";
+    if (sketching && draft.step === "idle") return "What if: tap any unit to sketch its order. Nothing is sent.";
+    if (due === 0 && !sketching) return kind === "A" ? "Nothing to build or disband this winter." : kind === "R" ? "None of your units has to retreat." : "You have no units to order.";
     switch (draft.step) {
       case "idle":
         return kind === "A" ? "Tap an empty home supply centre to build, or a unit to disband." : kind === "R" ? "Tap a dislodged unit, then where it retreats." : "Tap one of your units, then where it should go.";
@@ -538,11 +664,12 @@ function Floor({
     }
   })();
 
-  const choices = playing && me ? choicesFor(ctx, draft, me, orderable, targets, desk.board.provinces) : [];
+  const choices = playing && active ? choicesFor(ctx, draft, active, activeUnits, targets, desk.board.provinces) : [];
   const convoyable = playing && draft.step === "unit" && me !== null && canGoByConvoy(ctx, draft.power, draft.unit);
   const last = viewing !== null && viewing + 1 >= history.length;
   const rejected = Object.values(desk.verdicts).filter((v) => !v.ok);
   const offline = !online || (room.everOpen && room.connection !== "open" && room.connection !== "closed");
+  const boardText = useMemo(() => describeBoard(mapState, places), [mapState, places]);
 
   return (
     <>
@@ -582,35 +709,25 @@ function Floor({
               selected={record ? null : draft.step === "idle" ? null : (parseUnit(draft.unit)?.province ?? null)}
               targets={record ? undefined : targets}
               hot={playing ? hot : undefined}
-              standoffs={record?.outcome.standoffs}
+              standoffs={record?.outcome.standoffs ?? prediction?.outcome.standoffs}
+              sketch={sketching}
+              ghosts={sketching ? ghosts : undefined}
               results={record ? `${viewing}-${record.phase}` : undefined}
               ids={record ? units.phases[viewing!] : units.live}
+              highlight={openWhy?.highlight}
               focus={focus}
               onProvince={onProvince}
             />
             {picker ? (
-              <div className="picker" ref={pickerRef} style={{ left: picker.x, top: picker.y }} role="menu" aria-labelledby="picker-title">
-                <div className="picker-title" id="picker-title" role="presentation">
-                  {picker.title}
-                </div>
-                {picker.options.map((o) => (
-                  <button
-                    key={o}
-                    type="button"
-                    role="menuitem"
-                    onClick={(e) => {
-                      const from = picker.openedBy;
-                      const sameSpot = from !== null && Math.hypot(e.clientX - from.x, e.clientY - from.y) < 16;
-                      if (sameSpot && e.timeStamp - picker.openedAt < 700) return;
-                      desk.setOrder(picker.key, o);
-                      setPicker(null);
-                      announce(describeOrder(o));
-                    }}
-                  >
-                    {o}
-                  </button>
-                ))}
-              </div>
+              <OrderPicker
+                picker={picker}
+                onChoose={(o) => {
+                  writeOrder(picker.power, picker.key, o);
+                  setPicker(null);
+                  moveFocus.current = true;
+                  announce(describeOrder(o));
+                }}
+              />
             ) : null}
             <div className="toolbar" role="group" aria-label="Order tools">
               {kind === "M" && playing && due > 0 ? (
@@ -639,8 +756,13 @@ function Floor({
                   Disband <kbd>D</kbd>
                 </button>
               ) : null}
+              {playing && rulesReady && me && draft.step === "idle" && !picker ? (
+                <button type="button" ref={whatIfTool} className="tool what-if" aria-pressed={whatIf.on} onClick={toggleWhatIf}>
+                  What if
+                </button>
+              ) : null}
               {draft.step !== "idle" || picker ? (
-                <button type="button" className="tool" onClick={cancel}>
+                <button type="button" className="tool" onClick={cancel} data-vanishes>
                   Cancel <kbd>Esc</kbd>
                 </button>
               ) : null}
@@ -650,8 +772,8 @@ function Floor({
             </div>
           </div>
           {choices.length ? (
-            <section className="choices" tabIndex={-1} aria-labelledby="choices-title">
-              <h2 id="choices-title">{choicePrompt(kind, draft, draft.step === "idle" ? me! : draft.power)}</h2>
+            <section className="choices" ref={choicesRef} tabIndex={-1} aria-labelledby="choices-title">
+              <h2 id="choices-title">{choicePrompt(kind, draft, draft.step === "idle" ? active! : draft.power)}</h2>
               <div className="choice-list">
                 {choices.map((c) => (
                   <button
@@ -660,6 +782,7 @@ function Floor({
                     className="tool choice"
                     onClick={() => {
                       setPicker(null);
+                      moveFocus.current = true;
                       apply(click(ctx, draft, c.code));
                     }}
                   >
@@ -668,7 +791,22 @@ function Floor({
                 ))}
               </div>
             </section>
-          ) : null}
+          ) : (
+            <section className="choices" ref={choicesRef} tabIndex={-1} aria-label="Choices" hidden />
+          )}
+
+          <details className="board-text">
+            <summary>Board as text</summary>
+            {boardText.map((p) => (
+              <section key={p.power}>
+                <h3>{p.power}</h3>
+                <p>Units: {p.units.length ? p.units.join("; ") : "none"}.</p>
+                <p>
+                  Supply centres ({p.centers.length}): {p.centers.length ? p.centers.join(", ") : "none"}.
+                </p>
+              </section>
+            ))}
+          </details>
         </div>
 
         <aside className="sidebar live-side" data-open={sheet} aria-label="The game">
@@ -694,12 +832,7 @@ function Floor({
               </h2>
               <div className="phase-meta">
                 <span>{over ? (view.finished?.result === "solo" ? `${powerLabel(view.finished.winners[0] ?? "")} won outright` : view.finished?.result === "draw" ? "Drawn" : "Abandoned") : live.kind}</span>
-                {running ? (
-                  <span className={`clock ${urgent}${view.grace ? " grace" : ""}`} aria-label={msLeft !== null ? `Time left: ${clockWords(msLeft)}` : "No deadline"}>
-                    {view.status === "paused" ? "Paused" : msLeft !== null ? clockFace(msLeft) : "No clock"}
-                    {view.grace ? <span className="grace-tag">Grace</span> : null}
-                  </span>
-                ) : null}
+                {running ? <PhaseClock deadlineAt={deadlineAt} offsetMs={view.clockOffsetMs} paused={view.status === "paused"} grace={Boolean(view.grace)} /> : null}
               </div>
               {view.status === "paused" ? <p className="fine">The game is paused{view.pauseReason ? `: ${pauseWords(view.pauseReason)}` : "."}</p> : null}
               {running ? (
@@ -753,25 +886,46 @@ function Floor({
             <div role="tabpanel" id="panel-orders" aria-labelledby="tab-orders" hidden={tab !== "orders"} className="live-panel">
               {readied ? <NotifyOffer moment="ready" /> : null}
               {record ? (
-                <Results record={record} names={desk.board.provinces} />
+                <Results record={record} names={places} explain={explainShown ?? undefined} open={whyOpen} onOpen={setWhyOpen} />
               ) : me && canOrder ? (
+                <>
+                {sketching && active ? (
+                  <WhatIfPanel
+                    me={me}
+                    phase={view.phase}
+                    powers={sketchFor}
+                    guessing={active}
+                    onGuess={(p) => {
+                      cancel();
+                      setGuessing(p);
+                    }}
+                    orders={whatIf.orders}
+                    prediction={prediction}
+                    names={places}
+                    explain={explainSketch ?? undefined}
+                    open={whyOpen}
+                    onOpen={setWhyOpen}
+                    onUse={adoptSketch}
+                    onDiscard={toggleWhatIf}
+                  />
+                ) : null}
                 <section>
-                  <h2>{titleCase(me)}</h2>
+                  <h2>{sketching && active && active !== me ? `${titleCase(active)}, guessed` : titleCase(me)}</h2>
                   {inDisorder ? <p className="notice">Your seat fell into civil disorder after missed turns. Send orders to take it back.</p> : null}
                   <OrderList
-                    power={me}
+                    power={active ?? me}
                     kind={kind}
-                    units={orderable}
-                    orders={desk.book}
-                    allowance={desk.allowance}
-                    onRemove={desk.removeOrder}
-                    alternative={(text) => viaAlternative(ctx, me, text)}
+                    units={activeUnits}
+                    orders={activeBook}
+                    allowance={activeAllowance}
+                    onRemove={(key) => (sketching && active ? unsketchOrder(active, key) : desk.removeOrder(key))}
+                    alternative={(text) => viaAlternative(ctx, active ?? me, text)}
                     onReplace={(key, text) => {
-                      desk.setOrder(key, text);
+                      writeOrder(active ?? me, key, text);
                       announce(describeOrder(text));
                     }}
                   />
-                  {rejected.length ? (
+                  {rejected.length && !sketching ? (
                     <ul className="refusals" role="alert">
                       {rejected.map((v) => (
                         <li key={v.text}>
@@ -781,24 +935,25 @@ function Floor({
                     </ul>
                   ) : null}
                   <div className="row-actions">
-                    {kind === "M" && due > 0 ? (
-                      <button type="button" className="btn small" onClick={desk.holdAll}>
+                    {kind === "M" && activeUnits.length > 0 ? (
+                      <button type="button" className="btn small" onClick={() => (sketching && active ? whatIf.holdAll(active, activeUnits) : desk.holdAll())}>
                         Hold the rest
                       </button>
                     ) : null}
-                    {kind === "A" && desk.allowance > 0 ? (
+                    {kind === "A" && !sketching && desk.allowance > 0 ? (
                       <button type="button" className="btn small" onClick={desk.waive} disabled={givenCount >= desk.allowance}>
                         Waive a build
                       </button>
                     ) : null}
-                    {givenCount > 0 ? (
-                      <button type="button" className="btn small" onClick={desk.clearOrders}>
+                    {Object.keys(activeBook).length > 0 ? (
+                      <button type="button" className="btn small" onClick={() => (sketching && active ? whatIf.clearOrders(active) : desk.clearOrders())}>
                         Clear
                       </button>
                     ) : null}
                   </div>
-                  {due > 0 ? <OrderEntry ref={entryRef} legal={suggestions} active={me} onWrite={writeTyped} /> : null}
+                  {due > 0 || sketching ? <OrderEntry ref={entryRef} legal={suggestions} active={active ?? me} onWrite={writeTyped} /> : null}
                 </section>
+                </>
               ) : (
                 <section>
                   <h2>The board</h2>
@@ -830,7 +985,7 @@ function Floor({
                 visible={pressVisible}
                 myOrders={Object.values(desk.book)}
                 resultsFor={resultsFor}
-                engineReady
+                engineReady={rulesReady}
                 connected={room.connection === "open"}
                 onSend={room.send}
                 onRead={room.markRead}
@@ -841,7 +996,7 @@ function Floor({
 
             <div role="tabpanel" id="panel-table" aria-labelledby="tab-table" hidden={tab !== "table"} className="live-panel">
               {over && view.finished ? (
-                <GameOver gameId={view.gameId} finished={view.finished} seats={view.seats} centres={centres} token={room.seat?.token} engineReady />
+                <GameOver gameId={view.gameId} finished={view.finished} seats={view.seats} centres={centres} token={room.seat?.token} engineReady={rulesReady} />
               ) : null}
               {running ? (
                 <DrawVote votes={view.votes} seats={view.seats} me={me} settings={view.settings} live={room.connection === "open" && view.status === "active"} onVote={room.vote} />
@@ -870,8 +1025,12 @@ function Floor({
               <button type="button" className="btn primary" onClick={() => view$(last ? null : viewing! + 1)}>
                 {last ? (over ? "Back to the final position" : continueLabel(view.phase)) : "Next phase"}
               </button>
+            ) : sketching ? (
+              <button type="button" className="btn primary" onClick={toggleWhatIf}>
+                Leave what if
+              </button>
             ) : me && canOrder && seat?.canAct ? (
-              <button type="button" className={`btn primary${isReady ? " is-ready" : ""}`} aria-pressed={isReady} onClick={toggleReady} disabled={inDisorder || room.connection !== "open"}>
+              <button type="button" className={`btn primary${isReady ? " is-ready" : ""}`} aria-pressed={isReady} onClick={toggleReady} disabled={inDisorder || room.connection !== "open" || !rulesReady}>
                 {isReady ? "Ready. Take it back" : `Ready for ${phaseLine(view.phase)}`}
               </button>
             ) : over ? (
@@ -893,9 +1052,14 @@ function Floor({
                 Nothing to order this phase
               </button>
             )}
-            {!record && me && canOrder && seat?.canAct ? (
+            {!record && !sketching && me && canOrder && seat?.canAct ? (
               <p className={`sync-line${desk.sync === "failed" ? " alert" : ""}`} role="status">
                 {syncLine}
+              </p>
+            ) : !record && sketching && (desk.sync === "failed" || rejected.length > 0) ? (
+              // The real orders still file while a sketch is open: a failure is not kept for later.
+              <p className="sync-line alert" role="status">
+                {sketchSyncLine(desk.sync === "failed" ? desk.syncError : null, rejected.length)}
               </p>
             ) : null}
           </div>
@@ -904,6 +1068,7 @@ function Floor({
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {announcement}
       </div>
+      <ClockCrier deadlineAt={view.status === "active" ? deadlineAt : null} offsetMs={view.clockOffsetMs} announce={announce} />
       <DispatchBoard
         dispatches={dispatches}
         tucked={narrow && sheet}

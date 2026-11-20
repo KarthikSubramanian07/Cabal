@@ -294,3 +294,91 @@ What made it fast:
   with a 95th percentile frame of 217 ms.
 - The click that adjudicates costs one long frame (about 170 ms at 4x throttling: the engine,
   React rendering the results and the choreography being planned). Everything after it is steady.
+
+## Opening a table (web, November 2026)
+
+A seated player opening `/g/:code` on a slow phone used to watch the loading card for more than
+seven seconds, and Lighthouse put the largest contentful paint at 4.5 to 4.7 seconds against a
+target of 2.5. The board was the last link of a long chain: the entry script, then the page's
+chunk, then the summary, then (only after the summary) the socket, then the room's chunk and a
+second copy of the stylesheet once the welcome arrived, then the map and the engine together. All
+the while the shell's hints had the 330 KB (compressed) engine and the sandbox's chunk competing
+for the line. And the largest paint itself was not the card the shell drew at once but React's
+copy of it, drawn later.
+
+Two measurements, both on 2026-11-19 on an Apple M1 shared with other build tracks (load average 6
+to 40), against `vite preview` (HTTP/1.1, so six connections, where Pages serves HTTP/2 and 3) and
+a local `wrangler dev`, loading one started table against the bot. "Before" is `main` at `1f91265`,
+"after" is this branch; each pair of builds is loaded alternately, so the rest of the machine slows
+both alike.
+
+- `apps/web/scripts/table-load.mjs`: a seated iPhone 15 page in headless Chromium with Lighthouse's
+  mobile throttling applied through the DevTools protocol (562.5 ms latency, 1.47 Mbps down,
+  675 kbps up, 4x CPU, cache off). It also times the map and the first piece.
+- Lighthouse 13.6 on its emulated Moto G (412 x 823), mobile, performance only, as a spectator (it
+  cannot hold a seat), both with its default simulated throttling and with throttling applied.
+
+```sh
+node apps/web/scripts/table-load.mjs http://localhost:4242 http://localhost:4241 --rounds 7
+CHROME_PATH=... npx lighthouse http://localhost:4241/g/<code> --only-categories=performance [--throttling-method=devtools]
+```
+
+| Seven alternating seated loads, median | Before | After |
+|---|---|---|
+| Largest contentful paint | 2,420 ms | 896 ms |
+| Map drawn (province codes visible) | 6,655 ms | 5,074 ms |
+| Position drawn (first piece) | 6,662 ms | 5,082 ms |
+
+| Lighthouse, mobile, three alternating runs | Before | After |
+|---|---|---|
+| Largest contentful paint, simulated throttling | 4.5 s, 4.7 s, 4.5 s | 1.3 s, 1.3 s, 1.3 s |
+| Performance score, simulated throttling | 76, 82, 76 | 99, 98, 97 |
+| Largest contentful paint, applied throttling | 2.5 s, 2.6 s, 2.4 s | 0.9 s, 1.0 s, 0.9 s |
+| Cumulative layout shift | 0.017 | 0.004 |
+
+After the change the largest paint is the first paint, in every run of both tools.
+
+What changed, and why:
+
+- **One stylesheet, fetched once.** The shell carries the stylesheet inline. With CSS split per
+  chunk, the room's chunk listed the same file as its own dependency, and opening the room waited
+  for a second copy (17 KB) to arrive and be applied. `build.cssCodeSplit` is now off: the app has
+  one stylesheet.
+- **Each page its own hints.** Every `modulepreload` and `preload` in the shell names the routes it
+  is for (`data-for`, written by `vite.config.ts`), and the Pages worker keeps only the page's own
+  (`src/agent/hints.ts`). A table is hinted its page and its imports at once. Not the engine and
+  not the sandbox.
+- **The room and the map hinted after the first paint.** Their hints wait, inert, in a
+  `<template id="after-paint">` in the shell, and `src/main.tsx` switches them on when React takes
+  over. On a slow line the first paint has the line to itself; the map is still asked for well
+  before the page would import it (the map is drawn no later than with the hints in the head).
+- **The map before the engine.** The order desk (`room/useDesk.ts`) opens on the map alone and
+  fetches the engine once the map is in. Until the rules arrive the board is drawn, the order
+  desk says "Reading the rules", Ready waits, and the saved game and seals (which need the engine)
+  wait too.
+- **The socket alongside the summary.** `useRoom` used to dial only after the summary answered.
+  It now dials at once and hangs up if the summary says there is no such table.
+- **Stand-ins of Inter Tight's size.** The fallback face (the system UI face) was narrower than
+  Inter Tight, so text grew when the face arrived, and the browser counted the grown loading card
+  as a new, later largest paint. Arial (Apple, Windows) and Roboto (Android), scaled to Inter
+  Tight's measured width and height (`styles/fonts.css`), now stand in, so the swap no longer
+  reflows a page.
+- **The loading note in a system face.** The note is a loading page's largest text. React paints
+  the card again when it takes over, by then usually in Inter Tight, where the note measured a
+  hair larger than in the stand-in at Lighthouse's 412-pixel width: a second, later largest paint.
+  And even a local stand-in is loaded before text in it is drawn, a frame or two after the rest.
+  In Arial, Roboto or the system face the note is drawn in the first frame and measures the same
+  in both copies.
+- **React takes over once the first paint is counted.** React replaced the shell's card one frame
+  after it was drawn, before the browser had reported that paint, so the browser took React's
+  copy, a few frames later, as the largest paint, and Lighthouse's simulation charged it with
+  every byte asked for in between (that was the 3.2 to 3.4 seconds it still reported). React now
+  starts when the browser reports the shell's largest paint, with timers for a page that reports
+  none.
+
+`apps/web/e2e-live/load.spec.ts` holds this in place: no engine hint on a table, the engine
+requested only after the map is in, no second stylesheet, the socket dialled while a slowed
+summary is still on its way, and the largest paint the shell's own card in the first frame, on a
+slowed phone and three times on a fast one. What remains of the five seconds to the map is the
+line itself: the summary and the socket each cost a round trip of over half a second, and the map
+is 97 KB compressed.

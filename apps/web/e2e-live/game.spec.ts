@@ -114,6 +114,12 @@ test.describe("the game room, live", () => {
       await expect(primary(ada)).not.toHaveText(/^Ready\. Take it back/, { timeout: 20_000 });
     }
     await expect(ada.getByRole("heading", { level: 1 })).toContainText("Spring 1902, movement");
+    // A winter with nothing to build resolves at once: its results can still be on show when the
+    // loop ends. Back to the live board on both, as a player would, before the vote.
+    for (const p of [ada, bea]) {
+      while (/^(Continue|Next)/.test((await primary(p).innerText()).trim())) await primary(p).click();
+      await expect(primary(p)).toHaveText(/^Ready for Spring 1902/);
+    }
     // Neither player missed a turn.
     for (const p of [ada, bea]) await expect(p.getByRole("list", { name: "Seats this phase" }).getByText(/civil disorder|missed turns/)).toHaveCount(0);
 

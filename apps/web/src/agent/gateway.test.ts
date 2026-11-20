@@ -161,21 +161,31 @@ describe("handleAgentRequest", () => {
       }
     });
 
-    it("keeps the board's preloads for pages that draw it, and drops them for the rest", async () => {
+    it("keeps each page's own hints and drops the rest", async () => {
       const preloads =
-        '<link rel="modulepreload" crossorigin href="/assets/SandboxPage-abc.js"><link rel="modulepreload" crossorigin href="/assets/board-def.js">' +
-        '<link rel="preload" as="fetch" type="application/wasm" crossorigin="anonymous" href="/assets/cabal_engine_bg-123.wasm">';
+        '<link rel="modulepreload" crossorigin href="/assets/SandboxPage-abc.js" data-for="sandbox">' +
+        '<link rel="modulepreload" crossorigin href="/assets/GamePage-ghi.js" data-for="game">' +
+        '<link rel="modulepreload" crossorigin href="/assets/board-def.js" data-for="sandbox game replay">' +
+        '<link rel="preload" as="fetch" type="application/wasm" crossorigin="anonymous" href="/assets/cabal_engine_bg-123.wasm" data-for="sandbox replay">' +
+        '<link rel="preload" as="font" type="font/woff2" crossorigin="anonymous" href="/assets/archivo-1.woff2">';
       const shell = mockEnv({ ...files, "/index.html": { body: `<!doctype html><html><head><title>Cabal</title>${preloads}</head><body><h1>Cabal Diplomacy</h1></body></html>`, type: "text/html" } });
-      for (const path of ["/sandbox", "/g/K7Q2XZ", "/replay/K7Q2XZ"]) {
-        const text = await (await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, html), shell)).text();
-        expect(text, path).toContain("cabal_engine_bg-123.wasm");
-        expect(text, path).toContain("board-def.js");
-      }
-      for (const path of ["/ledger", "/u/ada", "/games"]) {
-        const text = await (await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, html), shell)).text();
-        expect(text, path).not.toContain("cabal_engine_bg");
-        expect(text, path).not.toContain("board-def.js");
-        expect(text, path).not.toContain("SandboxPage");
+      const page = async (path: string) => (await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, html), shell)).text();
+      const want: Record<string, string[]> = {
+        "/sandbox": ["SandboxPage-abc.js", "board-def.js", "cabal_engine_bg-123.wasm"],
+        // A table draws the board from the map alone and fetches the engine once it has.
+        "/g/K7Q2XZ": ["GamePage-ghi.js", "board-def.js"],
+        "/replay/K7Q2XZ": ["board-def.js", "cabal_engine_bg-123.wasm"],
+        "/ledger": [],
+        "/u/ada": [],
+        "/games": [],
+      };
+      for (const [path, kept] of Object.entries(want)) {
+        const text = await page(path);
+        for (const file of ["SandboxPage-abc.js", "GamePage-ghi.js", "board-def.js", "cabal_engine_bg-123.wasm"]) {
+          expect(text.includes(file), `${path} ${file}`).toBe(kept.includes(file));
+        }
+        // Fonts are for every page.
+        expect(text, path).toContain("archivo-1.woff2");
       }
     });
 

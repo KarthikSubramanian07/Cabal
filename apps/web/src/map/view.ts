@@ -106,14 +106,38 @@ export function homeView(board: Size, frame: Size, focus: readonly Point[]): Box
 export function labelSize(scale: number): number {
   const s = Math.max(scale, 0.05);
   const px = 10 * (s / READABLE_SCALE) ** 0.4;
-  return clampNumber(px / s, 6, 16);
+  return clampNumber(px / s, 6, Math.max(LABEL_CAP, MIN_LABEL_PX / s));
 }
+
+/**
+ * The smallest a province code is drawn, in CSS pixels, however far out a small screen zooms.
+ * A whole board on a phone is a quarter of the readable scale, where the cap of 16 board units
+ * left codes of four pixels: marks, not words. Seven pixels can still be read, and the layout
+ * keeps them off the pieces.
+ */
+export const MIN_LABEL_PX = 7;
+
+/** The smallest a piece is drawn, as a radius in CSS pixels: big enough to see and to aim at. */
+export const MIN_UNIT_PX = 5;
 
 /** Piece radius in board units: about 16 CSS pixels across at the readable scale. */
 export function unitRadius(scale: number): number {
   const s = Math.max(scale, 0.05);
   const px = 8 * (s / READABLE_SCALE) ** 0.45;
-  return clampNumber(px / s, 6.5, 12.5);
+  return clampNumber(px / s, 6.5, Math.max(UNIT_CAP, MIN_UNIT_PX / s));
+}
+
+/** How close, in CSS pixels, a touch must land to a province it can act on to count for it. */
+export const TOUCH_REACH_PX = 26;
+/** On a far-out overview the reach is capped in board units, so a tap cannot jump provinces away... */
+export const TOUCH_REACH_MAX = 48;
+/** ...but never below this many CSS pixels, half a comfortable 44-pixel target, at any zoom. */
+export const TOUCH_REACH_MIN_PX = 22;
+
+/** How far, in board units, a touch reaches for a province it can act on at this scale. */
+export function touchReach(scale: number): number {
+  const s = Math.max(scale, 0.05);
+  return Math.max(TOUCH_REACH_MIN_PX / s, Math.min(TOUCH_REACH_PX / s, TOUCH_REACH_MAX));
 }
 
 /**
@@ -179,7 +203,17 @@ const RINGS: readonly (readonly [number, readonly number[]])[] = [
  * that covers no piece position and no code already placed. Where the map is too crowded
  * for a clean answer (the English Midlands) it takes the least bad one.
  */
-export function layoutLabels(spots: readonly LabelSpot[], radius: number, size: number): Record<string, Point> {
+export function layoutLabels(
+  spots: readonly LabelSpot[],
+  radius: number,
+  size: number,
+  /**
+   * Leave out a code that has no spot clear of the codes already placed and of the pieces. For
+   * a far-out overview, where every code at a readable size would be a wall of text: the codes
+   * that fit are drawn (put the ones that matter first), and zooming in brings the rest.
+   */
+  options: { drop?: boolean } = {},
+): Record<string, Point> {
   const placed: { code: string; box: ReturnType<typeof labelBox> }[] = [];
   const out: Record<string, Point> = {};
   const vertical = radius * 1.1 + size * 0.62 + 1.5;
@@ -223,8 +257,17 @@ export function layoutLabels(spots: readonly LabelSpot[], radius: number, size: 
         if (cost < 0.5) break;
       }
     }
+    const box = labelBox(best, size);
+    if (
+      options.drop &&
+      (placed.some((p) => boxesOverlap(box, p.box)) ||
+        spots.some((o) => boxHitsCircle(box, o.unit, radius * 1.2 + 1)) ||
+        (spot.inside && [[0, 0] as const, ...EDGES].some(([dx, dy]) => !spot.inside!([best[0] + dx * size, best[1] + dy * size]))))
+    ) {
+      continue;
+    }
     out[spot.code] = best;
-    placed.push({ code: spot.code, box: labelBox(best, size) });
+    placed.push({ code: spot.code, box });
   }
   return out;
 }
@@ -252,4 +295,34 @@ export function resolveTap(point: Point, under: string | null, candidates: reado
     }
   }
   return best?.code ?? under;
+}
+
+/** Where a province code's size stops growing in board units, and a piece's (see the sizes above). */
+export const LABEL_CAP = 16;
+export const UNIT_CAP = 12.5;
+
+/**
+ * The piece radius and code size the board draws at a scale, rounded so a pan or a hair of zoom
+ * does not lay every label out again: to a quarter unit, or a whole one past the caps (a far-out
+ * overview on a small screen, where the sizes are held at a floor in pixels).
+ */
+export function boardSizes(scale: number): { r: number; size: number } {
+  const step = (v: number, cap: number) => (v > cap ? Math.round(v) : Math.round(v * 4) / 4);
+  return { r: step(unitRadius(scale), UNIT_CAP), size: step(labelSize(scale), LABEL_CAP) };
+}
+
+/** A label spot and how much its code matters when not every code fits: lower is kept first. */
+export interface RankedSpot extends LabelSpot {
+  worth: number;
+}
+
+/**
+ * Every province code the board draws at this size. Up to the cap, all of them. Past it the
+ * codes are at a readable floor and could not all fit, so they are placed most important first
+ * (supply centres, then land, then sea) and a code with no clear spot inside its province is
+ * left for the player to zoom in to.
+ */
+export function placeLabels(spots: readonly RankedSpot[], radius: number, size: number): Record<string, Point> {
+  if (size <= LABEL_CAP) return layoutLabels(spots, radius, size);
+  return layoutLabels([...spots].sort((a, b) => a.worth - b.worth), radius, size, { drop: true });
 }
