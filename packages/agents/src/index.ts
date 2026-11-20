@@ -36,6 +36,7 @@ export {
   requestKind,
   validateOrders,
 } from "./player.js";
+export { MAX_BODY_CHARS, MESSAGES_PER_STEP, type OutgoingPress, outgoingPress } from "./press.js";
 export {
   type PromptInput,
   type Relationship,
