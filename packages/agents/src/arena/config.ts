@@ -10,7 +10,7 @@ import { parseArgs } from "node:util";
 import { type BotLevel, POWERS } from "@cabal/engine";
 import { BotBrain } from "../bot-brain.js";
 import { CappedBrain, FailoverBrain, SpendCap } from "../budget.js";
-import { type Brain, ClaudeBrain, DEFAULT_MODEL, PERSONAS, Player } from "../player.js";
+import { type Brain, CLAUDE_TIMEOUT_MS, ClaudeBrain, DEFAULT_MODEL, PERSONAS, Player } from "../player.js";
 import type { PressMode } from "./local.js";
 
 export interface ArenaConfig {
@@ -150,6 +150,14 @@ export function runCap(config: ArenaConfig): SpendCap | null {
 }
 
 /**
+ * The model brain a paid arena seat plays with: one request per decision, never retried, and given
+ * up after `CLAUDE_TIMEOUT_MS`, so its seat's reservation always covers what it can be billed.
+ */
+export function arenaClaude(model: string): ClaudeBrain {
+  return new ClaudeBrain({ model, maxRetries: 0, timeoutMs: CLAUDE_TIMEOUT_MS });
+}
+
+/**
  * The seven players of game `gameId`. A Claude seat's cap is its share of the run budget over
  * the run's games, and it is under the run cap as well. `claudeFor` builds the model brain (tests
  * pass a fake; nothing here calls the API by itself).
@@ -158,7 +166,7 @@ export function arenaPlayers(
   config: ArenaConfig,
   gameId: string,
   run: SpendCap | null,
-  claudeFor: (model: string) => Brain = (model) => new ClaudeBrain({ model }),
+  claudeFor: (model: string) => Brain = arenaClaude,
 ): Player[] {
   const seatShare = config.claude.length === 0 ? 0 : Math.floor(config.budgetMicros / (config.claude.length * config.games));
   return POWERS.map((power, i) => {

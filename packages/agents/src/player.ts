@@ -118,9 +118,12 @@ export interface ClaudeBrainOptions {
   model?: string;
   /** One effort for every request, or one per kind of request. Defaults to `DEFAULT_EFFORT`. */
   effort?: Effort | Partial<EffortPlan>;
-  /** Request timeout in milliseconds (the SDK default is ten minutes). */
+  /** Request timeout in milliseconds. Defaults to `CLAUDE_TIMEOUT_MS` (the SDK's own is ten minutes). */
   timeoutMs?: number;
-  /** SDK retries on 408, 409, 429 and 5xx (the SDK default is 2). */
+  /**
+   * SDK retries on 408, 409, 429 and 5xx. Defaults to none (the SDK's own default is 2): a spend
+   * cap reserves the worst case of one request per decision, and a retry would be a second bill.
+   */
   maxRetries?: number;
   client?: Anthropic;
 }
@@ -164,6 +167,9 @@ export const byteLength = (text: string): number => utf8.encode(text).byteLength
 
 export const DEFAULT_MODEL = "claude-opus-5-5";
 
+/** How long one decision may take before it is given up (and charged its whole reservation). */
+export const CLAUDE_TIMEOUT_MS = 120_000;
+
 export function requestKind(kind: "M" | "R" | "A", step: Step): keyof EffortPlan {
   if (kind === "R") return "retreat";
   if (kind === "A") return "adjustment";
@@ -183,8 +189,9 @@ export class ClaudeBrain implements Brain {
       opts.client ??
       new Anthropic({
         ...(opts.apiKey ? { apiKey: opts.apiKey } : {}),
-        ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
-        ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+        timeout: opts.timeoutMs ?? CLAUDE_TIMEOUT_MS,
+        // One decision is one request, so the reservation made for it bounds what it can cost.
+        maxRetries: opts.maxRetries ?? 0,
       });
     this.model = opts.model ?? DEFAULT_MODEL;
     this.effort =

@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Game, POWERS, mapInfo, ready } from "@cabal/engine";
 import { beforeAll, describe, expect, it } from "vitest";
-import { type Brain, BrainFailure, Player } from "../player.js";
-import { ArenaUsageError, arenaPlayers, parseArenaArgs, runCap } from "./config.js";
+import { type Brain, BrainFailure, CLAUDE_TIMEOUT_MS, ClaudeBrain, Player } from "../player.js";
+import { ArenaUsageError, arenaClaude, arenaPlayers, parseArenaArgs, runCap } from "./config.js";
 
 beforeAll(async () => {
   const wasm = fileURLToPath(new URL("../../../engine/pkg/cabal_engine_bg.wasm", import.meta.url));
@@ -77,6 +77,22 @@ describe("pnpm arena options", () => {
     });
     expect(built).toEqual([c.model, c.model]);
     expect(parse("--claude all --budget 1", KEY).claude).toEqual([...POWERS]);
+  });
+
+  it("never lets one decision of a paid seat become more than one request", () => {
+    // The SDK retries twice by default and waits ten minutes; each retry could be billed while the
+    // seat's cap reserved one call. Building a client sends nothing.
+    const sdk = (brain: ClaudeBrain) => (brain as unknown as { client: { maxRetries: number; timeout: number } }).client;
+    const previous = process.env["ANTHROPIC_API_KEY"];
+    process.env["ANTHROPIC_API_KEY"] = "sk-test-not-a-key";
+    try {
+      expect(sdk(arenaClaude("claude-opus-5-5"))).toMatchObject({ maxRetries: 0, timeout: CLAUDE_TIMEOUT_MS });
+      expect(sdk(new ClaudeBrain())).toMatchObject({ maxRetries: 0, timeout: CLAUDE_TIMEOUT_MS });
+      expect(sdk(new ClaudeBrain({ maxRetries: 1, timeoutMs: 5_000 }))).toMatchObject({ maxRetries: 1, timeout: 5_000 });
+    } finally {
+      if (previous === undefined) delete process.env["ANTHROPIC_API_KEY"];
+      else process.env["ANTHROPIC_API_KEY"] = previous;
+    }
   });
 
   it("plays the bot's orders when a Claude seat's cap cannot cover one call, without calling the model", async () => {

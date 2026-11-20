@@ -71,6 +71,9 @@ async function main(): Promise<number> {
   writeFileSync(join(out, "summary.json"), JSON.stringify({ gates, games: summaries }, null, 2) + "\n");
   writeFileSync(join(out, "summary.md"), report);
   const failures = summaries.flatMap((s) => gateFailures(s, gates));
+  // A bill above its reservation means a cost bound was wrong. Say so; the run fails its check.
+  const overrun = run?.overrunMicros() ?? 0;
+  if (overrun > 0) failures.push(`the run was billed $${microsToUsd(overrun).toFixed(4)} more than it reserved`);
   say(`${summaries.length} games written to ${out}; ${failures.length === 0 ? "every gate passes" : `${failures.length} gate failures`}`);
   return config.check && failures.length > 0 ? 1 : 0;
 }
