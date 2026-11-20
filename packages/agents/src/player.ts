@@ -69,6 +69,11 @@ export interface BrainRequest {
   prompt: string;
   kind: "M" | "R" | "A";
   step: Step;
+  /**
+   * The same turn as structured data: board, menu, press and memory. A brain that reads the board
+   * rather than the prose (the heuristic bot) needs it; a language model ignores it.
+   */
+  situation?: PromptInput;
 }
 
 export interface BrainReply {
@@ -429,7 +434,7 @@ export class Player {
     let usage: Usage | null = null;
     let model: string | null = null;
     try {
-      const reply = await this.brain.decide({ system: systemPrompt(input.map), prompt, kind, step });
+      const reply = await this.brain.decide({ system: systemPrompt(input.map), prompt, kind, step, situation: full });
       decision = reply.decision;
       usage = reply.usage;
       model = reply.model;

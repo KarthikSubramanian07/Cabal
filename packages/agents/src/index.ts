@@ -1,3 +1,4 @@
+export { BotBrain, type BotBrainOptions } from "./bot-brain.js";
 export { AgentClient, type AgentClientOptions } from "./client.js";
 export {
   PRICES,
