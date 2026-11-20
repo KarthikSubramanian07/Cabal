@@ -4,7 +4,7 @@ Status: accepted (2026-09-15)
 
 ## Context
 
-Diplomacy adjudication is subtle (164 DATC test cases, convoy paradoxes, coasts, civil disorder) and must be identical on the client (for instant legality feedback and previews) and the server (authority). Writing it twice guarantees drift.
+Diplomacy adjudication is subtle (171 DATC v3.0 test cases, convoy paradoxes, coasts, civil disorder) and must be identical on the client (for instant legality feedback and previews) and the server (authority). Writing it twice guarantees drift.
 
 ## Decision
 

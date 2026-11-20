@@ -1,6 +1,6 @@
 # ADR 0005: Durable Object SQLite per game, D1 for cross-game data
 
-Status: accepted (2026-09-15). The D1 half is superseded by [ADR 0009](0009-registry-durable-object-instead-of-d1.md): cross-game data lives in a `Registry` Durable Object, because the account is at its D1 database limit. The per-game half stands.
+Status: accepted (2026-09-15). The per-game half stands. The D1 half was set aside by [ADR 0009](0009-registry-durable-object-instead-of-d1.md) while the account was at its D1 database limit, and restored by [ADR 0010](0010-d1-index-registry-for-the-claude-budget.md): the cross-game index is in the D1 database `cabal`, behind the `GameIndex` and `PlayerStore` ports, and the `Registry` Durable Object keeps only the Claude budget.
 
 ## Decision
 

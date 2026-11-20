@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { ADJUDICATION_CASES, CABAL_CASES, DATC_CASES } from "./adjudication.js";
 
 export function HowToPlay({
   open,
@@ -155,7 +156,8 @@ export function HowToPlay({
             <li>After Fall, each power builds or disbands until its units match its supply centres.</li>
           </ul>
           <p className="fine">
-            Adjudication follows the 2023 rulebook and passes all 171 Diplomacy Adjudicator Test Cases.
+            Adjudication follows the 2023 rulebook and passes all {ADJUDICATION_CASES} adjudication test cases: the {DATC_CASES} Diplomacy
+            Adjudicator Test Cases and {CABAL_CASES} of Cabal&apos;s own.
           </p>
         </section>
         <section>

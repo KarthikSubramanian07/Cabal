@@ -28,7 +28,7 @@ Everyone reads the [README](../README.md) and [PLAN.md](PLAN.md). Then:
 | Subteam | Issues | Read |
 |---|---|---|
 | **Adjudicators** (rules and AI players) | #6, #7, #11 | [RULES.md](RULES.md), [ARCHITECTURE.md](ARCHITECTURE.md) sections 3, 4 and 7, `crates/cabal-engine`, the DATC report, `packages/agents` |
-| **Couriers** (server, platform, integrations) | #8, #12 | [PROTOCOL.md](PROTOCOL.md), [ARCHITECTURE.md](ARCHITECTURE.md) sections 5, 6, 9 and 10, [ADR 0008](adr/0008-manual-wrangler-deploys.md) (deploys) and [ADR 0009](adr/0009-registry-durable-object-instead-of-d1.md) (the Registry, no D1), the [deploy runbook](../CONTRIBUTING.md#deploying), `apps/server`, `packages/protocol`, `.github/workflows` |
+| **Couriers** (server, platform, integrations) | #8, #12 | [PROTOCOL.md](PROTOCOL.md), [ARCHITECTURE.md](ARCHITECTURE.md) sections 5, 6, 9 and 10, [ADR 0008](adr/0008-manual-wrangler-deploys.md) (deploys) and [ADR 0010](adr/0010-d1-index-registry-for-the-claude-budget.md) (the D1 index, and the Registry that keeps the Claude budget), the [deploy runbook](../CONTRIBUTING.md#deploying), `apps/server`, `packages/protocol`, `.github/workflows` |
 | **Cartographers** (board, press, player experience) | #9, #10 | [ARCHITECTURE.md](ARCHITECTURE.md) section 8, [BRAND.md](BRAND.md), `apps/web`, `tools/mapgen`, the e2e tests |
 
 ## 4. Plan your issue
