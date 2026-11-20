@@ -7,6 +7,8 @@
  */
 import { z } from "zod";
 
+export { QUOTE_CHARS, excerpt, graphemes } from "./text.js";
+
 /**
  * Bumped when a frame changes meaning. Version 2: every broadcast frame carries its own `seq` on
  * the envelope, and `sync { since }` replays the frames after that number.
@@ -278,7 +280,7 @@ export const PressQuote = z.object({
   id: z.string(),
   from: PowerName,
   phase: PressPhase,
-  /** The quoted message's text, cut to its first 280 characters. */
+  /** The quoted message's text, cut to its first 280 characters as a reader counts them (see `excerpt`). */
   excerpt: z.string(),
 });
 export type PressQuote = z.infer<typeof PressQuote>;
