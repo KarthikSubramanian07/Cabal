@@ -3,7 +3,7 @@
  * writes, and may attach a Seal: a pledge over some of their own orders this phase, sealed on this
  * device (see seals.ts) or left open for the reader to see at once.
  */
-import type { GameSettings, GameStatus, OrderResultView, PledgeInput, PowerName, PressView, Recipient } from "@cabal/protocol";
+import { type GameSettings, type GameStatus, type OrderResultView, type PledgeInput, type PowerName, type PressView, type Recipient, excerpt } from "@cabal/protocol";
 import { CabalError } from "@cabal/protocol/client";
 import { type CSSProperties, type FormEvent, type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { phaseLabel, powerLabel } from "../lobby/terms.js";
@@ -28,10 +28,8 @@ const ERRORS: Record<string, string> = {
 /** How much of a message the composer shows while quoting it; the server keeps its own excerpt. */
 const QUOTE_PREVIEW = 160;
 
-function preview(body: string): string {
-  const chars = [...body];
-  return chars.length <= QUOTE_PREVIEW ? body : `${chars.slice(0, QUOTE_PREVIEW - 1).join("").trimEnd()}…`;
-}
+/** Cut as the server cuts the excerpt itself, by characters as a reader counts them. */
+const preview = (body: string): string => excerpt(body, QUOTE_PREVIEW);
 
 function when(sentAt: number): string {
   return new Date(sentAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
