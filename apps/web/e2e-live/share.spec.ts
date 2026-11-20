@@ -3,7 +3,7 @@
  * the opening's supply centres into the board, as a link preview fetches it. Run once, on desktop.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { readPalette } from "../src/agent/png.js";
 // @ts-expect-error: plain ES modules with no type declarations
 import { createGame, startGame } from "../../../tools/metrics/lib/probe.mjs";

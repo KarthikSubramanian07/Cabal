@@ -3,7 +3,7 @@
  * account card. The seat they held becomes a ghost the bot plays, their record is gone, and the
  * device is signed out.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { chooseHandle, uniqueHandle } from "./room.js";
 
 test.describe("deleting an account, live", () => {

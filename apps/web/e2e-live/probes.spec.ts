@@ -4,7 +4,7 @@
  * bound only (a CI runner is not a browser in Europe or North America); the recorded figures come
  * from a maintainer's run against production. Run once, on the desktop project.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 // @ts-expect-error: plain ES modules with no type declarations
 import { playFullGame } from "../../../tools/metrics/full-game.mjs";
 // @ts-expect-error: plain ES modules with no type declarations
