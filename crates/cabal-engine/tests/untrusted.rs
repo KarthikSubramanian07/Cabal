@@ -200,3 +200,41 @@ fn a_dislodged_unit_outside_a_retreat_phase_is_refused() {
     assert!(Game::from_saved(&saved, Rulebook::default()).is_err());
     load_every_way(&serde_json::to_value(&saved).unwrap());
 }
+
+/// Raised in review: the year used to saturate at `u16::MAX`, so a game imported near it would
+/// play `S65535M`, `F65535M` and `W65535A` again every "year", while hosts key orders by phase
+/// name. The calendar now ends at `Phase::LAST_YEAR`: its fall ends the game in a draw, and a
+/// state left at its last adjustment cannot be played on.
+#[test]
+fn the_calendar_ends_in_a_draw_instead_of_repeating_its_last_year() {
+    use cabal_engine::game::{GameError, Status};
+    use cabal_engine::geo::Map;
+    use cabal_engine::state::{GameState, Phase, PhaseKind, Season};
+    let map = Map::standard();
+    let rulebook = Rulebook::default();
+    let mut last_fall = GameState::initial(map);
+    last_fall.phase = Phase::new(Phase::LAST_YEAR, Season::Fall, PhaseKind::Movement);
+    let mut game = Game::from_state(map, rulebook, last_fall);
+    game.process(&[]).expect("the last fall is played");
+    assert_eq!(game.status, Status::Draw);
+    assert_eq!(game.draw_members.len(), 7);
+    assert_eq!(game.phase().to_string(), "W9999A");
+    assert_eq!(game.process(&[]).err(), Some(GameError::Finished));
+    // What it writes, it reads back, with every phase named once.
+    let exported = game.to_saved("CAL");
+    let names: Vec<_> = exported.phases.iter().map(|p| p.name.clone()).collect();
+    let unique: std::collections::BTreeSet<_> = names.iter().collect();
+    assert_eq!(unique.len(), names.len(), "{names:?}");
+    let again = Game::from_saved(&exported, rulebook).expect("own export replays");
+    assert_eq!(
+        (again.state, again.status),
+        (game.state.clone(), Status::Draw)
+    );
+    // A state made by hand at the last adjustment has no spring to go to.
+    let mut last_winter = GameState::initial(map);
+    last_winter.phase = Phase::new(Phase::LAST_YEAR, Season::Winter, PhaseKind::Adjustment);
+    let mut stuck = Game::from_state(map, rulebook, last_winter);
+    assert_eq!(stuck.process(&[]).err(), Some(GameError::Finished));
+    assert_eq!(stuck.status, Status::Draw);
+    assert_eq!(Phase::parse("S10000M"), None);
+}

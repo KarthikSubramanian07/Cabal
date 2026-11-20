@@ -993,6 +993,10 @@ impl Game {
             },
             Some(SavedOutcome::Unknown) | None => {}
         }
+        // A record left going at the calendar's last adjustment can never be played on.
+        if !self.is_finished() && self.end_of_calendar() {
+            self.declare_draw();
+        }
         Ok(())
     }
 

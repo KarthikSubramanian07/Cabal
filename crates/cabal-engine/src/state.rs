@@ -42,12 +42,16 @@ impl Phase {
         Phase::new(1901, Season::Spring, PhaseKind::Movement)
     }
 
-    /// Parse `S1901M`, `F1902R`, `W1903A`. The year is four digits, or five past 9999, so that
-    /// every phase this type prints reads back as itself.
+    /// The calendar's last year. A game still going at the end of its fall ends in a draw, so
+    /// no phase name ever needs a fifth digit and no two phases of a game share a name.
+    pub const LAST_YEAR: u16 = 9999;
+
+    /// Parse `S1901M`, `F1902R`, `W1903A`. The year is exactly four digits, so that every phase
+    /// the engine plays prints and reads back as itself.
     pub fn parse(s: &str) -> Option<Phase> {
         let s = s.trim().to_ascii_uppercase();
         let b = s.as_bytes();
-        if !(6..=7).contains(&b.len()) {
+        if b.len() != 6 {
             return None;
         }
         let season = match b[0] {
@@ -59,7 +63,7 @@ impl Phase {
         // Checked as bytes: a wider character must never be sliced through, and
         // `u16::from_str` alone would also take a sign.
         let digits = &b[1..b.len() - 1];
-        if !digits.iter().all(u8::is_ascii_digit) || (digits.len() == 5 && digits[0] == b'0') {
+        if !digits.iter().all(u8::is_ascii_digit) {
             return None;
         }
         let year: u16 = std::str::from_utf8(digits).ok()?.parse().ok()?;
@@ -271,7 +275,7 @@ mod tests {
 
     #[test]
     fn phase_text_round_trips_for_every_year_it_accepts() {
-        for year in [0, 7, 950, 1901, 9999, 10_000, u16::MAX] {
+        for year in [0, 7, 950, 1901, Phase::LAST_YEAR] {
             for season in [Season::Spring, Season::Fall, Season::Winter] {
                 let phase = Phase::new(year, season, PhaseKind::Movement);
                 assert_eq!(Phase::parse(&phase.to_string()), Some(phase), "{phase}");
@@ -294,7 +298,8 @@ mod tests {
             assert_eq!(Phase::parse(text), None, "{text}");
         }
         for text in [
-            "S+950M", "S-950M", "S 950M", "S95_0M", "S950M", "S01901M", "S65536M", "S190111M",
+            "S+950M", "S-950M", "S 950M", "S95_0M", "S950M", "S01901M", "S10000M", "S65535M",
+            "S65536M", "S190111M",
         ] {
             assert_eq!(Phase::parse(text), None, "{text}");
         }

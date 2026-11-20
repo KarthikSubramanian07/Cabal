@@ -141,6 +141,12 @@ impl Game {
         if self.is_finished() {
             return Err(GameError::Finished);
         }
+        // Only a state made by hand can stand at the calendar's last adjustment: there is no
+        // spring after it to play, so the game ends there.
+        if self.end_of_calendar() {
+            self.declare_draw();
+            return Err(GameError::Finished);
+        }
         match self.state.phase.kind {
             PhaseKind::Movement => {
                 let o: Vec<Order> = orders
@@ -249,8 +255,8 @@ impl Game {
         );
         let before = self.state.clone();
         let result = resolve_adjustment(self.map, &self.state.position, self.rulebook, orders);
-        // Saturating: a saved game may start at any year a phase name can carry.
-        let year = self.state.phase.year.saturating_add(1);
+        // `process` never adjudicates the last year's adjustments, so this is a year that exists.
+        let year = self.state.phase.year + 1;
         self.state = GameState::from_position(
             Phase::new(year, Season::Spring, PhaseKind::Movement),
             result.position.clone(),
@@ -281,6 +287,13 @@ impl Game {
                         Phase::new(phase.year, Season::Winter, PhaseKind::Adjustment);
                     return;
                 }
+                if phase.year >= Phase::LAST_YEAR {
+                    // The calendar has run out: nobody won, so everyone still standing shares it.
+                    self.state.phase =
+                        Phase::new(phase.year, Season::Winter, PhaseKind::Adjustment);
+                    self.declare_draw();
+                    return;
+                }
                 let needs_adjustment = self
                     .map
                     .power_ids()
@@ -289,11 +302,8 @@ impl Game {
                     self.state.phase =
                         Phase::new(phase.year, Season::Winter, PhaseKind::Adjustment);
                 } else {
-                    self.state.phase = Phase::new(
-                        phase.year.saturating_add(1),
-                        Season::Spring,
-                        PhaseKind::Movement,
-                    );
+                    self.state.phase =
+                        Phase::new(phase.year + 1, Season::Spring, PhaseKind::Movement);
                 }
             }
         }
@@ -318,6 +328,11 @@ impl Game {
             .filter(|&(n, _)| n >= self.rulebook.victory_centers as usize)
             .max_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
             .map(|(_, p)| p)
+    }
+
+    /// True for an adjustment phase in the calendar's last year, which has no spring to follow.
+    pub(crate) fn end_of_calendar(&self) -> bool {
+        self.state.phase.kind == PhaseKind::Adjustment && self.state.phase.year >= Phase::LAST_YEAR
     }
 
     /// End the game by agreement, shared by every power still on the board.
