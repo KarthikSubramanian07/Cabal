@@ -16,7 +16,7 @@ preservation, unit conservation, and unique occupation. The saved target parses
 arbitrary bytes as a saved game and runs every loader on it (`verify_saved`,
 `from_saved`, `resume`, `from_snapshot`): none may panic, and whatever
 `from_saved` accepts must re-export to a file that replays with zero divergences.
-Its seeds are four small golden games from `tests/data/games/generated`. The validate
+Its seeds are four small golden games from `tests/data/games/generated` and two inputs it found whose export did not read back, kept so they are tried first: `year_0950.json` (a state named `S0950M` was written back as `S950M`) and `dislodged_in_movement.json` (a dislodged unit in a movement phase, loaded but never written back). The validate
 target reads arbitrary text as the lines a player typed, in any phase kind, on the opening
 or a generated board: one verdict per line, a reason on each, canonical text that validates
 to itself, and in movement phases the same answer the resolver then gives for every unit.

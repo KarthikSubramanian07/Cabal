@@ -16,13 +16,15 @@
  *  - Only live games pause when every human leaves, the pause keeps the time that was left, and it
  *    ends by itself. Daily and async games never look at who is connected.
  *  - A seat belongs to its player until that player has been gone for four movement phases. Two
- *    misses put it in civil disorder, where the bot covers it and the player takes it back by
- *    ordering. Only after four may a seated player invite a substitute.
+ *    misses put it in civil disorder, where the game's AI covers it (in a Claude game, a Claude
+ *    agent takes the seat over) and the player takes it back by ordering. Only after four may a
+ *    seated player invite a substitute.
  *  - Spectators are read-only: nothing a socket without a seat does can change the game.
- *  - Every AI seat is played every phase through a `SeatBrain`. The bot's orders are on file the
- *    moment a phase opens. A game that opted into Claude then asks the queue for better ones, in
- *    two bounded steps (negotiate, then order), under a hard spend cap; whatever goes wrong, the
- *    orders on file stand and the phase resolves on time.
+ *  - Every AI-played seat (an AI seat, or a civil-disorder seat on autopilot) is played every
+ *    phase through a `SeatBrain`. The bot's orders are on file the moment a phase opens. A game
+ *    that opted into Claude then asks the queue for better ones, in two bounded steps (negotiate,
+ *    then order), under a hard spend cap; whatever goes wrong, the orders on file stand and the
+ *    phase resolves on time.
  */
 import { DurableObject } from "cloudflare:workers";
 import {
@@ -288,6 +290,12 @@ export interface AgentBrief {
   press: PressView[];
   /** What the seat sent or received in earlier phases, oldest first. */
   earlierPress: { phase: string; from: string; to: string; body: string }[];
+  /**
+   * True when the agent is covering a person's seat in civil disorder. It gives orders only: its
+   * press and pledges are refused, and both press fields above hold only the table's public press,
+   * never the absent player's letters.
+   */
+  covering: boolean;
   trust: Record<string, { kept: number; broken: number }>;
   /** The seat's own diary and relationships, as it left them last turn. */
   memory: Memory;
@@ -1357,6 +1365,15 @@ export class GameRoom extends DurableObject<Env> {
     return seat.kind === "civil_disorder" && seat.eliminated === 0 && !!this.meta?.settings.aiFill;
   }
 
+  /**
+   * Played by the game's AI brain right now: an AI seat, or a civil-disorder seat the AI covers
+   * until its player returns. In a Claude game both kinds are offered Claude turns, so a seat a
+   * person walked away from is taken over by an agent, under the same spend cap as every other.
+   */
+  private aiPlayed(seat: SeatRow): boolean {
+    return (seat.kind === "ai" && seat.eliminated === 0) || this.autopilot(seat);
+  }
+
   /** Gone long enough that the seat may be handed to an invited substitute. */
   private vacant(seat: SeatRow): boolean {
     return seat.kind === "civil_disorder" && seat.eliminated === 0 && seat.missed >= LIMITS.vacantAfter;
@@ -1412,7 +1429,7 @@ export class GameRoom extends DurableObject<Env> {
         eliminated: s.eliminated === 1,
         missed: s.missed,
         autopilot,
-        brain: s.kind === "ai" ? aiBrain : autopilot ? "bot" : null,
+        brain: s.kind === "ai" || autopilot ? aiBrain : null,
         handle: s.player_id !== null ? s.name : null,
         present: s.kind === "ai" || present.has(s.power),
         submitted: submitted.has(s.power),
@@ -2209,18 +2226,18 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
-  /** What `power` sent or received before `phase`, oldest first: the context a Claude seat reads. */
-  private pressHistory(power: PowerName, phase: string, limit: number): AgentBrief["earlierPress"] {
+  /**
+   * What `power` sent or received before `phase`, oldest first: the context a Claude seat reads.
+   * With `publicOnly`, only what was said to the whole table, by anyone.
+   */
+  private pressHistory(power: PowerName, phase: string, limit: number, publicOnly = false): AgentBrief["earlierPress"] {
     return this.sql
       .exec<{ phase: string; sender: string; recipient: string; body: string }>(
         `SELECT phase, sender, recipient, body FROM (
            SELECT rowid AS rid, phase, sender, recipient, body, sent_at FROM press
-           WHERE phase <> ? AND (sender = ? OR recipient = ?) ORDER BY sent_at DESC, rowid DESC LIMIT ?
+           WHERE phase <> ? AND ${publicOnly ? "recipient = 'ALL'" : "(sender = ? OR recipient = ?)"} ORDER BY sent_at DESC, rowid DESC LIMIT ?
          ) ORDER BY sent_at, rid`,
-        phase,
-        power,
-        power,
-        limit,
+        ...(publicOnly ? [phase, limit] : [phase, power, power, limit]),
       )
       .toArray()
       .map((r) => ({ phase: r.phase, from: r.sender, to: r.recipient, body: r.body }));
@@ -2642,20 +2659,25 @@ export class GameRoom extends DurableObject<Env> {
     const deliberate = brain.deliberates && this.activeHumans().length > 0;
     const talks = this.phaseKind() === "M" && meta.settings.press !== "gunboat" && phaseMs >= NEGOTIATE_MIN_PHASE_MS;
     const asked: PowerName[] = [];
+    const talkers: PowerName[] = [];
     for (const seat of this.seats()) {
       if (seat.eliminated === 1 || !(seat.kind === "ai" || this.autopilot(seat)) || !canAct(game, seat.power)) continue;
       this.writeOrders(phase, seat.power, brain.orders(game, seat.power, meta.id), "bot");
-      if (deliberate && seat.kind === "ai" && this.reserveTurn(phase, seat.power, talks ? ["negotiate", "order"] : ["order"])) {
+      // A seat covered for an absent player only orders: nobody may talk or promise in their name.
+      const talking = talks && seat.kind === "ai";
+      if (deliberate && this.aiPlayed(seat) && this.reserveTurn(phase, seat.power, talking ? ["negotiate", "order"] : ["order"])) {
         asked.push(seat.power);
+        if (talking) talkers.push(seat.power);
       } else {
         this.sql.exec("UPDATE seats SET ready = 1 WHERE power = ?", seat.power);
       }
     }
     if (asked.length > 0) {
-      if (talks) {
+      if (talkers.length > 0) {
+        // Covered seats wait with their order step reserved; it is asked for when the talks close.
         meta.ai = { step: "negotiate", listenUntil: now + listenMs(phaseMs) };
         meta.aiDueAt = Math.min(now + NEGOTIATE_LIMIT_MS, meta.deadlineAt);
-        this.dispatch(phase, asked, "negotiate");
+        this.dispatch(phase, talkers, "negotiate");
       } else {
         meta.ai = { step: "order", listenUntil: now };
         meta.aiDueAt = Math.min(now + AI_TURN_LIMIT_MS, meta.deadlineAt);
@@ -2733,7 +2755,7 @@ export class GameRoom extends DurableObject<Env> {
     const asked: PowerName[] = [];
     this.atomic(() => {
       // Talks that never reported are over; whatever they cost is settled when they report or expire.
-      const waiting = this.seats().filter((s) => s.kind === "ai" && s.eliminated === 0 && s.ready === 0 && canAct(game, s.power));
+      const waiting = this.seats().filter((s) => this.aiPlayed(s) && s.ready === 0 && canAct(game, s.power));
       for (const seat of waiting) {
         const reserved = this.sql
           .exec<CallRow>("SELECT * FROM agent_calls WHERE phase = ? AND power = ? AND step = 'order' AND dispatched_at IS NULL", phase, seat.power)
@@ -2761,14 +2783,14 @@ export class GameRoom extends DurableObject<Env> {
   private releaseAiSeats(why: string): void {
     const meta = this.meta!;
     if (meta.status !== "active" && meta.status !== "paused") return;
-    const waiting = this.seats().filter((s) => s.kind === "ai" && s.eliminated === 0 && s.ready === 0 && canAct(this.game!, s.power));
+    const waiting = this.seats().filter((s) => this.aiPlayed(s) && s.ready === 0 && canAct(this.game!, s.power));
     this.atomic(() => {
       meta.aiDueAt = null;
       meta.ai = null;
       // Steps that were reserved and will now never be asked for cost nothing: hand them back.
       this.sql.exec("DELETE FROM agent_calls WHERE phase = ? AND dispatched_at IS NULL AND cost_micros IS NULL", this.game!.phase());
       if (waiting.length === 0) return;
-      this.sql.exec("UPDATE seats SET ready = 1 WHERE kind = 'ai' AND eliminated = 0");
+      for (const seat of waiting) this.sql.exec("UPDATE seats SET ready = 1 WHERE power = ?", seat.power);
       this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
     });
     if (waiting.length > 0) this.log("agent_turns_released", { why, powers: waiting.map((s) => s.power) });
@@ -3278,8 +3300,7 @@ export class GameRoom extends DurableObject<Env> {
         (meta.status === "active" || meta.status === "paused") &&
         game.phase() === phase &&
         !!seat &&
-        seat.kind === "ai" &&
-        seat.eliminated === 0 &&
+        this.aiPlayed(seat) &&
         seat.ready === 0 &&
         meta.claudeOff === null &&
         meta.ai?.step === step;
@@ -3291,14 +3312,18 @@ export class GameRoom extends DurableObject<Env> {
       }
       this.sql.exec("UPDATE agent_calls SET claimed_at = ? WHERE phase = ? AND power = ? AND step = ?", Date.now(), phase, power, step);
       const ledger = this.ledger();
+      // A person's seat in civil disorder: their letters, before and during the absence, were
+      // written to or by them, never to a model. The agent covering it reads the table only.
+      const covering = seat.kind === "civil_disorder";
       return {
         gameId: meta.id,
         power,
         phase,
         step,
         state: game.state() as StateView,
-        press: this.pressFor(power, phase).slice(-LIMITS.briefPress),
-        earlierPress: this.pressHistory(power, phase, LIMITS.briefEarlierPress),
+        press: this.pressFor(covering ? null : power, phase).slice(-LIMITS.briefPress),
+        earlierPress: this.pressHistory(power, phase, LIMITS.briefEarlierPress, covering),
+        covering,
         trust: Object.fromEntries(Object.entries(ledger).map(([p, l]) => [p, { kept: l.kept, broken: l.broken }])),
         memory: this.agentMemory(power),
         deadlineAt: meta.deadlineAt,
@@ -3402,7 +3427,7 @@ export class GameRoom extends DurableObject<Env> {
         ? "not_active"
         : game.phase() !== phase
           ? "stale_phase"
-          : !seat || seat.kind !== "ai" || seat.eliminated === 1
+          : !seat || !this.aiPlayed(seat)
             ? "not_an_ai_seat"
             : seat.ready === 1
               ? "turn_already_closed"
@@ -3422,8 +3447,15 @@ export class GameRoom extends DurableObject<Env> {
           // In the talks the orders are a plan: a pledge may name any of the seat's legal orders.
           const pledgeable = step === "order" ? new Set(outcome.orders.accepted) : null;
           const pledgeTo = decision.pledge?.to.trim().toUpperCase() ?? null;
+          // The agent covering an absent player's seat gives orders only. Its words would be read as
+          // theirs and its pledges would be kept or broken on their trust ledger, so none is sent.
+          const covering = seat!.kind === "civil_disorder";
           for (const message of decision.messages.slice(0, LIMITS.agentMessages)) {
             const to = message.to.trim().toUpperCase();
+            if (covering) {
+              outcome.messages.push({ to: to.slice(0, 16), sent: false, code: "covered_seat" });
+              continue;
+            }
             const body = message.body.trim().slice(0, LIMITS.agentBodyChars);
             if (!body || (to !== "ALL" && !(POWERS as readonly string[]).includes(to)) || to === power) {
               outcome.messages.push({ to: to.slice(0, 16), sent: false, code: "bad_message" });
@@ -3456,7 +3488,7 @@ export class GameRoom extends DurableObject<Env> {
       }
       this.atomic(() => {
         this.sql.exec("UPDATE seats SET ready = 1 WHERE power = ?", power);
-        const waiting = this.seats().some((s) => s.kind === "ai" && s.eliminated === 0 && s.ready === 0 && canAct(game, s.power));
+        const waiting = this.seats().some((s) => this.aiPlayed(s) && s.ready === 0 && canAct(game, s.power));
         if (!waiting) {
           meta.aiDueAt = null;
           meta.ai = null;

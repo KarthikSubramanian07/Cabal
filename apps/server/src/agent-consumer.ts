@@ -79,6 +79,7 @@ export async function playTurn(turn: AgentTurn, env: Env): Promise<string> {
       earlierPress: brief.earlierPress,
       myPledges: brief.press.filter((item) => item.from === power && item.pledge?.orders).map((item) => item.pledge!.orders!),
       trust: brief.trust,
+      covering: brief.covering,
     });
     report = {
       model: played.model,

@@ -408,6 +408,31 @@
         "support",
         "support_cut_or_void"
       ]
+    },
+    {
+      "file": "recorded/server_arena_2LRYDA.json",
+      "tier": "recorded",
+      "source": "pnpm arena --wrangler --until 1910 --games 2 (seed ARENA, first game): seven @cabal/agents seats on the Rust bot, treachery 0.2, playing cabal-server under wrangler dev over the human WebSocket protocol. The response of GET /api/games/2LRYDA/replay after Germany's solo in 1909, kept as the server wrote it",
+      "licence": "MIT (played on Cabal, this repository)",
+      "engine": "0.1.0",
+      "phases": 38,
+      "covers": [
+        "bounce",
+        "build",
+        "convoy",
+        "disband",
+        "dislodgement",
+        "elimination",
+        "pledges",
+        "retreat",
+        "retreat_disband",
+        "solo",
+        "split_coast",
+        "standoff",
+        "support",
+        "support_cut_or_void",
+        "waive"
+      ]
     }
   ]
 }
