@@ -15,12 +15,14 @@ import { shortcutsEnabled } from "../app/prefs.js";
 import { OrderEntry, type WriteResult } from "../components/OrderEntry.jsx";
 import { OrderList, PhaseStepper, Results, whyKey } from "../components/Sidebar.jsx";
 import { explainPhase, explainerFor } from "../game/explain/explain.js";
-import { type Draft, type Mode, type Step, canGoByConvoy, click, disbandSelected, holdSelected, setMode, typedOrder, viaAlternative } from "../game/compose.js";
+import { type ComposeContext, type Draft, type Mode, type Step, canGoByConvoy, click, disbandSelected, holdSelected, setMode, typedOrder, viaAlternative } from "../game/compose.js";
+import { useWhatIf } from "../game/explain/whatIf.js";
+import type { State } from "../engine.js";
 import { choicePrompt, choicesFor, describeOrder, phaseLine } from "../game/describe.js";
 import { continueLabel, describePhase, parseOrder, parseUnit, provinceOf, titleCase } from "../game/notation.js";
 import type { PhaseRecord } from "../game/saved.js";
 import { type Speed, advance, dwell, playFrom } from "../game/replay.js";
-import { normaliseTyped, type Suggestion } from "../game/typed.js";
+import { normaliseTyped, routeTyped, type Suggestion } from "../game/typed.js";
 import { trackUnits } from "../game/unitIds.js";
 import { Board, type DrawnOrder } from "../map/Board.jsx";
 import { resultsTiming } from "../map/motion.js";
@@ -40,6 +42,8 @@ import { threadList, totalUnread } from "./threads.js";
 import { NotifyOffer } from "../profile/NotificationsPanel.jsx";
 import { filedLine } from "./settle.js";
 import { useDesk } from "./useDesk.js";
+import { sketchCount, sketchGhosts, sketchMarks, sketchPowers } from "./sketch.js";
+import { WhatIfPanel } from "./WhatIfPanel.jsx";
 
 type Tab = "orders" | "press" | "table";
 
@@ -47,6 +51,7 @@ interface Picker {
   x: number;
   y: number;
   title: string;
+  power: string;
   key: string;
   options: string[];
   openedAt: number;
@@ -225,32 +230,71 @@ function Floor({
   const record = viewing !== null ? history[viewing] : undefined;
   const playing = !record && canOrder;
 
-  // ---- why an order failed: the engine's account of the phase on show
+  // ---- what if: the seat's orders and guesses at everyone else's, predicted here, never sent
+
+  const whatIf = useWhatIf(view.state as unknown as State, kind);
+  const sketching = whatIf.on && playing && rulesReady;
+  const deskEveryone = desk.everyone;
+  const everyone = useMemo(() => (sketching ? deskEveryone() : null), [sketching, deskEveryone]);
+  /** Whose orders the choices under the map write while sketching (the seat's own otherwise). */
+  const [guessing, setGuessing] = useState<string | null>(null);
+  const active = (sketching ? guessing : null) ?? me;
+  const sketchFor = useMemo(() => (everyone && me ? sketchPowers(everyone, me, kind) : []), [everyone, me, kind]);
+  // A new phase leaves the sketch behind.
+  const stopSketch = whatIf.stop;
+  useEffect(() => {
+    stopSketch();
+    setGuessing(null);
+  }, [view.phase, stopSketch]);
+  const prediction = sketching ? whatIf.prediction : null;
+
+  // ---- why an order failed: the engine's account of the phase on show (or of the sketch)
 
   /** The receipt whose "why" panel is open. */
   const [whyOpen, setWhyOpen] = useState<string | null>(null);
-  useEffect(() => setWhyOpen(null), [viewing]);
+  useEffect(() => setWhyOpen(null), [viewing, sketching]);
   const places = desk.board.provinces;
   // Re-running a phase to explain it takes the rules engine, which arrives after the board.
   const explainShown = useMemo(
     () => (record && rulesReady ? explainerFor(record.outcome.results, record.phase, explainPhase(record), places) : null),
     [record, rulesReady, places],
   );
+  const explainSketch = useMemo(
+    () => (prediction ? explainerFor(prediction.outcome.results, view.phase, prediction.explanation, places) : null),
+    [prediction, view.phase, places],
+  );
   const openWhy = useMemo(() => {
-    if (!whyOpen || !record || !explainShown) return null;
-    const r = record.outcome.results.find((x, i) => whyKey(x, i) === whyOpen);
-    return r ? explainShown(r) : null;
-  }, [whyOpen, record, explainShown]);
+    if (!whyOpen) return null;
+    const results = record ? record.outcome.results : prediction?.outcome.results;
+    const fn = record ? explainShown : explainSketch;
+    const r = results?.find((x, i) => whyKey(x, i) === whyOpen);
+    return r && fn ? fn(r) : null;
+  }, [whyOpen, record, prediction, explainShown, explainSketch]);
 
   // ---- composing, exactly as in the sandbox, for one power
 
-  const ctx = desk.ctx;
+  const ctx = useMemo<ComposeContext>(
+    () =>
+      sketching && everyone
+        ? { phase: kind, pieces: desk.pieces, legal: everyone.legal, active: active ?? undefined, allowance: everyone.allowance, orders: whatIf.orders }
+        : desk.ctx,
+    [sketching, everyone, kind, desk.pieces, desk.ctx, active, whatIf.orders],
+  );
+  /** Write an order: into the sketch while one is open, else to the desk, which files it. */
+  const { setOrder: sketchOrder, removeOrder: unsketchOrder } = whatIf;
+  const deskSet = desk.setOrder;
+  const writeOrder = useCallback(
+    (power: string, key: string, text: string) => (sketching ? sketchOrder(power, key, text) : deskSet(key, text)),
+    [sketching, sketchOrder, deskSet],
+  );
   const apply = useCallback(
     (step: Step, client?: { x: number; y: number }) => {
       setDraft(step.draft);
+      if (sketching && step.draft.step !== "idle") setGuessing(step.draft.power);
       const effect = step.effect;
       if (effect.kind === "order") {
-        desk.setOrder(effect.key, effect.text);
+        writeOrder(effect.power, effect.key, effect.text);
+        if (sketching) setGuessing(effect.power);
         setMessage(null);
         announce(describeOrder(effect.text));
       } else if (effect.kind === "choose") {
@@ -265,6 +309,7 @@ function Floor({
           x: rect ? Math.min(Math.max(x, half), rect.width - half) : x,
           y: Math.max(0, Math.min(y, maxY)),
           title: effect.title,
+          power: effect.power,
           key: effect.key,
           options: effect.options,
           openedAt: performance.now(),
@@ -278,7 +323,7 @@ function Floor({
         setMessage(null);
       }
     },
-    [desk, announce],
+    [writeOrder, sketching, announce],
   );
 
   const onProvince = useCallback(
@@ -303,7 +348,7 @@ function Floor({
   const targets = useMemo(() => {
     const set = new Set<string>();
     if (draft.step === "idle") return set;
-    for (const text of desk.legal[draft.unit] ?? []) {
+    for (const text of ctx.legal[draft.power]?.[draft.unit] ?? []) {
       const o = parseOrder(text);
       if (!o) continue;
       if (draft.step === "unit" && o.type === "move" && (!draft.via || o.via)) set.add(provinceOf(o.dest));
@@ -319,11 +364,11 @@ function Floor({
       }
     }
     return set;
-  }, [desk.legal, draft]);
+  }, [ctx.legal, draft]);
 
   const hot = useMemo(() => {
     const set = new Set<string>();
-    for (const [unit, options] of Object.entries(desk.legal)) {
+    for (const [unit, options] of Object.values(ctx.legal).flatMap((byUnit) => Object.entries(byUnit))) {
       if (unit) {
         const ref = parseUnit(unit);
         if (ref && options.length) set.add(ref.province);
@@ -335,7 +380,7 @@ function Floor({
       }
     }
     return set;
-  }, [desk.legal]);
+  }, [ctx.legal]);
 
   const focus = useMemo(() => {
     if (!me || !view.state) return undefined;
@@ -348,34 +393,42 @@ function Floor({
   }, [view.state, me]);
 
   const suggestions = useMemo<Suggestion[]>(
-    () => (me ? Object.values(desk.legal).flatMap((orders) => orders.map((text) => ({ power: me, text }))) : []),
-    [desk.legal, me],
+    () => Object.entries(ctx.legal).flatMap(([power, byUnit]) => Object.values(byUnit).flatMap((orders) => orders.map((text) => ({ power, text })))),
+    [ctx.legal],
   );
 
   const writeTyped = useCallback(
     (inputs: string[]): WriteResult => {
       const result: WriteResult = { written: [], refused: [] };
-      if (!me) return result;
-      const orders = { [me]: { ...desk.book } };
+      if (!me || !active) return result;
+      // Later orders in one batch see the earlier ones, for the winter allowance.
+      const orders: Record<string, Record<string, string>> = Object.fromEntries(Object.entries(ctx.orders ?? {}).map(([p, o]) => [p, { ...o }]));
+      let last: string | null = null;
       for (const input of inputs) {
-        const verdict = desk.judge(normaliseTyped(input));
+        const typed = normaliseTyped(input);
+        // In a sketch an order can be a guess for any power; otherwise it is the seat's own.
+        const { power, verdict } = sketching ? routeTyped((p) => desk.judgeAs(p, typed), active, sketchFor) : { power: me, verdict: desk.judge(typed) };
         if (!verdict.legal || !verdict.canonical) {
           result.refused.push({ input, reason: verdict.reason });
           continue;
         }
-        const step = typedOrder({ ...ctx, orders }, me, verdict.canonical);
+        const step = typedOrder({ ...ctx, orders }, power, verdict.canonical);
         if (step.effect.kind !== "order") {
           result.refused.push({ input, reason: step.effect.kind === "message" ? step.effect.text : verdict.reason });
           continue;
         }
-        desk.setOrder(step.effect.key, step.effect.text);
-        orders[me] = { ...orders[me], [step.effect.key]: step.effect.text };
+        writeOrder(power, step.effect.key, step.effect.text);
+        orders[power] = { ...orders[power], [step.effect.key]: step.effect.text };
         result.written.push(step.effect.text);
+        last = power;
       }
-      if (result.written.length) setDraft(IDLE);
+      if (last) {
+        setDraft(IDLE);
+        if (sketching) setGuessing(last);
+      }
       return result;
     },
-    [me, desk, ctx],
+    [me, active, desk, ctx, sketching, sketchFor, writeOrder],
   );
 
   // ---- keyboard, as in the sandbox
@@ -423,9 +476,12 @@ function Floor({
   const given = record ? new Set(Object.values(record.orders).flatMap((o) => Object.values(o))) : null;
   const drawn: DrawnOrder[] = record
     ? record.outcome.results.filter((r) => given!.has(r.order) || (!r.ok && parseOrder(r.order)?.type !== "hold")).map((r) => ({ power: r.power, text: r.order, ok: r.ok }))
-    : me
-      ? Object.values(desk.book).map((text) => ({ power: me, text }))
-      : [];
+    : sketching
+      ? sketchMarks(whatIf.orders, prediction)
+      : me
+        ? Object.values(desk.book).map((text) => ({ power: me, text }))
+        : [];
+  const ghosts = useMemo(() => sketchGhosts(prediction), [prediction]);
   const units = useMemo(() => trackUnits(history, view.state as unknown as PhaseRecord["state"]), [history, view.state]);
 
   const resultsMs = record ? resultsTiming(drawn).total : 0;
@@ -474,6 +530,33 @@ function Floor({
   const orderable = Object.keys(desk.legal).filter((u) => u !== "");
   const due = kind === "A" ? Math.abs(desk.allowance) : orderable.length;
   const givenCount = Object.keys(desk.book).length;
+  /** The units the choices under the map offer: the guessed power's while sketching. */
+  const activeUnits = sketching && active ? Object.keys(ctx.legal[active] ?? {}).filter((u) => u !== "") : orderable;
+  const activeBook = sketching && active ? (whatIf.orders[active] ?? {}) : desk.book;
+  const activeAllowance = sketching && active ? (everyone?.allowance[active] ?? 0) : desk.allowance;
+
+  /** Open a sketch from the orders written so far, or close it and leave them as they were. */
+  const toggleWhatIf = () => {
+    if (whatIf.on) {
+      whatIf.stop();
+      setGuessing(null);
+      announce("What if closed. Your orders are as they were; nothing was sent.");
+    } else if (me) {
+      cancel();
+      whatIf.start({ [me]: desk.book });
+      announce("What if: sketch your orders and guess at everyone else's to see how the phase would resolve. Nothing is sent.");
+    }
+  };
+  /** Make the seat's own sketched orders its real orders. They are filed like any other change. */
+  const adoptSketch = () => {
+    if (!me) return;
+    const mine = whatIf.orders[me] ?? {};
+    desk.clearOrders();
+    for (const [key, text] of Object.entries(mine)) desk.setOrder(key, text);
+    whatIf.stop();
+    setGuessing(null);
+    announce("Your sketched orders are now your orders, and are being filed.");
+  };
   const isReady = Boolean(seat?.ready);
   const inDisorder = seat?.kind === "civil_disorder";
 
@@ -506,9 +589,10 @@ function Floor({
   const sheetNote = (() => {
     const parts: ReactNode[] = [];
     if (record) parts.push("Results");
+    else if (sketching) parts.push(`What if: ${sketchCount(whatIf.orders)} ${sketchCount(whatIf.orders) === 1 ? "order" : "orders"} sketched`);
     else if (deadlineAt !== null) parts.push(view.status === "paused" ? "Paused" : <SheetClock key="clock" deadlineAt={deadlineAt} offsetMs={view.clockOffsetMs} />);
     else if (over) parts.push(view.finished?.result === "solo" ? `${powerLabel(view.finished.winners[0] ?? "")} won` : view.finished?.result === "draw" ? "Drawn" : "Abandoned");
-    if (!record && me && canOrder && due > 0) parts.push(`${Math.min(givenCount, due)} of ${due} ${kind === "A" ? (desk.allowance > 0 ? "builds" : "disbands") : "orders"}`);
+    if (!record && !sketching && me && canOrder && due > 0) parts.push(`${Math.min(givenCount, due)} of ${due} ${kind === "A" ? (desk.allowance > 0 ? "builds" : "disbands") : "orders"}`);
     if (!record && isReady) parts.push("ready");
     if (unread > 0) parts.push(`${unread} unread`);
     return parts.flatMap((part, i) => (i === 0 ? [part] : [", ", part]));
@@ -522,7 +606,8 @@ function Floor({
     if (!rulesReady) return "Reading the rules. Your orders open in a moment.";
     if (message) return message;
     if (picker) return `${picker.title}: choose from the menu.`;
-    if (due === 0) return kind === "A" ? "Nothing to build or disband this winter." : kind === "R" ? "None of your units has to retreat." : "You have no units to order.";
+    if (sketching && draft.step === "idle") return "What if: tap any unit to sketch its order. Nothing is sent.";
+    if (due === 0 && !sketching) return kind === "A" ? "Nothing to build or disband this winter." : kind === "R" ? "None of your units has to retreat." : "You have no units to order.";
     switch (draft.step) {
       case "idle":
         return kind === "A" ? "Tap an empty home supply centre to build, or a unit to disband." : kind === "R" ? "Tap a dislodged unit, then where it retreats." : "Tap one of your units, then where it should go.";
@@ -536,7 +621,7 @@ function Floor({
     }
   })();
 
-  const choices = playing && me ? choicesFor(ctx, draft, me, orderable, targets, desk.board.provinces) : [];
+  const choices = playing && active ? choicesFor(ctx, draft, active, activeUnits, targets, desk.board.provinces) : [];
   const convoyable = playing && draft.step === "unit" && me !== null && canGoByConvoy(ctx, draft.power, draft.unit);
   const last = viewing !== null && viewing + 1 >= history.length;
   const rejected = Object.values(desk.verdicts).filter((v) => !v.ok);
@@ -580,7 +665,9 @@ function Floor({
               selected={record ? null : draft.step === "idle" ? null : (parseUnit(draft.unit)?.province ?? null)}
               targets={record ? undefined : targets}
               hot={playing ? hot : undefined}
-              standoffs={record?.outcome.standoffs}
+              standoffs={record?.outcome.standoffs ?? prediction?.outcome.standoffs}
+              sketch={sketching}
+              ghosts={sketching ? ghosts : undefined}
               results={record ? `${viewing}-${record.phase}` : undefined}
               ids={record ? units.phases[viewing!] : units.live}
               highlight={openWhy?.highlight}
@@ -601,7 +688,7 @@ function Floor({
                       const from = picker.openedBy;
                       const sameSpot = from !== null && Math.hypot(e.clientX - from.x, e.clientY - from.y) < 16;
                       if (sameSpot && e.timeStamp - picker.openedAt < 700) return;
-                      desk.setOrder(picker.key, o);
+                      writeOrder(picker.power, picker.key, o);
                       setPicker(null);
                       announce(describeOrder(o));
                     }}
@@ -638,6 +725,11 @@ function Floor({
                   Disband <kbd>D</kbd>
                 </button>
               ) : null}
+              {playing && rulesReady && me && draft.step === "idle" && !picker ? (
+                <button type="button" className="tool what-if" aria-pressed={whatIf.on} onClick={toggleWhatIf}>
+                  What if
+                </button>
+              ) : null}
               {draft.step !== "idle" || picker ? (
                 <button type="button" className="tool" onClick={cancel}>
                   Cancel <kbd>Esc</kbd>
@@ -650,7 +742,7 @@ function Floor({
           </div>
           {choices.length ? (
             <section className="choices" tabIndex={-1} aria-labelledby="choices-title">
-              <h2 id="choices-title">{choicePrompt(kind, draft, draft.step === "idle" ? me! : draft.power)}</h2>
+              <h2 id="choices-title">{choicePrompt(kind, draft, draft.step === "idle" ? active! : draft.power)}</h2>
               <div className="choice-list">
                 {choices.map((c) => (
                   <button
@@ -749,23 +841,44 @@ function Floor({
               {record ? (
                 <Results record={record} names={places} explain={explainShown ?? undefined} open={whyOpen} onOpen={setWhyOpen} />
               ) : me && canOrder ? (
+                <>
+                {sketching && active ? (
+                  <WhatIfPanel
+                    me={me}
+                    phase={view.phase}
+                    powers={sketchFor}
+                    guessing={active}
+                    onGuess={(p) => {
+                      cancel();
+                      setGuessing(p);
+                    }}
+                    orders={whatIf.orders}
+                    prediction={prediction}
+                    names={places}
+                    explain={explainSketch ?? undefined}
+                    open={whyOpen}
+                    onOpen={setWhyOpen}
+                    onUse={adoptSketch}
+                    onDiscard={toggleWhatIf}
+                  />
+                ) : null}
                 <section>
-                  <h2>{titleCase(me)}</h2>
+                  <h2>{sketching && active && active !== me ? `${titleCase(active)}, guessed` : titleCase(me)}</h2>
                   {inDisorder ? <p className="notice">Your seat fell into civil disorder after missed turns. Send orders to take it back.</p> : null}
                   <OrderList
-                    power={me}
+                    power={active ?? me}
                     kind={kind}
-                    units={orderable}
-                    orders={desk.book}
-                    allowance={desk.allowance}
-                    onRemove={desk.removeOrder}
-                    alternative={(text) => viaAlternative(ctx, me, text)}
+                    units={activeUnits}
+                    orders={activeBook}
+                    allowance={activeAllowance}
+                    onRemove={(key) => (sketching && active ? unsketchOrder(active, key) : desk.removeOrder(key))}
+                    alternative={(text) => viaAlternative(ctx, active ?? me, text)}
                     onReplace={(key, text) => {
-                      desk.setOrder(key, text);
+                      writeOrder(active ?? me, key, text);
                       announce(describeOrder(text));
                     }}
                   />
-                  {rejected.length ? (
+                  {rejected.length && !sketching ? (
                     <ul className="refusals" role="alert">
                       {rejected.map((v) => (
                         <li key={v.text}>
@@ -775,24 +888,25 @@ function Floor({
                     </ul>
                   ) : null}
                   <div className="row-actions">
-                    {kind === "M" && due > 0 ? (
-                      <button type="button" className="btn small" onClick={desk.holdAll}>
+                    {kind === "M" && activeUnits.length > 0 ? (
+                      <button type="button" className="btn small" onClick={() => (sketching && active ? whatIf.holdAll(active, activeUnits) : desk.holdAll())}>
                         Hold the rest
                       </button>
                     ) : null}
-                    {kind === "A" && desk.allowance > 0 ? (
+                    {kind === "A" && !sketching && desk.allowance > 0 ? (
                       <button type="button" className="btn small" onClick={desk.waive} disabled={givenCount >= desk.allowance}>
                         Waive a build
                       </button>
                     ) : null}
-                    {givenCount > 0 ? (
-                      <button type="button" className="btn small" onClick={desk.clearOrders}>
+                    {Object.keys(activeBook).length > 0 ? (
+                      <button type="button" className="btn small" onClick={() => (sketching && active ? whatIf.clearOrders(active) : desk.clearOrders())}>
                         Clear
                       </button>
                     ) : null}
                   </div>
-                  {due > 0 ? <OrderEntry ref={entryRef} legal={suggestions} active={me} onWrite={writeTyped} /> : null}
+                  {due > 0 || sketching ? <OrderEntry ref={entryRef} legal={suggestions} active={active ?? me} onWrite={writeTyped} /> : null}
                 </section>
+                </>
               ) : (
                 <section>
                   <h2>The board</h2>
@@ -862,6 +976,10 @@ function Floor({
               <button type="button" className="btn primary" onClick={() => view$(last ? null : viewing! + 1)}>
                 {last ? (over ? "Back to the final position" : continueLabel(view.phase)) : "Next phase"}
               </button>
+            ) : sketching ? (
+              <button type="button" className="btn primary" onClick={toggleWhatIf}>
+                Leave what if
+              </button>
             ) : me && canOrder && seat?.canAct ? (
               <button type="button" className={`btn primary${isReady ? " is-ready" : ""}`} aria-pressed={isReady} onClick={toggleReady} disabled={inDisorder || room.connection !== "open" || !rulesReady}>
                 {isReady ? "Ready. Take it back" : `Ready for ${phaseLine(view.phase)}`}
@@ -885,7 +1003,7 @@ function Floor({
                 Nothing to order this phase
               </button>
             )}
-            {!record && me && canOrder && seat?.canAct ? (
+            {!record && !sketching && me && canOrder && seat?.canAct ? (
               <p className={`sync-line${desk.sync === "failed" ? " alert" : ""}`} role="status">
                 {syncLine}
               </p>

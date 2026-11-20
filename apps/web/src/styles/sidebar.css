@@ -909,3 +909,26 @@ table.powers td.done {
   margin: 8px -18px 0;
   border-top: 1px solid var(--rule);
 }
+
+/* In a live room: whose orders the sketch is writing. One row of stamps, wrapping on a phone. */
+.guess-for {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+
+.guess-for .tool {
+  min-height: 44px;
+  padding: 6px 10px;
+}
+
+.guess-n {
+  min-width: 1.4em;
+  padding: 0 4px;
+  border-left: 1px solid var(--rule);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: right;
+}
