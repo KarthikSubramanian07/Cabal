@@ -294,3 +294,77 @@ What made it fast:
   with a 95th percentile frame of 217 ms.
 - The click that adjudicates costs one long frame (about 170 ms at 4x throttling: the engine,
   React rendering the results and the choreography being planned). Everything after it is steady.
+
+## Opening a table (web, November 2026)
+
+A seated player opening `/g/:code` on a slow phone used to watch the loading card for more than
+seven seconds, and Lighthouse put the largest contentful paint at 4.5 to 4.7 seconds against a
+target of 2.5. The board was the last link of a long chain: the entry script, then the page's
+chunk, then the summary, then (only after the summary) the socket, then the room's chunk and a
+second copy of the stylesheet once the welcome arrived, then the map and the engine together. All
+the while the shell's hints had the 330 KB (compressed) engine and the sandbox's chunk competing
+for the line.
+
+`apps/web/scripts/table-load.mjs` measures it: a seated iPhone 15 page in headless Chromium with
+Lighthouse's mobile throttling applied through the DevTools protocol (562.5 ms latency, 1.47 Mbps
+down, 675 kbps up, 4x CPU, cache off), loading one started table against the bot. Given two
+builds it alternates between them, so the rest of the machine slows both alike. The numbers below
+were taken on 2026-11-19 on an Apple M1 that three other build tracks were using (load average 15
+to 40), against `vite preview` (HTTP/1.1, so six connections, where Pages serves HTTP/2 and 3) and
+a local `wrangler dev`. "Before" is `74fe773`, "after" is this branch.
+
+```sh
+node apps/web/scripts/table-load.mjs http://localhost:4292 http://localhost:4291 --rounds 7
+```
+
+| Seven alternating loads, median | Before | After |
+|---|---|---|
+| Largest contentful paint | 2,528 ms | 928 ms |
+| Map drawn (province codes visible) | 7,198 ms | 5,083 ms |
+| Position drawn (first piece) | 7,211 ms | 5,089 ms |
+
+| Lighthouse 13, mobile, simulated throttling, three alternating runs | Before | After |
+|---|---|---|
+| Largest contentful paint | 4.5 s, 4.5 s, 4.5 s | 1.4 s, 3.4 s, 1.4 s |
+| Performance score | 69, 68, 74 | 84, 84, 92 |
+
+The one 3.4 s run is the loading card drawn again by React, after the face had arrived, a hair
+larger than the first paint; the other runs and every protocol-throttled load end at the first
+paint.
+
+Step by step, each against `74fe773` in its own alternating run:
+
+| Change | Map drawn, before | after |
+|---|---|---|
+| One stylesheet, each page its own hints, map before engine | 7,643 ms | 6,033 ms |
+| and the socket dialled alongside the summary | 7,384 ms | 5,215 ms |
+| and Inter Tight's stand-ins (LCP 2,528 to 928 ms) | 7,198 ms | 5,083 ms |
+
+What changed, and why:
+
+- **One stylesheet, fetched once.** The shell carries the stylesheet inline. With CSS split per
+  chunk, the room's chunk listed the same file as its own dependency, and opening the room waited
+  for a second copy (17 KB) to arrive and be applied. `build.cssCodeSplit` is now off: the app has
+  one stylesheet.
+- **Each page its own hints.** Every `modulepreload` and `preload` in the shell names the routes it
+  is for (`data-for`, written by `vite.config.ts`), and the Pages worker keeps only the page's own
+  (`src/agent/hints.ts`). A table is hinted its page, its imports, the room and the map; the room
+  and the map at low priority, behind the page that asks the server about the game. Not the
+  engine and not the sandbox.
+- **The map before the engine.** The order desk (`room/useDesk.ts`) opens on the map alone and
+  fetches the engine once the map is in. Until the rules arrive the board is drawn, the order
+  desk says "Reading the rules", Ready waits, and the saved game and seals (which need the engine)
+  wait too.
+- **The socket alongside the summary.** `useRoom` used to dial only after the summary answered.
+  It now dials at once and hangs up if the summary says there is no such table.
+- **Stand-ins of Inter Tight's size.** The fallback face (the system UI face) was narrower than
+  Inter Tight, so text grew when the face arrived, and the browser counted the grown loading card
+  as a new, later largest paint: that was the whole of the 2.5 seconds. Arial (Apple, Windows) and
+  Roboto (Android), scaled to Inter Tight's measured width and height (`styles/fonts.css`), now
+  stand in, a hair wider, so the swap never grows the text. It also takes the reflow out of every
+  page's first second.
+
+`apps/web/e2e-live/load.spec.ts` holds the order in place: no engine hint on a table, the engine
+requested only after the map is in, no second stylesheet, and the socket dialled while a slowed
+summary is still on its way. What remains of the five seconds is the line itself: the summary
+and the socket each cost a round trip of over half a second, and the map is 97 KB compressed.
