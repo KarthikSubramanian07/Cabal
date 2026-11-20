@@ -117,7 +117,7 @@ The `migrations` list in `apps/server/wrangler.jsonc` is applied once per tag an
 
 ### D1 migrations
 
-The cross-game index is the D1 database `cabal` (binding `DB`). Its schema is the numbered files in `apps/server/migrations/`. Add a new file for every change and never edit one that has shipped. `pnpm dev` applies them to a local database, the test suites apply them to their own, and `pnpm deploy:server` applies them to the remote database before `wrangler deploy`, so a Worker never runs ahead of its schema. A Worker rollback does not roll a migration back, so a migration should only add tables, columns and indexes that older code can ignore. D1 Time Travel restores the database to any minute in the last 30 days (`wrangler d1 time-travel restore cabal --timestamp=<unix time>`).
+The cross-game index is the D1 database `cabal` (binding `DB`). Its schema is the numbered files in `apps/server/migrations/`. Add a new file for every change and never edit one that has shipped. `pnpm dev` applies them to a local database, the test suites apply them to their own, and `pnpm deploy:server` applies them to the remote database before `wrangler deploy`, so a Worker never runs ahead of its schema. A Worker rollback does not roll a migration back, so a migration should only add tables, columns and indexes that older code can ignore. D1 Time Travel restores the database to any minute of the last 30 days, overwriting it in place: `wrangler d1 time-travel restore cabal --timestamp=<unix seconds>` prints a bookmark that undoes the restore.
 
 ## Conventions
 
