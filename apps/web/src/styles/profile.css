@@ -505,3 +505,53 @@ dialog.account .how-body section {
     margin-left: auto;
   }
 }
+
+/* ---- Sign in with Google: Google's own button, held at its height while its script loads */
+
+.google-signin {
+  display: grid;
+  gap: 6px;
+}
+
+.google-signin-button {
+  min-height: 44px;
+}
+
+.google-signin[data-state="loading"] .google-signin-button {
+  border: 1px dashed var(--rule);
+}
+
+.player-google {
+  padding: 10px 14px 6px;
+}
+
+.player-list .player-error {
+  margin: 0;
+  padding: 4px 14px 8px;
+  font-size: var(--text-sm);
+}
+
+.seal-google {
+  margin-bottom: var(--space-3);
+}
+
+/* "or pick a handle": a rule with the words set in it, like a break in a ledger's column. */
+.seal-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 var(--space-4);
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+.seal-or::before,
+.seal-or::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--rule);
+}
+
+#account-google .google-signin {
+  margin-top: var(--space-3);
+}

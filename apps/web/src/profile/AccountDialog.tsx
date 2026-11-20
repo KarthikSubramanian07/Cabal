@@ -3,6 +3,7 @@
  * to another device, notifications, signing this device out, and deleting the account for good.
  * One dialog with every section on it, opened at the one the player asked for.
  */
+import { GoogleButton, useGoogleSignInOn } from "./GoogleButton.jsx";
 import type { MeResponse, RecoveryCodeResponse } from "@cabal/protocol";
 import { type FormEvent, Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { Link } from "../app/router.jsx";
@@ -12,7 +13,7 @@ import { useAccount } from "./usePlayer.js";
 
 const NotificationsPanel = lazy(() => import("./NotificationsPanel.jsx").then((m) => ({ default: m.NotificationsPanel })));
 
-export type AccountSection = "handle" | "recovery" | "notifications" | "device" | "delete";
+export type AccountSection = "handle" | "google" | "recovery" | "notifications" | "device" | "delete";
 
 function day(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
@@ -85,6 +86,69 @@ function RenameForm({ me, onRenamed }: { me: MeResponse; onRenamed: (me: MeRespo
         </p>
       ) : null}
     </form>
+  );
+}
+
+/** Link Google to the account, so signing in with Google opens it on any device; or unlink it. */
+function GoogleSection({ me, onChanged }: { me: MeResponse; onChanged: (m: MeResponse | null) => void }) {
+  const { googleSignIn, unlinkGoogle } = useAccount();
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function link(credential: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const done = await googleSignIn(credential);
+      setSaid(done.outcome === "linked" ? "Linked. Continue with Google on any device to play as you." : `That Google account already had a Cabal account, so this device now plays as ${done.handle}.`);
+      onChanged(null);
+    } catch (err) {
+      setError(accountFailure(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unlink() {
+    setBusy(true);
+    setError(null);
+    try {
+      onChanged(await unlinkGoogle());
+      setSaid("Unlinked. Your recovery code, if you made one, still works.");
+    } catch (err) {
+      setError(accountFailure(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      {me.account.google ? (
+        <>
+          <p>Linked. On any device, Continue with Google opens this account. Cabal keeps no email address, only a sealed mark of your Google account.</p>
+          <button type="button" className="btn" disabled={busy} onClick={() => void unlink()}>
+            Unlink Google
+          </button>
+        </>
+      ) : (
+        <>
+          <p>Link Google and you can sign in on any device with one tap, no recovery code needed. Cabal keeps no email address.</p>
+          <GoogleButton onCredential={(c) => void link(c)} />
+        </>
+      )}
+      {said ? (
+        <p className="fine" role="status">
+          {said}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -358,6 +422,7 @@ export function AccountDialog({ open, section, onClose }: { open: boolean; secti
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const { me, player } = useAccount();
+  const googleOn = useGoogleSignInOn();
   const [account, setAccount] = useState<MeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -433,6 +498,12 @@ export function AccountDialog({ open, section, onClose }: { open: boolean; secti
                 </Link>
               </p>
             </section>
+            {googleOn || account.account.google ? (
+              <section id="account-google" aria-labelledby="account-google-title">
+                <h3 id="account-google-title">Google</h3>
+                <GoogleSection me={account} onChanged={(m) => (m ? setAccount(m) : setTick((n) => n + 1))} />
+              </section>
+            ) : null}
             <section id="account-recovery" aria-labelledby="account-recovery-title">
               <h3 id="account-recovery-title">Recovery code</h3>
               <RecoverySection me={account} onIssued={() => setTick((n) => n + 1)} />

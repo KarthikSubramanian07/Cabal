@@ -6,6 +6,7 @@
  * The account dialog (rename, recovery code, notifications, sign out) and the restore dialog are
  * mounted here too, so the player menu and any page can open them.
  */
+import { GoogleButton, useGoogleSignInOn } from "./GoogleButton.jsx";
 import { type FormEvent, type ReactNode, Suspense, createContext, lazy, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { failureCode } from "../net/failure.js";
 import { type StoredPlayer, forgetPlayer, readPlayer } from "../net/player.js";
@@ -84,7 +85,8 @@ function HandleDialog({
   const [leave, setLeave] = useState(false);
   const leaveRef = useRef<HTMLInputElement>(null);
   const warnId = useId();
-  const { create, recover, me } = useAccount();
+  const { create, recover, googleSignIn, me } = useAccount();
+  const googleOn = useGoogleSignInOn();
 
   useEffect(() => {
     const d = ref.current;
@@ -208,6 +210,12 @@ function HandleDialog({
         <form className="seal-form" onSubmit={take} noValidate>
           <p className="seal-lede">{reason}</p>
           {warning}
+          <GoogleButton className="seal-google" onCredential={(c) => void run(() => googleSignIn(c))} />
+          {googleOn ? (
+            <p className="seal-or" aria-hidden="true">
+              <span>or pick a handle</span>
+            </p>
+          ) : null}
           <div className="field">
             <label htmlFor="handle-input">Handle</label>
             <input
@@ -241,7 +249,9 @@ function HandleDialog({
             </button>
           </div>
           <p className="seal-fine">
-            No email and no password: the account lives in this browser. Save its recovery code from the player menu to play on another device.{" "}
+            {googleOn
+              ? "With Google you play as you on every device; Cabal keeps no email address. A handle alone needs no email and no password: the account lives in this browser, and its recovery code (from the player menu) brings it to another device."
+              : "No email and no password: the account lives in this browser. Save its recovery code from the player menu to play on another device."}{" "}
             <button type="button" className="linkish" onClick={() => setMode("restore")}>
               Played here before on another device? Restore your account.
             </button>

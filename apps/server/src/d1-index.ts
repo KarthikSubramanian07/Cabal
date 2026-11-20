@@ -91,6 +91,19 @@ export interface PlayerStore {
   myGames(playerId: string): Promise<MyGame[]>;
   leaderboard(page: { offset: number; limit: number; now: number }): Promise<LeaderboardResponse>;
   trustBoard(page: { offset: number; limit: number }): Promise<TrustLeaderboardResponse>;
+  /**
+   * Sign in with Google (`subjectKey` from google.ts). The account already linked to it gets a new
+   * device session; otherwise `signedIn` (the account this device holds) is linked, or failing
+   * that a new account is made and linked. `taken` when `signedIn` already links another Google
+   * account.
+   */
+  googleSession(
+    subjectKey: string,
+    signedIn: string | null,
+    now: number,
+  ): Promise<{ session: PlayerSession; outcome: "signed_in" | "linked" | "created" } | "taken">;
+  /** Forget the player's Google link, if any. */
+  unlinkGoogle(playerId: string): Promise<void>;
   /** The rating after each of the player's most recent rated games, oldest first; null for no such player. */
   ratingHistory(handle: string, now: number, limit?: number): Promise<RatingHistoryResponse | null>;
   /** Every game the player holds or held a seat in, as the index knows it. */
@@ -640,6 +653,51 @@ export class D1Index implements GameIndex, PlayerStore {
     return { player: summaryOf(row), secret };
   }
 
+  async googleSession(
+    subjectKey: string,
+    signedIn: string | null,
+    now: number,
+  ): Promise<{ session: PlayerSession; outcome: "signed_in" | "linked" | "created" } | "taken"> {
+    const linked = await this.db
+      .prepare("SELECT p.id, p.handle, p.created_at FROM google_links g JOIN players p ON p.id = g.player_id WHERE g.subject_key = ?")
+      .bind(subjectKey)
+      .first<PlayerRow>();
+    if (linked) {
+      const secret = await this.openSession(linked.id, now);
+      await this.db.prepare("UPDATE players SET last_seen_at = ? WHERE id = ?").bind(now, linked.id).run();
+      return { session: { player: summaryOf(linked), secret }, outcome: "signed_in" };
+    }
+    if (signedIn) {
+      const row = await this.db.prepare("SELECT id, handle, created_at FROM players WHERE id = ?").bind(signedIn).first<PlayerRow>();
+      if (row) {
+        const added = await this.db
+          .prepare("INSERT INTO google_links (subject_key, player_id, linked_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING")
+          .bind(subjectKey, row.id, now)
+          .run();
+        // Nothing added: this account already links another Google account (or a race linked this one).
+        if ((added.meta.changes ?? 0) === 0) return "taken";
+        const secret = await this.openSession(row.id, now);
+        return { session: { player: summaryOf(row), secret }, outcome: "linked" };
+      }
+    }
+    const made = await this.createPlayer(null, now);
+    if (!("secret" in made)) throw new Error("could not pick a handle for a new Google account");
+    const added = await this.db
+      .prepare("INSERT INTO google_links (subject_key, player_id, linked_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING")
+      .bind(subjectKey, made.player.id, now)
+      .run();
+    if ((added.meta.changes ?? 0) === 0) {
+      // The same Google account was linked a moment ago by another request: use that account.
+      await this.deletePlayer(made.player.id, [], now);
+      return this.googleSession(subjectKey, null, now);
+    }
+    return { session: made, outcome: "created" };
+  }
+
+  async unlinkGoogle(playerId: string): Promise<void> {
+    await this.db.prepare("DELETE FROM google_links WHERE player_id = ?").bind(playerId).run();
+  }
+
   async issueRecoveryCode(playerId: string, now: number): Promise<{ recoveryCode: string; issuedAt: number }> {
     const recoveryCode = mintRecoveryCode();
     await this.db
@@ -786,10 +844,11 @@ export class D1Index implements GameIndex, PlayerStore {
     if (!row) return null;
     const profile = await this.buildProfile(row, now, true);
     const sessions = (await this.db.prepare("SELECT COUNT(*) AS n FROM player_sessions WHERE player_id = ?").bind(playerId).first<{ n: number }>())?.n ?? 0;
+    const google = (await this.db.prepare("SELECT 1 AS n FROM google_links WHERE player_id = ?").bind(playerId).first<{ n: number }>()) !== null;
     const renameAt = row.handle_changed_at === null ? null : row.handle_changed_at + RENAME_COOLDOWN_MS;
     return {
       ...profile,
-      account: { renameAvailableAt: renameAt !== null && renameAt > now ? renameAt : null, recoveryIssuedAt: row.recovery_issued_at, sessions },
+      account: { renameAvailableAt: renameAt !== null && renameAt > now ? renameAt : null, recoveryIssuedAt: row.recovery_issued_at, sessions, google },
     };
   }
 
@@ -982,6 +1041,7 @@ export class D1Index implements GameIndex, PlayerStore {
         .bind(now + DELETED_HANDLE_HOLD_MS, playerId, playerId),
       this.db.prepare("DELETE FROM handle_aliases WHERE player_id = ?").bind(playerId),
       this.db.prepare("DELETE FROM player_sessions WHERE player_id = ?").bind(playerId),
+      this.db.prepare("DELETE FROM google_links WHERE player_id = ?").bind(playerId),
       ...forgetInModeration(this.db, playerId),
       this.db.prepare("DELETE FROM players WHERE id = ?").bind(playerId),
     ]);

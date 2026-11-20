@@ -38,6 +38,14 @@ export function accountFailure(error: unknown): string {
       return "A handle can be changed once every 14 days.";
     case "handle_mismatch":
       return "That is not the account's handle. Type it as it is shown.";
+    case "google_taken":
+      return "This account is already linked to another Google account. Unlink it first from the account card.";
+    case "google_refused":
+      return "Google did not confirm that sign-in. Try again.";
+    case "google_unreachable":
+      return "Google could not be reached just now. Try again in a moment.";
+    case "google_off":
+      return "Google sign-in is not available here yet. Pick a handle instead.";
     default:
       return failureText(error);
   }

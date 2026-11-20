@@ -40,6 +40,11 @@ export interface Env {
   CLAUDE_ACTIVE_GAMES?: string;
   /** Identifies the deployed build in `/health` and error logs. Set at deploy time; optional. */
   BUILD_ID?: string;
+  /**
+   * The OAuth client ID that Sign in with Google tokens must be issued to (a public value, kept in
+   * wrangler.jsonc). Unset or empty: Google sign-in is off and the button is not shown.
+   */
+  GOOGLE_CLIENT_ID?: string;
   /** Worker version metadata: the build id when `BUILD_ID` is not set. */
   CF_VERSION_METADATA?: { id: string; tag: string; timestamp: string };
   /** Web Push: the VAPID public key (config), base64url. Push is off without it and the private key. */

@@ -4,7 +4,10 @@
  */
 import { useEffect, useId, useRef, useState } from "react";
 import { Link, usePathname } from "../app/router.jsx";
+import { GoogleButton, useGoogleSignInOn } from "./GoogleButton.jsx";
 import { useIdentity } from "./Identity.jsx";
+import { useAccount } from "./usePlayer.js";
+import { accountFailure } from "./handles.js";
 
 /** A small square wax seal with the handle's first letter, as the player's mark. */
 export function PlayerSeal({ handle, size = 26 }: { handle: string; size?: number }) {
@@ -20,6 +23,9 @@ export function PlayerSeal({ handle, size = 26 }: { handle: string; size?: numbe
 
 export function ProfileMenu() {
   const { player, ensurePlayer, openAccount, openRestore } = useIdentity();
+  const { googleSignIn } = useAccount();
+  const [googleError, setGoogleError] = useState<string | null>(null);
+  const googleOn = useGoogleSignInOn();
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -74,6 +80,11 @@ export function ProfileMenu() {
             <button type="button" onClick={act(() => openAccount("handle"))}>
               Rename
             </button>
+            {googleOn ? (
+              <button type="button" onClick={act(() => openAccount("google"))}>
+                Link Google
+              </button>
+            ) : null}
             <button type="button" onClick={act(() => openAccount("recovery"))}>
               Recovery code
             </button>
@@ -89,7 +100,29 @@ export function ProfileMenu() {
           </>
         ) : (
           <>
-            <p className="player-head">Nobody plays on this device yet. A handle is all it takes: no email, no password.</p>
+            <p className="player-head">
+              {googleOn
+                ? "Nobody plays on this device yet. Continue with Google to play as you everywhere, or just pick a handle."
+                : "Nobody plays on this device yet. A handle is all it takes: no email, no password."}
+            </p>
+            {/* Rendered only while the menu is open, so Google's script loads when it is wanted. */}
+            {open ? (
+              <GoogleButton
+                className="player-google"
+                onCredential={(c) => {
+                  setGoogleError(null);
+                  googleSignIn(c).then(
+                    () => setOpen(false),
+                    (err: unknown) => setGoogleError(accountFailure(err)),
+                  );
+                }}
+              />
+            ) : null}
+            {googleError ? (
+              <p className="form-error player-error" role="alert">
+                {googleError}
+              </p>
+            ) : null}
             <button type="button" onClick={act(() => void ensurePlayer())}>
               Choose a handle
             </button>

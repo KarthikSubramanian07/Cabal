@@ -902,9 +902,30 @@ export const MeResponse = PlayerProfile.extend({
     recoveryIssuedAt: z.number().int().nullable(),
     /** Devices signed in to this account. */
     sessions: z.number().int(),
+    /** A Google account is linked: signing in with it opens this account on any device. */
+    google: z.boolean().optional(),
   }),
 });
 export type MeResponse = z.infer<typeof MeResponse>;
+
+/** `GET /api/auth/google`: the deployment's Google client ID, or null when Google sign-in is off. */
+export const GoogleConfigResponse = z.object({ clientId: z.string().nullable() });
+export type GoogleConfigResponse = z.infer<typeof GoogleConfigResponse>;
+
+/**
+ * `POST /api/auth/google`: the ID token Google's button handed the browser. Sent with a player
+ * secret, it links that account; without one it opens the linked account or makes a new one.
+ */
+export const GoogleSignInRequest = z.object({ credential: z.string().min(20).max(4096) });
+export type GoogleSignInRequest = z.infer<typeof GoogleSignInRequest>;
+
+/**
+ * A device session for the Google account's Cabal account. `outcome`: `signed_in` to the account
+ * it was already linked to, `linked` to the account this device was signed in to, or `created` as
+ * a new account with a picked handle (which may be changed once, freely).
+ */
+export const GoogleSignInResponse = PlayerSession.extend({ outcome: z.enum(["signed_in", "linked", "created"]) });
+export type GoogleSignInResponse = z.infer<typeof GoogleSignInResponse>;
 
 /** One of the player's own games, live or ended, listed or not. */
 export const MyGame = z.object({
