@@ -26,6 +26,11 @@ test.describe("the social layer, live", () => {
     await expect(slip).toContainText("Keep out of the Channel this year");
     // Ada is reading that very thread: her own words bring her no slip.
     await expect(ada.getByRole("region", { name: "News from the table" })).toHaveCount(0);
+    // A slip leaves on its own after nine seconds, but never while the player is on it. Bea moves
+    // onto it, and it stays past its time (and past a slow scan on a busy machine).
+    await slip.getByRole("button", { name: "Read it" }).focus();
+    await bea.waitForTimeout(10_000);
+    await expect(slip).toBeVisible();
     await scan(bea, "a dispatch slip over the room");
 
     // The slip opens the thread it is about, and goes.
