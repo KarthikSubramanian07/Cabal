@@ -99,7 +99,7 @@ function registryIndex(stub: NonNullable<ReturnType<typeof registryStub>>): Game
  * `/health` is not ok, and answers 503, while the bound database is behind it, so a build deployed
  * before its migrations were applied is caught by the first health check.
  */
-export const D1_SCHEMA_REQUIRED = 13;
+export const D1_SCHEMA_REQUIRED = 14;
 
 export function indexBackend(env: Env): "d1" | "registry" | "none" {
   return env.DB ? "d1" : env.REGISTRY ? "registry" : "none";

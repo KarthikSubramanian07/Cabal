@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { DeleteMeResponse, type GameRecord, GameSettings, PlayerProfile } from "@cabal/protocol";
+import { DELETED_HANDLE_HOLD_MS, handleKey } from "../src/handles.js";
 import { LIMITS } from "../src/room.js";
 import { hashToken } from "../src/tokens.js";
 import { Client, call, createAs, index, inviteSubstitute, joinAs, newPlayer, serverEnv, sql, start, summary, until } from "./helpers.js";
@@ -12,6 +13,9 @@ const db = () => serverEnv.DB!;
 const POWERS = ["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"] as const;
 let games = 0;
 const code = () => `DL${(++games).toString(36).toUpperCase().padStart(4, "0")}`;
+
+/** Let every handle hold run out, as if the hold's hour had passed. */
+const expireHolds = () => db().prepare("UPDATE handle_holds SET until = 0").run();
 
 const remove = (secret: string, handle: string) => call("/api/me", secret, { method: "DELETE", body: JSON.stringify({ handle }) });
 
@@ -73,7 +77,7 @@ describe("deleting an account", () => {
     expect((await call("/api/me", bob.secret)).status).toBe(200);
   });
 
-  it("forgets the account, its devices, its rating and its ledger, and frees the handle", async () => {
+  it("forgets the account, its devices, its rating and its ledger, and frees the handle after a hold", async () => {
     const [ann, bob, cat] = await Promise.all([newPlayer(), newPlayer(), newPlayer()]);
     // A second device, a subscribed browser and switched-off notices: all of them go.
     const recovery = (await (await call("/api/me/recovery", ann.secret, { method: "POST" })).json()) as { recoveryCode: string };
@@ -116,7 +120,14 @@ describe("deleting an account", () => {
     const bobProfile = PlayerProfile.parse(await (await call(`/api/players/${bob.player.handle}`, null)).json());
     expect(bobProfile.recent[0]).toMatchObject({ gameId: game.gameId });
 
-    // The handle is free for someone new, straight away.
+    // The handle is held a while, so a room that missed the deletion cannot link a newcomer; then
+    // it is free for someone new.
+    const early = await call("/api/players", null, { method: "POST", body: JSON.stringify({ handle: ann.player.handle }) });
+    expect(early.status).toBe(409);
+    expect(await early.json()).toMatchObject({ code: "handle_taken" });
+    const hold = await db().prepare("SELECT until FROM handle_holds WHERE handle_key = ?").bind(handleKey(ann.player.handle)).first<{ until: number }>();
+    expect(hold!.until).toBeGreaterThan(Date.now() + DELETED_HANDLE_HOLD_MS - 60_000);
+    await expireHolds();
     const heir = await newPlayer(ann.player.handle);
     expect(heir.player.id).not.toBe(ann.player.id);
     // Deleting again is a 401, not a crash: the secret is gone with the account.

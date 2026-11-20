@@ -15,6 +15,12 @@ import { Handle } from "@cabal/protocol";
 export const RENAME_COOLDOWN_MS = 14 * 24 * 3600_000;
 /** How long a handle a player gave up stays theirs: old links resolve and nobody else can take it. */
 export const ALIAS_HOLD_MS = 90 * 24 * 3600_000;
+/**
+ * How long a deleted account's handles stay out of reach before anyone may take them. A room that
+ * missed the deletion trusts its last word from the index for `ACCOUNTS_FRESH_MS` (room.ts), far
+ * less than this, so a stale seat can never link to a newcomer under the same name.
+ */
+export const DELETED_HANDLE_HOLD_MS = 3600_000;
 
 /**
  * How a handle reads, for uniqueness: lower case, `_` as `-`, and the characters that pass for one
