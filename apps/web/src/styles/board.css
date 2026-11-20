@@ -183,6 +183,16 @@ svg.board {
   stroke-linejoin: round;
 }
 
+/* Ties a code set beside a crowded province (a far-out overview) to its supply centre. */
+.leader {
+  stroke: var(--ink-2);
+  stroke-width: 0.9px;
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  opacity: 0.75;
+  pointer-events: none;
+}
+
 .label.sea {
   fill: var(--sea-ink);
   font-style: italic;

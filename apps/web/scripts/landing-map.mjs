@@ -1,16 +1,21 @@
 #!/usr/bin/env node
 /**
  * Draws the front door's map: the English Channel and the coasts around it, cut from the game's
- * own board (src/map/board.json, from Natural Earth) and coloured for the ink war-room hero.
+ * own board (src/map/board.json, from Natural Earth, with the standard variant's provinces) and coloured for the ink war-room hero.
  * Writes public/art/channel.svg. Run it again if the board changes:
  *
  *   node scripts/landing-map.mjs
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { composeBoard } from "../src/map/variant.ts";
 
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
-const board = JSON.parse(readFileSync(here("../src/map/board.json"), "utf8"));
+// The standard map's provinces on the board's geometry, as the game draws them.
+const board = composeBoard(
+  JSON.parse(readFileSync(here("../../../crates/cabal-engine/data/maps/standard.json"), "utf8")),
+  JSON.parse(readFileSync(here("../src/map/board.json"), "utf8")),
+);
 
 /** The crop, in board units: Brittany to Kiel, Clyde to Burgundy. */
 export const VIEW = { x: 150, y: 395, w: 380, h: 360 };
