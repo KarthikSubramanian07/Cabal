@@ -5,9 +5,9 @@
 import { describe, expect, it } from "vitest";
 import { DeleteMeResponse, type GameRecord, GameSettings, PlayerProfile } from "@cabal/protocol";
 import { DELETED_HANDLE_HOLD_MS, handleKey } from "../src/handles.js";
-import { LIMITS } from "../src/room.js";
+import { ACCOUNTS_FRESH_MS, LIMITS } from "../src/room.js";
 import { hashToken } from "../src/tokens.js";
-import { Client, call, createAs, index, inviteSubstitute, joinAs, newPlayer, serverEnv, sql, start, summary, until } from "./helpers.js";
+import { Client, call, createAs, inRoom, index, inviteSubstitute, joinAs, newPlayer, serverEnv, sql, start, summary, until } from "./helpers.js";
 
 const db = () => serverEnv.DB!;
 const POWERS = ["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"] as const;
@@ -16,6 +16,9 @@ const code = () => `DL${(++games).toString(36).toUpperCase().padStart(4, "0")}`;
 
 /** Let every handle hold run out, as if the hold's hour had passed. */
 const expireHolds = () => db().prepare("UPDATE handle_holds SET until = 0").run();
+
+/** Make a room forget what the index last told it about its accounts, as if that word had gone stale. */
+const staleRoom = (gameId: string) => inRoom(gameId, (room) => void (room.accounts = null));
 
 const remove = (secret: string, handle: string) => call("/api/me", secret, { method: "DELETE", body: JSON.stringify({ handle }) });
 
@@ -120,8 +123,8 @@ describe("deleting an account", () => {
     const bobProfile = PlayerProfile.parse(await (await call(`/api/players/${bob.player.handle}`, null)).json());
     expect(bobProfile.recent[0]).toMatchObject({ gameId: game.gameId });
 
-    // The handle is held a while, so a room that missed the deletion cannot link a newcomer; then
-    // it is free for someone new.
+    // The handle is held a while, so a room that missed the deletion cannot link a newcomer (see
+    // "a room the deletion missed" below); then it is free for someone new.
     const early = await call("/api/players", null, { method: "POST", body: JSON.stringify({ handle: ann.player.handle }) });
     expect(early.status).toBe(409);
     expect(await early.json()).toMatchObject({ code: "handle_taken" });
@@ -255,5 +258,52 @@ describe("deleting an account", () => {
     );
     expect(await again.json()).toEqual({ gameId: table.gameId, seats: [], unplayed: true });
     expect({ ...(await summary(table.gameId)), serverTime: 0 }).toEqual({ ...before, serverTime: 0 });
+  });
+  it("leaves a ghost in a room the deletion missed, never a link to whoever takes the handle next", async () => {
+    const [ann, bob] = await Promise.all([newPlayer(), newPlayer()]);
+    const table = await createAs(ann.secret, { aiFill: true });
+    const bobSeat = (await (await joinAs(bob.secret, table.gameId)).json()) as { gameId: string; token: string; power: string };
+    expect((await start({ ...table })).status).toBe(200);
+    expect((await summary(table.gameId)).seats.find((s) => s.power === table.power)).toMatchObject({ handle: ann.player.handle });
+    // The index never learned of the seat (or the room could not be told), so deleting the account
+    // reaches nobody here: the room still holds the id and the name.
+    await until(async () => (await db().prepare("SELECT 1 AS x FROM game_players WHERE game_id = ? AND player_id = ?").bind(table.gameId, ann.player.id).first()) !== null, "the seat to be noted");
+    await db().prepare("DELETE FROM game_players WHERE game_id = ? AND player_id = ?").bind(table.gameId, ann.player.id).run();
+    expect((await deleted(ann.secret, ann.player.handle)).games).toBe(0);
+    expect(await sql(table.gameId, "SELECT player_id FROM seats WHERE power = ?", table.power)).toEqual([{ player_id: ann.player.id }]);
+
+    // Nobody can take the name while a room may still be trusting what it last heard.
+    expect((await call("/api/players", null, { method: "POST", body: JSON.stringify({ handle: ann.player.handle }) })).status).toBe(409);
+
+    // The next time the room asks the index, it finds the account gone and forgets it as /forsake would.
+    await staleRoom(table.gameId);
+    const ghost = (await summary(table.gameId)).seats.find((s) => s.power === table.power)!;
+    expect(ghost).toMatchObject({ kind: "civil_disorder", name: "Ghost", handle: null });
+    expect(await sql(table.gameId, "SELECT * FROM seats WHERE player_id = ?", ann.player.id)).toEqual([]);
+    expect(await sql(table.gameId, "SELECT * FROM stints WHERE player_id = ?", ann.player.id)).toEqual([]);
+
+    // A newcomer under the same name later is linked from nothing in this game.
+    await expireHolds();
+    const heir = await newPlayer(ann.player.handle);
+    await staleRoom(table.gameId);
+    const after = await summary(table.gameId);
+    expect(after.seats.some((s) => s.handle !== null && s.handle !== undefined && handleKey(s.handle) === handleKey(heir.player.handle))).toBe(false);
+    expect(after.seats.find((s) => s.power === bobSeat.power)).toMatchObject({ handle: bob.player.handle });
+    expect(JSON.stringify(await (await call(`/api/games/${table.gameId}/replay`, null)).json())).not.toContain(ann.player.id);
+  });
+
+  it("links a seat to the handle its account goes by now, so a renamed player's old name cannot pass to someone else", async () => {
+    const ann = await newPlayer();
+    const table = await createAs(ann.secret, { aiFill: true });
+    const renamed = `${ann.player.handle.slice(0, 12)}x`;
+    expect((await call("/api/me", ann.secret, { method: "PATCH", body: JSON.stringify({ handle: renamed }) })).status).toBe(200);
+    await staleRoom(table.gameId);
+    const seat = (await summary(table.gameId)).seats.find((s) => s.power === table.power)!;
+    // The seat still shows the name it was taken under, and links to the account, by its new handle.
+    expect(seat).toMatchObject({ name: ann.player.handle, handle: renamed });
+  });
+
+  it("holds a deleted handle far longer than a room trusts its last word on who still exists", () => {
+    expect(ACCOUNTS_FRESH_MS * 10).toBeLessThanOrEqual(DELETED_HANDLE_HOLD_MS);
   });
 });
