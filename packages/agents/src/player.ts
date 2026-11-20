@@ -48,6 +48,14 @@ export const Decision = z.object({
     }),
   ),
   diary: z.string().describe("One or two sentences for your private diary."),
+  plan: z
+    .string()
+    .optional()
+    .describe("Only when the task asks for it: your plan for the year, two or three sentences."),
+  yearSummary: z
+    .string()
+    .optional()
+    .describe("Only when the task asks for it: the year your diary covers, in two sentences."),
 });
 export type Decision = z.infer<typeof Decision>;
 
@@ -403,13 +411,25 @@ export class Player {
       diary: this.diary.slice(-MEMORY_LIMITS.diaryEntries),
       relationships: [...this.relationships].map(([power, r]) => ({ power, ...r })),
     };
+    const year = yearOf(input.phase);
+    const kind = phaseKind(input.phase);
+    // The first movement decision of a year is also the year's planning step, and the moment the
+    // diary of the years before it is folded into one line each.
+    const planning = year !== null && kind === "M" && !this.diary.some((entry) => entry.startsWith(`${year} plan: `));
+    const stale = year === null ? [] : staleYears(this.diary, year);
+    if (year !== null) {
+      full.plan = this.diary.find((entry) => entry.startsWith(`${year} plan: `))?.slice(`${year} plan: `.length) ?? null;
+      full.diary = full.diary.filter((entry) => !entry.startsWith(`${year} plan: `));
+    }
+    full.planning = planning;
+    full.summarise = planning ? (stale.at(-1) ?? null) : null;
     const prompt = userPrompt(full);
     let decision: Decision;
     let failure: BrainFailure | null = null;
     let usage: Usage | null = null;
     let model: string | null = null;
     try {
-      const reply = await this.brain.decide({ system: systemPrompt(input.map), prompt, kind: phaseKind(input.phase), step });
+      const reply = await this.brain.decide({ system: systemPrompt(input.map), prompt, kind, step });
       decision = reply.decision;
       usage = reply.usage;
       model = reply.model;
@@ -436,11 +456,18 @@ export class Player {
       relationships: decision.relationships.map((r) => ({ ...r, stance: clampStance(r.stance) })),
     };
     for (const r of decision.relationships) this.remember(r);
+    if (failure === null && year !== null) {
+      // One line per finished year, written by the model when it was asked to, else mechanically.
+      this.diary = consolidate(this.diary, stale, full.summarise === null ? null : (decision.yearSummary ?? null));
+      const plan = planning ? (decision.plan ?? "").trim() : "";
+      if (plan) this.diary = [...this.diary, `${year} plan: ${plan}`.slice(0, MEMORY_LIMITS.diaryChars)];
+    }
     const entry = decision.diary.trim();
     if (entry) {
       const line = `${input.phase}${step === "negotiate" ? " (talks)" : ""}: ${entry}`.slice(0, MEMORY_LIMITS.diaryChars);
-      this.diary = [...this.diary, line].slice(-MEMORY_LIMITS.diaryEntries);
+      this.diary = [...this.diary, line];
     }
+    this.diary = this.diary.slice(-MEMORY_LIMITS.diaryEntries);
     return {
       decision,
       validated,
@@ -453,6 +480,58 @@ export class Player {
       prompt,
     };
   }
+}
+
+/** The year of a phase name (`S1901M` -> 1901), or null for a name that is not one. */
+export function yearOf(phase: string): number | null {
+  const m = /^[SFW](\d{4})[MRA]$/.exec(phase);
+  return m ? Number(m[1]) : null;
+}
+
+/** The year a diary entry belongs to: `S1901M: ...`, `1901 plan: ...` or `1901 in brief: ...`. */
+function entryYear(entry: string): number | null {
+  const m = /^(?:[SFW](\d{4})[MRA]\b|(\d{4}) (?:plan|in brief):)/.exec(entry);
+  return m ? Number(m[1] ?? m[2]) : null;
+}
+
+/** Years before `year` that still have more than their one-line brief in the diary, oldest first. */
+export function staleYears(diary: string[], year: number): number[] {
+  const years = new Set<number>();
+  for (const entry of diary) {
+    const y = entryYear(entry);
+    if (y !== null && y < year && !entry.startsWith(`${y} in brief: `)) years.add(y);
+  }
+  return [...years].sort((a, b) => a - b);
+}
+
+/**
+ * Fold each stale year's entries into one `YEAR in brief:` line, in place of its first entry. The
+ * newest stale year takes `summary` when the model wrote one; every other year, and that one when
+ * it did not, is folded mechanically: its entries joined and clipped.
+ */
+export function consolidate(diary: string[], years: number[], summary: string | null): string[] {
+  if (years.length === 0) return diary;
+  const newest = years.at(-1);
+  const out: string[] = [];
+  const folded = new Set<number>();
+  for (const entry of diary) {
+    const y = entryYear(entry);
+    if (y === null || !years.includes(y)) {
+      out.push(entry);
+      continue;
+    }
+    if (folded.has(y)) continue;
+    folded.add(y);
+    const written = y === newest ? (summary ?? "").trim() : "";
+    const text =
+      written ||
+      diary
+        .filter((e) => entryYear(e) === y)
+        .map((e) => e.replace(/^[^:]*: /, ""))
+        .join(" / ");
+    out.push(`${y} in brief: ${text}`.slice(0, MEMORY_LIMITS.diaryChars));
+  }
+  return out;
 }
 
 /** Seven default personas, one per power, written to be memorable at the table. */

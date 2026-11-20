@@ -34,7 +34,10 @@ export {
   Player,
   type Validated,
   requestKind,
+  consolidate,
+  staleYears,
   validateOrders,
+  yearOf,
 } from "./player.js";
 export { MAX_BODY_CHARS, MESSAGES_PER_STEP, type OutgoingPress, outgoingPress } from "./press.js";
 export {

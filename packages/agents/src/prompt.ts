@@ -43,6 +43,12 @@ export interface PromptInput {
   myPledges: string[][];
   /** Public trust ledger of other powers: kept / broken counts. */
   trust: Record<string, { kept: number; broken: number }>;
+  /** This year's plan, written at its first movement decision; null before then. */
+  plan?: string | null;
+  /** True for the first movement decision of a year: the turn also writes the year's plan. */
+  planning?: boolean;
+  /** A finished year whose diary entries this turn should sum up (they are folded into one line). */
+  summarise?: number | null;
 }
 
 export const SYSTEM_PROMPT = `You are playing Cabal, a game of Diplomacy with receipts.
@@ -229,7 +235,28 @@ export function legalMenu(input: PromptInput): string {
   return lines.join("\n");
 }
 
+/** What the first movement decision of a year asks for on top of its usual task. */
+function planningTask(input: PromptInput): string {
+  if (!input.planning) return "";
+  const year = /\d{4}/.exec(input.phase)?.[0] ?? "this year";
+  const lines = [
+    `\n\nThis is your first decision of ${year}. Also fill \`plan\`: what you mean to have by the winter, with whom and`,
+    `against whom, in two or three sentences. It is shown to you for the rest of the year.`,
+  ];
+  if (input.summarise != null) {
+    lines.push(
+      `Also fill \`yearSummary\`: ${input.summarise} as your diary tells it, in two sentences. It replaces those`,
+      `diary entries, so keep what you will need: who helped you, who lied, what you owe.`,
+    );
+  }
+  return lines.join("\n");
+}
+
 function task(input: PromptInput): string {
+  return baseTask(input) + planningTask(input);
+}
+
+function baseTask(input: PromptInput): string {
   if (input.step === "negotiate") {
     return `This is the opening of the phase: negotiate. Nothing is final yet. Read the press above, decide what
 you want from each neighbour, and write the press you want to send now: proposals, answers, warnings.
@@ -335,6 +362,7 @@ export function userPrompt(input: PromptInput): string {
     `# Trust ledger\n${trust || "empty"}`,
     `# Your relationships\n${rel}`,
     `# Your diary\n${diary}`,
+    ...(input.plan !== undefined ? [`# Your plan for this year\n${input.plan?.trim() || (input.planning ? "none yet: write it now" : "none")}`] : []),
     `# Task\n${task(input)}`,
   ].join("\n\n");
 }
