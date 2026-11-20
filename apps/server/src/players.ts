@@ -4,6 +4,7 @@
  *   POST  /api/players            make a guest account on this device; the secret is shown once
  *   POST  /api/players/recover    restore an account on a new device from its recovery code
  *   GET   /api/players/:handle    public profile: rating, rank, reliability, the ledger, recent results
+ *   GET   /api/players/:handle/ratings  the rating after each rated game, oldest first (`limit`)
  *   GET   /api/me                 the signed-in player's profile and account
  *   PATCH /api/me                 change handle (once freely, then once every 14 days)
  *   POST  /api/me/recovery        a new recovery code, shown once; the old one stops working
@@ -39,6 +40,7 @@ import { pushStore, subscriptionProblem } from "./push-store.js";
 import { isPlayerSecret } from "./tokens.js";
 
 const PLAYER_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})$/;
+const RATINGS_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})\/ratings$/;
 
 export const bearerOf = (request: Request) => request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
 
@@ -104,10 +106,17 @@ export async function playerRoute(request: Request, env: Env, url: URL): Promise
     return withCors(privateJson(session));
   }
 
-  if (request.method === "GET" && (path === "/api/leaderboard" || path === "/api/ledger" || PLAYER_PATH.test(path))) {
+  if (request.method === "GET" && (path === "/api/leaderboard" || path === "/api/ledger" || PLAYER_PATH.test(path) || RATINGS_PATH.test(path))) {
     if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
     if (path === "/api/leaderboard") return withCors(publicJson(await store.leaderboard({ ...page(url), now }), 60));
     if (path === "/api/ledger") return withCors(publicJson(await store.trustBoard(page(url)), 60));
+    const ratings = RATINGS_PATH.exec(path);
+    if (ratings) {
+      const limit = Number(url.searchParams.get("limit") ?? "");
+      const history = await store.ratingHistory(ratings[1]!, now, Number.isFinite(limit) && limit > 0 ? limit : undefined);
+      if (!history) return withCors(json({ error: "no such player" }, 404));
+      return withCors(publicJson(history, 30));
+    }
     const handle = PLAYER_PATH.exec(path)![1]!;
     const profile = await store.profile(handle, now);
     if (!profile) return withCors(json({ error: "no such player" }, 404));
@@ -173,3 +182,4 @@ async function notifications(request: Request, env: Env, player: PlayerSummary, 
   }
   return json({ error: "not found" }, 404);
 }
+

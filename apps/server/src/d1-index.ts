@@ -30,6 +30,7 @@ import {
   type PlayerResult,
   type PlayerSession,
   type PlayerSummary,
+  type RatingHistoryResponse,
   type RatingView,
   type TrustLeaderboardResponse,
 } from "@cabal/protocol";
@@ -65,6 +66,8 @@ const SEEN_EVERY_MS = 3600_000;
 /** Recent results on a profile, and games in a player's own list. */
 const RECENT_RESULTS = 20;
 const MY_GAMES = 100;
+/** Rated games in one rating history answer: the default and the most a caller may ask for. */
+export const HISTORY_POINTS = { fallback: 50, max: 200 } as const;
 
 export type RenameOutcome =
   | { ok: true }
@@ -85,6 +88,8 @@ export interface PlayerStore {
   myGames(playerId: string): Promise<MyGame[]>;
   leaderboard(page: { offset: number; limit: number; now: number }): Promise<LeaderboardResponse>;
   trustBoard(page: { offset: number; limit: number }): Promise<TrustLeaderboardResponse>;
+  /** The rating after each of the player's most recent rated games, oldest first; null for no such player. */
+  ratingHistory(handle: string, now: number, limit?: number): Promise<RatingHistoryResponse | null>;
 }
 
 interface PlayerRow {
@@ -834,6 +839,57 @@ export class D1Index implements GameIndex, PlayerStore {
       next: rows.length > limit ? offset + limit : null,
     };
   }
+
+  // ---------- PlayerStore: rating history ----------
+
+  async ratingHistory(handle: string, now: number, limit?: number): Promise<RatingHistoryResponse | null> {
+    const row = await this.playerByHandle(handle, now);
+    if (!row) return null;
+    const n = clampLimit(limit, HISTORY_POINTS.max, HISTORY_POINTS.fallback);
+    const rows = (
+      await this.db
+        .prepare(
+          `SELECT h.game_id, h.rating_before, h.rd_before, h.rating_after, h.rd_after, h.at, gp.power, gp.result, gp.score
+           FROM rating_history h
+           LEFT JOIN game_players gp ON gp.game_id = h.game_id AND gp.player_id = h.player_id
+           WHERE h.player_id = ? AND h.ladder = ?
+           GROUP BY h.game_id
+           ORDER BY h.at DESC, h.game_id DESC LIMIT ?`,
+        )
+        .bind(row.id, LADDER, n + 1)
+        .all<HistoryRow>()
+    ).results;
+    return {
+      ladder: LADDER,
+      points: rows
+        .slice(0, n)
+        .reverse()
+        .map((h) => ({
+          gameId: h.game_id,
+          power: (h.power as RatingHistoryResponse["points"][number]["power"]) ?? null,
+          result: (h.result as RatingHistoryResponse["points"][number]["result"]) ?? null,
+          score: h.score,
+          ratingBefore: h.rating_before,
+          rdBefore: h.rd_before,
+          ratingAfter: h.rating_after,
+          rdAfter: h.rd_after,
+          at: h.at,
+        })),
+      more: rows.length > n,
+    };
+  }
+}
+
+export interface HistoryRow {
+  game_id: string;
+  rating_before: number;
+  rd_before: number;
+  rating_after: number;
+  rd_after: number;
+  at: number;
+  power: string | null;
+  result: string | null;
+  score: number | null;
 }
 
 interface RecentRow {
