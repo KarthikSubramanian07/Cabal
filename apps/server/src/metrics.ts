@@ -120,7 +120,7 @@ async function recordBeacon(db: D1Database, samples: readonly { metric: string; 
 }
 
 /** True when the request carries this deployment's admin token. */
-async function isAdmin(request: Request, env: Env): Promise<boolean> {
+export async function isAdmin(request: Request, env: Env): Promise<boolean> {
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
   return Boolean(env.ADMIN_TOKEN) && bearer.length > 0 && sameHash(hashToken(bearer), hashToken(env.ADMIN_TOKEN!));
 }

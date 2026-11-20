@@ -43,6 +43,7 @@ import { REQUEST_ID_HEADER, currentRequestId, describeError, log, requestIdFrom,
 import { gameCode, isPlayerSecret } from "./tokens.js";
 import { CORS, json, limited, readJson, tooMany, withCors } from "./http.js";
 import { metricsRoute } from "./metrics.js";
+import { reportsRoute } from "./moderation.js";
 import { vapidKeys } from "./notify.js";
 import { bearerOf, playerRoute, resolvePlayer } from "./players.js";
 
@@ -136,6 +137,10 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   const metrics = await metricsRoute(request, env, url);
   if (metrics) return metrics;
+
+  const reports = await reportsRoute(request, env, url);
+
+  if (reports) return reports;
 
   const players = await playerRoute(request, env, url);
   if (players) return players;

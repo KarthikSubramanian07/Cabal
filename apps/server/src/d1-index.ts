@@ -49,6 +49,7 @@ import {
   reliability,
   trust,
 } from "./ratings.js";
+import { forgetInModeration } from "./moderation.js";
 import { fullGameEvent } from "./metrics.js";
 import type { Registry } from "./registry.js";
 import { hashRecoveryCode, hashToken, mintPlayerId, mintPlayerSecret, mintRecoveryCode, normaliseRecoveryCode } from "./tokens.js";
@@ -951,6 +952,7 @@ export class D1Index implements GameIndex, PlayerStore {
       this.db.prepare("DELETE FROM notification_preferences WHERE player_id = ?").bind(playerId),
       this.db.prepare("DELETE FROM handle_aliases WHERE player_id = ?").bind(playerId),
       this.db.prepare("DELETE FROM player_sessions WHERE player_id = ?").bind(playerId),
+      ...forgetInModeration(this.db, playerId),
       this.db.prepare("DELETE FROM players WHERE id = ?").bind(playerId),
     ]);
   }

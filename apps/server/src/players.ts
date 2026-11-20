@@ -5,6 +5,7 @@
  *   POST  /api/players/recover    restore an account on a new device from its recovery code
  *   GET   /api/players/:handle    public profile: rating, rank, reliability, the ledger, recent results
  *   GET   /api/players/:handle/ratings  the rating after each rated game, oldest first (`limit`)
+ *   POST  /api/players/:handle/report   signed in: report a player to the maintainers (moderation.ts)
  *   GET   /api/me                 the signed-in player's profile and account
  *   PATCH /api/me                 change handle (once freely, then once every 14 days)
  *   DELETE /api/me                delete the account for good (`{ handle }` to confirm); seats become ghosts
@@ -26,6 +27,7 @@ import {
   DeleteMeRequest,
   type DeleteMeResponse,
   LogoutRequest,
+  PlayerReportRequest,
   type NotificationsResponse,
   type PlayerSummary,
   PushSubscriptionRequest,
@@ -42,10 +44,12 @@ import { reminderMinutes } from "./notify.js";
 import { pushStore, subscriptionProblem } from "./push-store.js";
 import { isPlayerSecret } from "./tokens.js";
 import { handleKey } from "./handles.js";
+import { fileReport, noteAccountOrigin } from "./moderation.js";
 import { REQUEST_ID_HEADER, currentRequestId, describeError, log } from "./log.js";
 
 const PLAYER_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})$/;
 const RATINGS_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})\/ratings$/;
+const REPORT_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})\/report$/;
 /** Rooms told about a deletion at once; a player rarely holds more seats than this in all. */
 const FORSAKE_CONCURRENCY = 8;
 
@@ -100,6 +104,7 @@ export async function playerRoute(request: Request, env: Env, url: URL): Promise
     if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
     const made = await store.createPlayer(body.data.handle ?? null, now);
     if ("ok" in made) return refused(made as Exclude<RenameOutcome, { ok: true }>);
+    await noteAccountOrigin(env.DB, request, made.player.id, now);
     return withCors(privateJson(made, 201));
   }
 
@@ -112,6 +117,9 @@ export async function playerRoute(request: Request, env: Env, url: URL): Promise
     if (!session) return withCors(json({ error: "that recovery code is not valid", code: "bad_recovery_code" }, 401));
     return withCors(privateJson(session));
   }
+
+  const reporting = REPORT_PATH.exec(path);
+  if (reporting && request.method === "POST") return withCors(await report(request, env, store, reporting[1]!, now));
 
   if (request.method === "GET" && (path === "/api/leaderboard" || path === "/api/ledger" || PLAYER_PATH.test(path) || RATINGS_PATH.test(path))) {
     if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
@@ -229,4 +237,20 @@ async function deleteAccount(request: Request, env: Env, store: PlayerStore, pla
   await store.deletePlayer(player.id);
   log("account_deleted", { games: games.length, unreached });
   return privateJson({ deleted: true, games: games.length, unreached } satisfies DeleteMeResponse);
+}
+
+/** Report a player to the maintainers: signed in, never about oneself, once a day per player. */
+async function report(request: Request, env: Env, store: PlayerStore, handle: string, now: number): Promise<Response> {
+  const resolved = await resolvePlayer(request, env);
+  if (resolved === "none" || resolved === "invalid") return json({ error: "sign in to report a player", code: "signed_out" }, 401);
+  const reporter = resolved.player;
+  if (await limitedKey(env.PROFILE_LIMITER, `report:${reporter.id}`)) return tooMany();
+  const body = PlayerReportRequest.safeParse(await readJson(request));
+  if (!body.success) return json({ error: "invalid request", issues: body.error.issues }, 400);
+  if (!env.DB) return json({ error: "reports need the D1 database" }, 503);
+  const subject = await store.profile(handle, now);
+  if (!subject) return json({ error: "no such player" }, 404);
+  const outcome = await fileReport(env.DB, reporter.id, subject.player.id, body.data, now);
+  if (outcome === "self") return json({ error: "you cannot report yourself", code: "self_report" }, 400);
+  return privateJson({ received: true }, 202);
 }
