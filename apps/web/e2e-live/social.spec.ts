@@ -41,9 +41,13 @@ test.describe("the social layer, live", () => {
     expect(await slip.evaluate((el) => getComputedStyle(el).boxShadow)).toMatch(/^rgb\([^)]*\) 3px 3px 0px/);
     // Ada is reading that very thread: her own words bring her no slip.
     await expect(ada.getByRole("region", { name: "News from the table" })).toHaveCount(0);
-    // A slip leaves on its own after nine seconds, but never while the player is on it. Bea moves
-    // onto it, and it stays past its time (and past a slow scan on a busy machine).
-    await slip.getByRole("button", { name: "Read it" }).focus();
+    // The board has a key of its own, N, named on the newest slip (and in How to play). A slip
+    // leaves on its own after nine seconds, but never while the player is on it. Bea presses N,
+    // lands on it, and it stays past its time (and past a slow scan on a busy machine).
+    const read = slip.getByRole("button", { name: "Read it" });
+    await expect(read).toHaveAttribute("aria-keyshortcuts", "N");
+    await bea.keyboard.press("n");
+    await expect(read).toBeFocused();
     await bea.waitForTimeout(10_000);
     await expect(slip).toBeVisible();
     await scan(bea, "a dispatch slip over the room");
@@ -54,6 +58,10 @@ test.describe("the social layer, live", () => {
     await expect(thread).toBeVisible();
     await expect(thread).toBeFocused();
     await expect(slip).toHaveCount(0);
+    // With no slip up, the key says so rather than doing nothing.
+    await bea.keyboard.press("n");
+    await expect(bea.locator(".dispatch-said")).toHaveText("No news from the table.");
+    await expect(thread).toBeFocused();
 
     // Bea quotes it in her answer. The button says whose message it quotes as its description, so
     // the live thread does not read a long button name out with every message.

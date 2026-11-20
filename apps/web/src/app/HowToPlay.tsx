@@ -9,7 +9,7 @@ export function HowToPlay({
 }: {
   open: boolean;
   onClose: () => void;
-  /** Whether the single-key shortcuts (M, S, C, H, D) are on. */
+  /** Whether the single-key shortcuts (M, S, C, V, H, D, N, / and Space) are on. */
   shortcuts: boolean;
   onShortcuts: (on: boolean) => void;
 }) {
@@ -142,7 +142,7 @@ export function HowToPlay({
           </p>
           <label className="setting">
             <input type="checkbox" checked={shortcuts} onChange={(e) => onShortcuts(e.target.checked)} />
-            Single-key shortcuts (<kbd>M</kbd> <kbd>S</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>D</kbd> <kbd>/</kbd> <kbd>Space</kbd>). Turn them off if
+            Single-key shortcuts (<kbd>M</kbd> <kbd>S</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>D</kbd> <kbd>N</kbd> <kbd>/</kbd> <kbd>Space</kbd>). Turn them off if
             you use speech input or they get in your way.
           </label>
         </section>
@@ -197,6 +197,14 @@ export function HowToPlay({
             until the phase resolves; then the server stamps it kept or broken and their device opens the seal itself to
             check the orders are the ones you sealed. The server reads the orders when you send them, so a seal protects
             you from other players, not from the server. Every seal ends up in the Ledger.
+          </p>
+          <p>
+            News from out of sight (a message for a thread you are not reading, a seal stamped, a phase resolved) is
+            pinned at the edge of the room as a slip. Choose Read it, See the seal or See the results to go there
+            <span className="keys-only">
+              , or press <kbd>N</kbd> to reach the newest slip and again for the one before it
+            </span>
+            . A slip leaves on its own after a while, but never while you are on it, and what it said stays in the room.
           </p>
           <p>
             A draw ends the game when every player at the table votes for it in the same phase. Seats played by the bot

@@ -41,7 +41,7 @@ import { SeatBar } from "./SeatBar.jsx";
 import { readiness } from "./seatState.js";
 import { threadList, totalUnread } from "./threads.js";
 import { NotifyOffer } from "../profile/NotificationsPanel.jsx";
-import { DispatchBoard, useDispatches } from "../toast/DispatchBoard.jsx";
+import { DispatchBoard, NEWS_KEY, focusNews, useDispatches } from "../toast/DispatchBoard.jsx";
 import { useNarrow } from "../app/useNarrow.js";
 import { filedLine } from "./settle.js";
 import { useDesk } from "./useDesk.js";
@@ -480,6 +480,9 @@ function Floor({
     setReplaying(true);
   }, [viewing, history.length, cancel]);
 
+  // The slips' live region, for the news key (the slips are watched further down).
+  const sayNews = useRef<(words: string) => void>(() => undefined);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
@@ -487,6 +490,11 @@ function Floor({
       const key = e.key.toLowerCase();
       const onControl = Boolean(el.closest("button, a, [role='button']"));
       if (key === "escape") return cancel();
+      // News from the table, for anyone at it (players and spectators), whatever phase is shown.
+      if (key === NEWS_KEY && shortcutsEnabled()) {
+        e.preventDefault();
+        return focusNews(sayNews.current);
+      }
       if (viewing !== null) {
         if (key === "arrowright") view$(viewing + 1 >= history.length ? null : viewing + 1);
         else if (key === "arrowleft" && viewing > 0) view$(viewing - 1);
@@ -547,6 +555,7 @@ function Floor({
   const narrow = useNarrow();
   const resultsInView = narrow ? !sheet || tab === "orders" : tab === "orders";
   const dispatches = useDispatches(view, { me, reading: pressVisible ? thread : null, resultsInView });
+  sayNews.current = dispatches.say;
 
   // ---- the clock and the seats
 
