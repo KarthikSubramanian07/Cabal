@@ -2,34 +2,42 @@
  * A player's record in words and figures: the rating's path through their recent games, how
  * dependably they order, and their trust ledger. Pure, so each rule is unit tested.
  */
-import type { MyGame, PlayerProfile, PlayerResult, ReliabilityView, TrustView } from "@cabal/protocol";
+import type { MyGame, PlayerResult, PowerName, RatingHistoryResponse, ReliabilityView, TrustView } from "@cabal/protocol";
 
 export interface RatingPoint {
   /** The rating after this game (or, for the first point, before the first game shown). */
   rating: number;
+  /** Its deviation then: the rating is likely within two of these either side. */
+  rd: number;
   /** What the game did to it; null for the starting point. */
   delta: number | null;
   /** The game that moved it; null for the starting point. */
-  game: PlayerResult | null;
+  game: { gameId: string; power: PowerName | null; finishedAt: number } | null;
 }
 
 /**
- * The rating's path, oldest first, worked back from today's rating through the rating change
- * of each rated game on the record. The profile carries the most recent games only, so the path
- * starts where the oldest of those began.
+ * The rating's path, oldest first, from the server's rating history: where it stood before the
+ * oldest game listed, then after each rated game, with the deviation it had at each point. The
+ * figures are the ones the server stored when each game was rated, never worked back.
  */
-export function ratingPath(profile: Pick<PlayerProfile, "rating" | "recent">): RatingPoint[] {
-  if (!profile.rating) return [];
-  const rated = profile.recent.filter((g) => g.ratingDelta !== null);
-  if (rated.length === 0) return [];
-  const points: RatingPoint[] = [];
-  let r = profile.rating.rating;
-  for (const game of rated) {
-    points.push({ rating: r, delta: game.ratingDelta, game });
-    r -= game.ratingDelta!;
-  }
-  points.push({ rating: r, delta: null, game: null });
-  return points.reverse();
+export function ratingPath(history: Pick<RatingHistoryResponse, "points"> | null): RatingPoint[] {
+  const points = history?.points ?? [];
+  if (points.length === 0) return [];
+  const first = points[0]!;
+  return [
+    { rating: first.ratingBefore, rd: first.rdBefore, delta: null, game: null },
+    ...points.map((p) => ({
+      rating: p.ratingAfter,
+      rd: p.rdAfter,
+      delta: p.ratingAfter - p.ratingBefore,
+      game: { gameId: p.gameId, power: p.power, finishedAt: p.at },
+    })),
+  ];
+}
+
+/** The range a rating is likely within: two deviations either side, rounded for reading. */
+export function ratingRange(p: Pick<RatingPoint, "rating" | "rd">): [number, number] {
+  return [Math.round(p.rating - 2 * p.rd), Math.round(p.rating + 2 * p.rd)];
 }
 
 /** Round ticks covering [min, max]: three or four of them, on steps of 5, 10, 25, 50 or 100. */

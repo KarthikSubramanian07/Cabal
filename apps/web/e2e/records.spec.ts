@@ -13,6 +13,7 @@ async function scan(page: Page, state: string) {
 async function recorded(page: Page) {
   const server = await fakeServer(page);
   server.on("GET", /^\/api\/players\/kestrel$/i, () => ({ body: fixture("profile-kestrel") }));
+  server.on("GET", /^\/api\/players\/kestrel\/ratings$/i, () => ({ body: fixture("ratings-kestrel") }));
   server.on("GET", /^\/api\/ledger$/, () => ({ body: fixture("trust") }));
   server.on("GET", /^\/api\/leaderboard$/, () => ({ body: fixture("leaderboard") }));
   server.on("GET", /^\/api\/games\/Z2BSVX$/, () => ({ body: fixture("summary-Z2BSVX") }));
@@ -101,8 +102,14 @@ test.describe("a player's record", () => {
     await expect(points).toHaveCount(6);
     await points.last().focus();
     await expect(page.locator(".rating-tip")).toContainText("to 1515");
+    // The figures are the stored history: where the first rated game began, and each range.
+    await expect(rating.locator("svg")).toHaveAccessibleName("Rating over 5 rated games, now 1515, likely 1264 to 1766");
+    await expect(rating.locator(".rating-band")).toHaveCount(1);
     await rating.getByText("The figures").click();
-    await expect(rating.getByRole("table")).toContainText("Before these games");
+    const figures = rating.getByRole("table");
+    await expect(figures).toContainText("Before the first rated game");
+    await expect(figures.getByRole("columnheader", { name: "Likely range" })).toBeVisible();
+    await expect(figures.getByRole("row").last()).toContainText("1264 to 1766");
     await expect(page.getByRole("region", { name: "Reliability" })).toContainText("Ordered on time in 20 of 21 phases");
     const ledger = page.getByRole("region", { name: "The Ledger" });
     await expect(ledger).toContainText("Kept 10 of 20 promises.");
@@ -112,6 +119,16 @@ test.describe("a player's record", () => {
     await scan(page, "profile");
     await recent.getByRole("link", { name: "Replay the game Z2BSVX" }).click();
     await expect(page).toHaveURL(/\/replay\/Z2BSVX$/);
+  });
+
+  test("a rating history that does not load costs only the chart", async ({ page }) => {
+    const server = await recorded(page);
+    server.on("GET", /^\/api\/players\/kestrel\/ratings$/i, () => ({ status: 503, body: { error: "unavailable" } }));
+    await page.goto("/u/kestrel");
+    const rating = page.getByRole("region", { name: "Rating" });
+    await expect(rating).toContainText("Ranked 1 on the ladder.");
+    await expect(rating.locator(".rating-point")).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Recent games" }).getByRole("row")).toHaveCount(6);
   });
 
   test("an unknown handle says so, and the owner sees their account button", async ({ page }) => {
