@@ -4,7 +4,7 @@
  * unprompted), votes the game to a draw, and then finds the finished game on their record and
  * plays it back.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { chooseHandle, primary, scan, tab, uniqueHandle } from "./room.js";
 
 test.describe("the front door, live", () => {
