@@ -237,6 +237,8 @@ async function proxyApi(request: Request, env: AssetEnv): Promise<Response> {
   for (const name of API_HEADERS) out.headers.set(name, SECURITY_HEADERS[name]!);
   // Same origin now: the server's permissive CORS grant is not needed and should not leak out.
   out.headers.delete("Access-Control-Allow-Origin");
+  // A crawler may read the API to draw a page (robots.txt lets it), but never keeps an answer as a page.
+  out.headers.set("X-Robots-Tag", "noindex");
   return out;
 }
 

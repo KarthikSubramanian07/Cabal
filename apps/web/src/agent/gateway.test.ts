@@ -290,6 +290,17 @@ describe("handleAgentRequest", () => {
       return { env: { ...env, SERVER: server } satisfies AssetEnv, seen };
     }
 
+    it("keeps every API answer out of search indexes, while crawlers may still read it to draw a page", async () => {
+      const { env: bound } = withServer(() => Response.json({ player: { handle: "Kestrel" } }));
+      const res = await handleAgentRequest(new Request("https://playcabal.pages.dev/api/players/Kestrel"), bound);
+      expect(res.headers.get("X-Robots-Tag")).toBe("noindex");
+      // A record's or a replay's page reads the API as it draws: a crawler that obeys robots.txt
+      // must be let through, or it renders an empty page.
+      const robots = readFileSync(new URL("../../public/robots.txt", import.meta.url), "utf8");
+      expect(robots).not.toMatch(/^Disallow:\s*\/api/m);
+      expect(robots).toMatch(/^Sitemap: https:\/\/playcabal\.pages\.dev\/sitemap\.xml$/m);
+    });
+
     it("hands /api requests to the SERVER binding with method, headers and body intact", async () => {
       const { env: bound, seen } = withServer(
         () =>
