@@ -281,7 +281,7 @@ function DeleteSection({ me, onGone }: { me: MeResponse; onGone: (gone: Gone) =>
           Strike {handle} from the register
         </p>
         <ul className="strike-list">
-          <li>Your handle, rating, record and Ledger entries are deleted, and the handle is free for anyone.</li>
+          <li>Your handle, rating, record and Ledger entries are deleted, and the handle is free for anyone an hour later.</li>
           <li>
             Seats you hold become ghosts. A lobby seat opens again; in a running game the seat falls into civil disorder, open to a substitute and held by the bot where the table allows it.
             Finished games keep their results under the name Ghost.
