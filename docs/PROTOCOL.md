@@ -93,7 +93,7 @@ A client remembers the highest `seq` it has applied. After a reconnect it sends 
 | `synced` | `{ seq, more, gap }` | ends a `sync` reply |
 | `error` | `{ code, message }` | see below |
 
-Error codes: `rate_limited`, `too_large` (the socket is then closed with 1009), `bad_json`, `bad_frame`, `bad_token`, `too_many_sockets`, `spectator`, `spectator_evicted` (the socket is then closed with 4408), `not_active`, `seat_inactive`, `stale_phase`, `bad_order`, `no_press`, `public_only`, `lobby_public_only`, `press_closed`, `press_limit`, `whisper_budget`, `press_rate_limited`, `bad_pledge`, `bad_vote`, `too_many_changes` (a seat may change its ready flag or its ballot 40 times in one phase), `extension_used`, `adjudication_retry`, `adjudication_fallback`, `internal`.
+Error codes: `rate_limited`, `too_large` (the socket is then closed with 1009), `bad_json`, `bad_frame`, `bad_token`, `too_many_sockets`, `spectator`, `spectator_evicted` (the socket is then closed with 4408), `not_active`, `seat_inactive`, `stale_phase`, `bad_order`, `no_press`, `public_only`, `lobby_public_only`, `press_closed`, `press_limit`, `whisper_budget`, `bad_quote` (a quote from another thread, or of a message that does not exist), `press_rate_limited`, `bad_pledge`, `bad_vote`, `too_many_changes` (a seat may change its ready flag or its ballot 40 times in one phase), `extension_used`, `adjudication_retry`, `adjudication_fallback`, `internal`.
 
 ### The welcome
 
