@@ -5,15 +5,14 @@
  * and by whom, a convoy that broke, the paradox rule that settled a circle, and one sentence.
  *
  * Retreats and adjustments have no engine explanation; for those the result's own words and
- * the units it names (`by`) are used. Pure apart from calling the engine.
+ * the units it names (`by`) are used. Pure apart from calling the engine. Every word shown comes
+ * from receipts.ts, which the sidebar's receipts use too.
  */
 import { type Explanation, type OrderExplanation, type OrderResult, type State, explainPreview } from "@cabal/engine";
 import type { BoardHighlight } from "../../map/Board.jsx";
 import { type OrderBook, flatten } from "../book.js";
 import { parseOrder, parseUnit, phaseKind } from "../notation.js";
-import { receiptFor } from "../receipts.js";
-
-export type Names = Record<string, { name: string } | undefined>;
+import { type Names, SIDES, cycleNote, namePlaces, receiptFor, verdictFor } from "../receipts.js";
 
 /** One side of a contest: who, and how strong. */
 export interface Side {
@@ -51,45 +50,6 @@ export interface Why {
   highlight: BoardHighlight;
 }
 
-const CYCLE_NOTES: Record<string, string> = {
-  convoy_paradox:
-    "These orders depend on each other in a circle: a convoy paradox. By the Szykman rule the convoys in the circle fail, so the army stays where it is and everything else is judged without it.",
-  circular_movement: "These moves form a circle, each into the next one's province. They all succeed together.",
-  unresolved: "These orders depend on each other in a circle that no rule settles, so every order in it fails.",
-};
-
-/** The stamp for each engine code. */
-export const VERDICTS: Record<string, string> = {
-  ok: "Succeeded",
-  bounce: "Bounced",
-  repelled: "Repelled",
-  head_to_head: "Beaten head on",
-  own_unit: "Stopped",
-  no_path: "No convoy",
-  cut: "Support cut",
-  void: "Wasted",
-  dislodged: "Dislodged",
-  paradox: "Paradox",
-  illegal: "Not legal",
-  disband: "Disbanded",
-};
-
-const COASTS: Record<string, string> = { NC: "north coast", SC: "south coast", EC: "east coast", WC: "west coast" };
-
-/**
- * Put place names in the engine's sentence: `bounced in BUR` reads `bounced in Burgundy`.
- * Units keep their notation (`A MUN`), which players read faster than a name.
- */
-export function namePlaces(sentence: string, names?: Names): string {
-  if (!names) return sentence;
-  return sentence.replace(/\b([AF] )?([A-Z]{3})(?:\/([NSEW]C))?\b/g, (whole, unit: string | undefined, code: string, coast?: string) => {
-    if (unit) return whole;
-    const name = names[code]?.name;
-    if (!name) return whole;
-    return coast ? `${name} (${COASTS[coast] ?? coast})` : name;
-  });
-}
-
 const provinceOfUnit = (unit: string | null | undefined): string | null => (unit ? (parseUnit(unit)?.province ?? null) : null);
 
 function uniq<T>(list: T[]): T[] {
@@ -105,10 +65,10 @@ export function whyOf(ex: Explanation, index: number, names?: Names): Why | null
     const against: Side[] = [];
     const opp = o.opposition;
     if (opp && opp.kind !== "empty") {
-      against.push({ role: opp.kind === "head_to_head" ? "Coming the other way" : "Held by", unit: opp.unit ?? null, strength: opp.strength });
+      against.push({ role: opp.kind === "head_to_head" ? SIDES.headOn : SIDES.held, unit: opp.unit ?? null, strength: opp.strength });
     }
-    for (const r of o.rivals) against.push({ role: "Also moving in", unit: r.unit, strength: r.strength });
-    contest = { mine: { role: o.by_convoy ? "Crossing by convoy" : "This move", unit: o.unit, strength: o.attack }, against };
+    for (const r of o.rivals) against.push({ role: SIDES.rival, unit: r.unit, strength: r.strength });
+    contest = { mine: { role: o.by_convoy ? SIDES.convoyed : SIDES.move, unit: o.unit, strength: o.attack }, against };
   }
   const defence =
     // Only when something came at it: an illegal order turned into a hold has no ledger to show.
@@ -124,7 +84,7 @@ export function whyOf(ex: Explanation, index: number, names?: Names): Why | null
   const cycle = cycleInfo
     ? {
         kind: cycleInfo.kind,
-        note: CYCLE_NOTES[cycleInfo.kind] ?? "These orders depend on each other in a circle, settled by a backup rule.",
+        note: cycleNote(cycleInfo.kind),
         orders: cycleInfo.members.map((i) => ex.orders[i]?.order ?? "").filter(Boolean),
       }
     : null;
@@ -155,9 +115,9 @@ export function whyOf(ex: Explanation, index: number, names?: Names): Why | null
     order: o.order,
     ok: o.ok,
     code: o.code,
-    // The engine's own code, as on the receipt: in a paradox each order in the circle still failed
-    // its own way (a bounce, no convoy); the circle's note says why.
-    verdict: o.ok ? "Succeeded" : (VERDICTS[o.code] ?? "Failed"),
+    // The engine's own code, stamped as on the receipt: in a paradox each order in the circle still
+    // failed its own way (a bounce, no convoy); the circle's note says why.
+    verdict: verdictFor(o.ok ? "ok" : o.code, o.order),
     sentence: namePlaces(o.sentence, names),
     contest,
     defence,
