@@ -98,6 +98,8 @@ describe("the local arena", { timeout: 60_000 }, () => {
     expect(report).toContain("All 1 games pass the gates.");
     for (const heading of ["Off-menu", "Illegal submitted", "Hold rate", "Honesty", "Cost", "Replay"]) expect(report).toContain(heading);
     expect(report).toContain("| AUSTRIA | cabal-bot/easy |");
+    // The per-seat table names its percentage column for what it is.
+    expect(report).toMatch(/\| Pledges kept \/ broken \| Messages \| Hold rate \| Cost \|/);
   });
 });
 

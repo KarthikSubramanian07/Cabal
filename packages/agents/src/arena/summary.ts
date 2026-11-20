@@ -210,7 +210,7 @@ export function arenaReport(games: ArenaSummary[], gates: Gates, title = "Agent 
   }
   for (const g of games) {
     lines.push("", `## ${g.gameId}`, "", `Supply centres at the end of each year, then pledges and cost per seat.`, "");
-    lines.push(`| Power | Brain | ${g.years.join(" | ")} | Pledges kept / broken | Messages | Holds | Cost |`);
+    lines.push(`| Power | Brain | ${g.years.join(" | ")} | Pledges kept / broken | Messages | Hold rate | Cost |`);
     lines.push(`|---|---|${g.years.map(() => "---:").join("|")}|---|---:|---:|---:|`);
     for (const s of g.seats) {
       const brain = Object.keys(s.brains).join(", ") || "none";
