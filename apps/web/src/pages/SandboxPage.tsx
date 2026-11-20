@@ -1,4 +1,5 @@
 import { type CSSProperties, type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PressWord, pressWord } from "../app/pointer.js";
 import { ConfirmDialog } from "../app/ConfirmDialog.jsx";
 import { PageLoading } from "../app/PageLoading.jsx";
 import { StatusPage } from "../app/StatusPage.jsx";
@@ -615,6 +616,8 @@ function Table({ sb }: { sb: Sandbox }) {
   const boardText = describeBoard(mapState, sb.board.provinces);
 
   const hint: ReactNode = (() => {
+    const tap = pressWord();
+    const Tap = PressWord();
     if (record) {
       return (
         <>
@@ -628,21 +631,21 @@ function Table({ sb }: { sb: Sandbox }) {
     switch (draft.step) {
       case "idle":
         return sb.kind === "A"
-          ? "Click an empty home supply centre to build, or a unit to disband."
+          ? `${Tap} an empty home supply centre to build, or a unit to disband.`
           : sb.kind === "R"
-            ? "Click a dislodged unit, then where it retreats."
-            : "Click a unit, then where it should go.";
+            ? `${Tap} a dislodged unit, then where it retreats.`
+            : `${Tap} a unit, then where it should go.`;
       case "unit":
         if (draft.via) {
-          return `${draft.unit} by convoy: click where the fleets should land it.`;
+          return `${draft.unit} by convoy: ${tap} where the fleets should land it.`;
         }
         return sb.kind === "R" ? (
           <>
-            {draft.unit}: click an empty neighbour, or disband it<span className="keys-only"> (D)</span>.
+            {draft.unit}: {tap} an empty neighbour, or disband it<span className="keys-only"> (D)</span>.
           </>
         ) : (
           <>
-            {draft.unit}: click a destination, or click it again to hold
+            {draft.unit}: {tap} a destination, or {tap} it again to hold
             <span className="keys-only">
               . Press S to support, C to convoy{canGoByConvoy(ctx, draft.power, draft.unit) ? ", V to go by convoy" : ""}
             </span>
@@ -651,12 +654,12 @@ function Table({ sb }: { sb: Sandbox }) {
         );
       case "support":
         return draft.target
-          ? `${draft.unit} supports ${draft.target}: click where it is going, or ${draft.target} again to support it holding.`
-          : `${draft.unit} supports: click the unit to support.`;
+          ? `${draft.unit} supports ${draft.target}: ${tap} where it is going, or ${draft.target} again to support it holding.`
+          : `${draft.unit} supports: ${tap} the unit to support.`;
       case "convoy":
         return draft.army
-          ? `${draft.unit} convoys ${draft.army}: click where it lands.`
-          : `${draft.unit} convoys: click the army.`;
+          ? `${draft.unit} convoys ${draft.army}: ${tap} where it lands.`
+          : `${draft.unit} convoys: ${tap} the army.`;
     }
   })();
 

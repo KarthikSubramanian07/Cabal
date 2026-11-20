@@ -8,6 +8,7 @@
  * first screen and the sidebar is a sheet docked to the bottom with the phase's main action
  * always in reach.
  */
+import { PressWord, pressWord } from "../app/pointer.js";
 import type { PowerName, Recipient } from "@cabal/protocol";
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageLoading } from "../app/PageLoading.jsx";
@@ -658,24 +659,26 @@ function Floor({
 
   const hint: ReactNode = (() => {
     if (record) return "Showing how the phase resolved.";
+    const tap = pressWord();
+    const Tap = PressWord();
     if (!me) return "You are watching this game.";
     if (over) return "The game is over.";
     if (!canOrder) return seat?.eliminated ? "You are out of the game. You can still talk and vote." : "Waiting for the board.";
     if (!rulesReady) return "Reading the rules. Your orders open in a moment.";
     if (message) return message;
     if (picker) return `${picker.title}: choose from the menu.`;
-    if (sketching && draft.step === "idle") return "What if: tap any unit to sketch its order. Nothing is sent.";
+    if (sketching && draft.step === "idle") return `What if: ${tap} any unit to sketch its order. Nothing is sent.`;
     if (due === 0 && !sketching) return kind === "A" ? "Nothing to build or disband this winter." : kind === "R" ? "None of your units has to retreat." : "You have no units to order.";
     switch (draft.step) {
       case "idle":
-        return kind === "A" ? "Tap an empty home supply centre to build, or a unit to disband." : kind === "R" ? "Tap a dislodged unit, then where it retreats." : "Tap one of your units, then where it should go.";
+        return kind === "A" ? `${Tap} an empty home supply centre to build, or a unit to disband.` : kind === "R" ? `${Tap} a dislodged unit, then where it retreats.` : `${Tap} one of your units, then where it should go.`;
       case "unit":
-        if (draft.via) return `${draft.unit} by convoy: tap where the fleets should land it.`;
-        return kind === "R" ? `${draft.unit}: tap an empty neighbour, or disband it.` : `${draft.unit}: tap a destination, or tap it again to hold.`;
+        if (draft.via) return `${draft.unit} by convoy: ${tap} where the fleets should land it.`;
+        return kind === "R" ? `${draft.unit}: ${tap} an empty neighbour, or disband it.` : `${draft.unit}: ${tap} a destination, or ${tap} it again to hold.`;
       case "support":
-        return draft.target ? `${draft.unit} supports ${draft.target}: tap where it is going, or ${draft.target} again to support it holding.` : `${draft.unit} supports: tap the unit to support.`;
+        return draft.target ? `${draft.unit} supports ${draft.target}: ${tap} where it is going, or ${draft.target} again to support it holding.` : `${draft.unit} supports: ${tap} the unit to support.`;
       case "convoy":
-        return draft.army ? `${draft.unit} convoys ${draft.army}: tap where it lands.` : `${draft.unit} convoys: tap the army.`;
+        return draft.army ? `${draft.unit} convoys ${draft.army}: ${tap} where it lands.` : `${draft.unit} convoys: ${tap} the army.`;
     }
   })();
 
