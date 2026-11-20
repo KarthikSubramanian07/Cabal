@@ -33,7 +33,10 @@ ANTHROPIC_API_KEY=... pnpm arena --claude FRANCE,ITALY --budget 2 --games 1
 
 Each Claude seat is capped by its share of the budget and by the budget itself. Before each call
 the worst case it could cost is reserved against both, so seven seats in parallel cannot overdraw
-it; when a cap cannot cover the next call, the seat plays the bot's orders instead.
+it; when a cap cannot cover the next call, the seat plays the bot's orders instead. A decision is
+one request: the SDK never retries it and gives up after two minutes, so one reservation covers
+everything it can be billed. A bill above its reservation is charged in full, reported, and fails
+the run's check.
 
 A run writes, under `--out` (default `arena-out`):
 
@@ -53,8 +56,10 @@ Claude (`aiBrain: "claude"`, on a server holding `ANTHROPIC_API_KEY`) also asks 
 `cabal-agent-turns` queue for each AI seat's turn, and its consumer
 (`apps/server/src/agent-consumer.ts`) plays it with a `Player` and a `ClaudeBrain` under the
 game's spend cap. A seat whose player has missed two movement phases (civil disorder) is taken
-over the same way until the player orders again; their returning orders always win. Whatever
-fails, the bot's orders are already on file.
+over the same way until the player orders again, for orders only: the agent skips the talks, sees
+only the table's public press, and the room refuses any press or pledge it returns, so nothing is
+said or promised in the player's name. Their returning orders always win. Whatever fails, the
+bot's orders are already on file.
 
 ## Prompt
 
