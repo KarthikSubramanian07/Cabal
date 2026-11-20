@@ -7,6 +7,7 @@
  * response and every frame is checked against the same zod schemas the server is tested with.
  */
 import { ApiError, CabalSocket, type SocketLike, createApi } from "@cabal/protocol/client";
+import { timings } from "./timings.js";
 
 export const api = createApi({ baseUrl: "" });
 
@@ -16,12 +17,18 @@ export function socketUrl(gameId: string, location: Pick<Location, "protocol" | 
   return `${scheme}//${location.host}/api/games/${encodeURIComponent(gameId)}/ws`;
 }
 
-/** A socket to one game: a spectator without a token, the token's seat with one. */
+/**
+ * A socket to one game: a spectator without a token, the token's seat with one. A seat's socket
+ * also times the phase 1 metrics (net/timings.ts): each order's round trip, and the first game
+ * accepting orders after a visit that opened at the front page.
+ */
 export function openSocket(gameId: string, token?: string): CabalSocket {
-  return new CabalSocket({
+  const socket = new CabalSocket({
     connect: () => new WebSocket(socketUrl(gameId)) as unknown as SocketLike,
-    ...(token ? { token } : {}),
+    ...(token ? { token, onReply: timings.noteReply } : {}),
   });
+  if (token) socket.on("frame", (frame) => timings.noteFrame(frame));
+  return socket;
 }
 
 export { failureText } from "./failure.js";

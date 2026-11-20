@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { metaFor, writeHead } from "./meta.js";
+import { SHARE_IMAGE, SHARE_IMAGE_ALT, metaFor, writeHead } from "./meta.js";
 
 describe("metaFor", () => {
   it("gives every page its own title, description and canonical address", () => {
@@ -47,4 +48,32 @@ describe("writeHead", () => {
     const out = writeHead(shell, { ...metaFor("/"), title: 'A "quoted" <title> & more' });
     expect(out).toContain("<title>A &quot;quoted&quot; &lt;title&gt; &amp; more</title>");
   });
+
+  it("gives a table and its replay their own card, and every other page the site's", () => {
+    const html = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
+    const table = writeHead(html, metaFor("/g/k7q2xz"));
+    expect(table).toContain('<meta property="og:image" content="https://playcabal.pages.dev/share/g/K7Q2XZ.png" />');
+    expect(table).toContain('<meta name="twitter:image" content="https://playcabal.pages.dev/share/g/K7Q2XZ.png" />');
+    expect(table).toMatch(/<meta property="og:image:alt" content="The board of Diplomacy table K7Q 2XZ as it stands/);
+    // The card's size tags are untouched: the table's card is drawn at the same 1200 by 630.
+    expect(table).toContain('<meta property="og:image:width" content="1200" />');
+    expect(table.match(/property="og:image"/g)).toHaveLength(1);
+    expect(writeHead(html, metaFor("/replay/K7Q2XZ"))).toContain("/share/g/K7Q2XZ.png");
+    const ledger = writeHead(html, metaFor("/ledger"));
+    expect(ledger).toContain(`<meta property="og:image" content="${SHARE_IMAGE}" />`);
+  });
+
+  it("never points a code that cannot exist at a card that would be a 404", () => {
+    for (const path of ["/g/abc", "/g/K7Q2X0", "/replay/zzzz"]) {
+      expect(metaFor(path).image, path).toBeUndefined();
+      expect(writeHead(readFileSync(new URL("../../index.html", import.meta.url), "utf8"), metaFor(path))).not.toContain("/share/g/");
+    }
+  });
+
+  it("describes the site's card in the same words as the shell does", () => {
+    const html = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
+    expect(html).toContain(`<meta property="og:image:alt" content="${SHARE_IMAGE_ALT}" />`);
+    expect(html).toContain(`<meta name="twitter:image:alt" content="${SHARE_IMAGE_ALT}" />`);
+  });
 });
+

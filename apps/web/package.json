@@ -16,7 +16,8 @@
     "test:e2e": "playwright test",
     "test:e2e:live": "playwright test --config playwright.live.config.ts",
     "assets": "node scripts/assets.mjs",
-    "emit:agent-site": "node scripts/emit-agent-site.mjs"
+    "emit:agent-site": "node scripts/emit-agent-site.mjs",
+    "share-card": "node scripts/share-card.mjs"
   },
   "dependencies": {
     "@cabal/engine": "workspace:*",

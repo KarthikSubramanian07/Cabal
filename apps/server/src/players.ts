@@ -4,8 +4,11 @@
  *   POST  /api/players            make a guest account on this device; the secret is shown once
  *   POST  /api/players/recover    restore an account on a new device from its recovery code
  *   GET   /api/players/:handle    public profile: rating, rank, reliability, the ledger, recent results
+ *   GET   /api/players/:handle/ratings  the rating after each rated game, oldest first (`limit`)
+ *   POST  /api/players/:handle/report   signed in: report a player to the maintainers (moderation.ts)
  *   GET   /api/me                 the signed-in player's profile and account
  *   PATCH /api/me                 change handle (once freely, then once every 14 days)
+ *   DELETE /api/me                delete the account for good (`{ handle }` to confirm); seats become ghosts
  *   POST  /api/me/recovery        a new recovery code, shown once; the old one stops working
  *   POST  /api/me/logout          end this device's session (or every one)
  *   GET   /api/me/games           the player's own games, live and ended, listed or not
@@ -21,7 +24,10 @@
  */
 import {
   CreatePlayerRequest,
+  DeleteMeRequest,
+  type DeleteMeResponse,
   LogoutRequest,
+  PlayerReportRequest,
   type NotificationsResponse,
   type PlayerSummary,
   PushSubscriptionRequest,
@@ -32,13 +38,21 @@ import {
 } from "@cabal/protocol";
 import type { PlayerStore, RenameOutcome } from "./d1-index.js";
 import type { Env } from "./env.js";
+import type { ForsakeAnswer } from "./room.js";
 import { playerStore } from "./game-index.js";
 import { json, limited, limitedKey, readJson, tooMany, withCors } from "./http.js";
 import { reminderMinutes } from "./notify.js";
 import { pushStore, subscriptionProblem } from "./push-store.js";
 import { isPlayerSecret } from "./tokens.js";
+import { handleKey } from "./handles.js";
+import { fileReport, noteAccountOrigin } from "./moderation.js";
+import { REQUEST_ID_HEADER, currentRequestId, describeError, log } from "./log.js";
 
 const PLAYER_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})$/;
+const RATINGS_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})\/ratings$/;
+const REPORT_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})\/report$/;
+/** Rooms told about a deletion at once; a player rarely holds more seats than this in all. */
+const FORSAKE_CONCURRENCY = 8;
 
 export const bearerOf = (request: Request) => request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
 
@@ -91,6 +105,7 @@ export async function playerRoute(request: Request, env: Env, url: URL): Promise
     if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
     const made = await store.createPlayer(body.data.handle ?? null, now);
     if ("ok" in made) return refused(made as Exclude<RenameOutcome, { ok: true }>);
+    await noteAccountOrigin(env, request, made.player.id, now);
     return withCors(privateJson(made, 201));
   }
 
@@ -104,10 +119,20 @@ export async function playerRoute(request: Request, env: Env, url: URL): Promise
     return withCors(privateJson(session));
   }
 
-  if (request.method === "GET" && (path === "/api/leaderboard" || path === "/api/ledger" || PLAYER_PATH.test(path))) {
+  const reporting = REPORT_PATH.exec(path);
+  if (reporting && request.method === "POST") return withCors(await report(request, env, store, reporting[1]!, now));
+
+  if (request.method === "GET" && (path === "/api/leaderboard" || path === "/api/ledger" || PLAYER_PATH.test(path) || RATINGS_PATH.test(path))) {
     if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
     if (path === "/api/leaderboard") return withCors(publicJson(await store.leaderboard({ ...page(url), now }), 60));
     if (path === "/api/ledger") return withCors(publicJson(await store.trustBoard(page(url)), 60));
+    const ratings = RATINGS_PATH.exec(path);
+    if (ratings) {
+      const limit = Number(url.searchParams.get("limit") ?? "");
+      const history = await store.ratingHistory(ratings[1]!, now, Number.isFinite(limit) && limit > 0 ? limit : undefined);
+      if (!history) return withCors(json({ error: "no such player" }, 404));
+      return withCors(publicJson(history, 30));
+    }
     const handle = PLAYER_PATH.exec(path)![1]!;
     const profile = await store.profile(handle, now);
     if (!profile) return withCors(json({ error: "no such player" }, 404));
@@ -134,6 +159,7 @@ async function me(request: Request, env: Env, store: PlayerStore, player: Player
     if (!outcome.ok) return refused(outcome);
     return privateJson(await store.me(player.id, now));
   }
+  if (path === "/api/me" && request.method === "DELETE") return deleteAccount(request, env, store, player);
   if (path === "/api/me/recovery" && request.method === "POST") return privateJson(await store.issueRecoveryCode(player.id, now));
   if (path === "/api/me/logout" && request.method === "POST") {
     const body = LogoutRequest.safeParse((await readJson(request)) ?? {});
@@ -172,4 +198,64 @@ async function notifications(request: Request, env: Env, player: PlayerSummary, 
     return answer();
   }
   return json({ error: "not found" }, 404);
+}
+
+/**
+ * Delete the signed-in player's account for good. The body must name the account's handle (as it
+ * reads now: any case, `_` for `-`), so a replayed or mistaken request cannot delete anyone.
+ *
+ * Every room the player holds or held a seat in is told first, so their seats become ghosts by the
+ * game's own rules and their name leaves each game; then the index forgets them (d1-index.ts
+ * `deletePlayer`). A room that cannot be reached is no reason to keep the account: its seat is
+ * anonymised when that game is next recorded, because the index no longer knows the id.
+ */
+async function deleteAccount(request: Request, env: Env, store: PlayerStore, player: PlayerSummary): Promise<Response> {
+  const body = DeleteMeRequest.safeParse(await readJson(request));
+  if (!body.success) return json({ error: "invalid request", issues: body.error.issues }, 400);
+  if (handleKey(body.data.handle) !== handleKey(player.handle)) {
+    return json({ error: "type the account's handle to delete it", code: "handle_mismatch" }, 400);
+  }
+  const games = await store.gamesOf(player.id);
+  let unreached = 0;
+  const unplayed: string[] = [];
+  for (let i = 0; i < games.length; i += FORSAKE_CONCURRENCY) {
+    const told = await Promise.allSettled(
+      games.slice(i, i + FORSAKE_CONCURRENCY).map(async (gameId) => {
+        const forsake = new Request("https://room/forsake", { method: "POST", body: JSON.stringify({ playerId: player.id }) });
+        const id = currentRequestId();
+        if (id) forsake.headers.set(REQUEST_ID_HEADER, id);
+        const res = await env.GAME_ROOM.get(env.GAME_ROOM.idFromName(gameId)).fetch(forsake);
+        // A game the room never stored (it was created and forgotten) has nothing to forget either.
+        if (!res.ok && res.status !== 404) throw new Error(`room answered ${res.status}`);
+        if (res.ok && ((await res.json()) as Partial<ForsakeAnswer>).unplayed === true) unplayed.push(gameId);
+      }),
+    );
+    for (const t of told) {
+      if (t.status === "rejected") {
+        unreached += 1;
+        log("account_delete_room_unreached", describeError(t.reason), "error");
+      }
+    }
+  }
+  await store.deletePlayer(player.id, unplayed);
+  log("account_deleted", { games: games.length, unreached });
+  return privateJson({ deleted: true, games: games.length, unreached } satisfies DeleteMeResponse);
+}
+
+/** Report a player to the maintainers: signed in, never about oneself, once a day per player. */
+async function report(request: Request, env: Env, store: PlayerStore, handle: string, now: number): Promise<Response> {
+  // Per address first: a bad or forged bearer still costs a database read to turn away.
+  if (await limited(env.PROFILE_LIMITER, request, "report")) return tooMany();
+  const resolved = await resolvePlayer(request, env);
+  if (resolved === "none" || resolved === "invalid") return json({ error: "sign in to report a player", code: "signed_out" }, 401);
+  const reporter = resolved.player;
+  if (await limitedKey(env.PROFILE_LIMITER, `report:${reporter.id}`)) return tooMany();
+  const body = PlayerReportRequest.safeParse(await readJson(request));
+  if (!body.success) return json({ error: "invalid request", issues: body.error.issues }, 400);
+  if (!env.DB) return json({ error: "reports need the D1 database" }, 503);
+  const subject = await store.profile(handle, now);
+  if (!subject) return json({ error: "no such player" }, 404);
+  const outcome = await fileReport(env.DB, reporter.id, subject.player.id, body.data, now);
+  if (outcome === "self") return json({ error: "you cannot report yourself", code: "self_report" }, 400);
+  return privateJson({ received: true }, 202);
 }

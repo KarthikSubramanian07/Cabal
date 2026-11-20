@@ -3,7 +3,7 @@
  * made the first time a person plays (see IdentityProvider), not when they arrive: browsing the
  * front door, the sandbox or a profile never creates one.
  */
-import type { MeResponse, RecoveryCodeResponse } from "@cabal/protocol";
+import type { DeleteMeResponse, MeResponse, RecoveryCodeResponse } from "@cabal/protocol";
 import { useCallback, useSyncExternalStore } from "react";
 import { isApiFailure } from "../net/failure.js";
 import { loadApi, localRefusal } from "../net/lazy.js";
@@ -115,5 +115,32 @@ export function useAccount() {
     forgetPlayer();
   }, []);
 
-  return { player, create, recover, me, rename, issueRecoveryCode, signOut };
+  /**
+   * Delete the account for good: the server forgets it and turns its seats into ghosts. This device
+   * then lets go of everything the account left here, at once: its push subscription (the server's
+   * copy is already gone), its seats and its secret. A dead secret must not outlive the answer,
+   * whatever the player does next (reload, leave, close the tab). `deleted` hears the answer just
+   * before the secret goes, in the same tick, so a card can keep its farewell on screen.
+   */
+  const deleteAccount = useCallback(async (handle: string, deleted?: (result: DeleteMeResponse) => void): Promise<DeleteMeResponse> => {
+    const current = readPlayer();
+    if (!current) throw localRefusal(401, "not signed in");
+    let result: DeleteMeResponse;
+    try {
+      const { api } = await loadApi();
+      result = await api.deleteAccount(current.secret, handle);
+    } catch (error) {
+      return signedOutIfRefused(error);
+    }
+    forgetSeatsOf(current);
+    deleted?.(result);
+    if (readPlayer()?.id === current.id) forgetPlayer();
+    // A profile is cached publicly for half a minute: refetch it past this browser's cache, so the
+    // deleted record is not what this device shows next (the server now answers 404).
+    if (typeof fetch === "function") void fetch(`/api/players/${encodeURIComponent(current.handle)}`, { cache: "reload" }).catch(() => undefined);
+    await turnOffPush(async () => undefined).catch(() => undefined);
+    return result;
+  }, []);
+
+  return { player, create, recover, me, rename, issueRecoveryCode, signOut, deleteAccount };
 }

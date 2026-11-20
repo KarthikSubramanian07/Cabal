@@ -1,6 +1,7 @@
 import { type PageMeta, metaFor, writeHead } from "../app/meta.js";
 import { type RouteMatch, matchRoute } from "../app/routes.js";
 import { isGameCode } from "../net/code.js";
+import { centresOf, shareCard } from "./share-card.js";
 import {
   appendVaryAccept,
   markdownPath,
@@ -218,6 +219,41 @@ async function proxyApi(request: Request, env: AssetEnv): Promise<Response> {
   return out;
 }
 
+/** A table's share card: `/share/g/K7Q2XZ.png`. */
+const SHARE_CARD = /^\/share\/g\/([A-Za-z0-9]{6})\.png$/;
+
+/** How long a link preview may keep a table's card: a phase moves on in minutes at the fastest. */
+const CARD_MAX_AGE = 300;
+
+const png = (body: Uint8Array | ReadableStream | null, maxAge: number, status = 200) =>
+  new Response(body as BodyInit | null, { status, headers: { "Content-Type": "image/png", "Cache-Control": `public, max-age=${maxAge}` } });
+
+/**
+ * The card for one table (agent/share-card.ts): the neutral board recoloured with the supply
+ * centres its saved game holds now. A code that cannot exist, or that names no game, is a 404; a
+ * server that cannot say gets the neutral board for a minute rather than a broken preview.
+ */
+async function tableCard(env: AssetEnv, url: URL, code: string, request: Request): Promise<Response> {
+  if (!isGameCode(code)) return notFound(env, url, request, false);
+  const base = await fetchAsset(env, url, "/share/board.png", request);
+  if (base.status !== 200) return base;
+  const bytes = new Uint8Array(await base.arrayBuffer());
+  if (!env.SERVER) return png(bytes, 60);
+  try {
+    // The server limits reads per client address, so the card's read counts against the visitor
+    // (or the link previewer) who asked for it, not one bucket every card would share.
+    const headers = new Headers({ Accept: "application/json" });
+    const address = request.headers.get("cf-connecting-ip");
+    if (address) headers.set("cf-connecting-ip", address);
+    const res = await env.SERVER.fetch(new Request(new URL(`/api/games/${code}/centres`, url).toString(), { headers }));
+    if (res.status === 404) return png(bytes, 60, 404);
+    const centres = res.ok ? centresOf(await res.json()) : null;
+    return centres ? png(shareCard(bytes, centres), CARD_MAX_AGE) : png(bytes, 60);
+  } catch {
+    return png(bytes, 60);
+  }
+}
+
 export async function handleAgentRequest(request: Request, env: AssetEnv): Promise<Response> {
   if (isApiPath(new URL(request.url).pathname)) return proxyApi(request, env);
   const res = await route(request, env);
@@ -229,6 +265,9 @@ export async function handleAgentRequest(request: Request, env: AssetEnv): Promi
 async function route(request: Request, env: AssetEnv): Promise<Response> {
   const url = new URL(request.url);
   const path = normalizePath(url.pathname);
+
+  const card = SHARE_CARD.exec(path);
+  if (card) return tableCard(env, url, card[1]!.toUpperCase(), request);
 
   if (isStaticAsset(path)) {
     const asset = await fetchAsset(env, url, path === "/llms.txt" ? "/llms.txt" : path, request);

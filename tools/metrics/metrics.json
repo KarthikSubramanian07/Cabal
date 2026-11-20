@@ -1,0 +1,82 @@
+{
+  "lines": [
+    {
+      "id": "datc",
+      "title": "DATC v3.0",
+      "target": "100 percent, zero skipped",
+      "value": "171 of 171 passed, 0 failed, 0 skipped",
+      "pass": true,
+      "where": "local (cargo)",
+      "date": "2026-11-20",
+      "commit": "2b4ff1396e59",
+      "detail": {
+        "engine": "0.1.0",
+        "checks": 1639
+      }
+    },
+    {
+      "id": "full_game",
+      "title": "Full 7 seat game",
+      "target": "finishes with no manual intervention",
+      "value": "finished: draw by vote after 16 phases, 2.5 s, 2 people and 5 bots",
+      "pass": true,
+      "where": "local (wrangler dev)",
+      "date": "2026-11-20",
+      "commit": "2b4ff1396e59",
+      "detail": {
+        "origin": "http://localhost:8852",
+        "gameId": "C36KXN",
+        "status": "finished",
+        "result": "draw",
+        "reason": "vote",
+        "phases": 16,
+        "lastPhase": "COMPLETED",
+        "humans": 2,
+        "seconds": 2.5
+      }
+    },
+    {
+      "id": "landing_to_game",
+      "title": "Landing page to a game in progress",
+      "target": "under 60 s, AI seats filling the table",
+      "value": "1.8 s",
+      "pass": true,
+      "where": "local (wrangler dev), desktop",
+      "date": "2026-11-20",
+      "commit": "2b4ff1396e59",
+      "detail": {}
+    },
+    {
+      "id": "landing_to_game",
+      "title": "Landing page to a game in progress",
+      "target": "under 60 s, AI seats filling the table",
+      "value": "2.0 s",
+      "pass": true,
+      "where": "local (wrangler dev), phone",
+      "date": "2026-11-20",
+      "commit": "2b4ff1396e59",
+      "detail": {}
+    },
+    {
+      "id": "order_rtt",
+      "title": "Order submit round trip",
+      "target": "p95 under 150 ms (Europe or North America)",
+      "value": "p95 39.9 ms (p50 7, p99 111.3, n 100)",
+      "pass": true,
+      "where": "local (wrangler dev)",
+      "date": "2026-11-20",
+      "commit": "2b4ff1396e59",
+      "detail": {
+        "origin": "http://localhost:8852",
+        "gameId": "YGLWSW",
+        "phase": "S1901M",
+        "n": 100,
+        "p50": 7,
+        "p95": 39.9,
+        "p99": 111.3,
+        "min": 1.7,
+        "max": 388.1
+      }
+    }
+  ]
+}

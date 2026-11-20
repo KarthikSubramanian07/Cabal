@@ -45,7 +45,9 @@ test.describe("search and sharing", () => {
       expect(h.canonical).toBe(`https://playcabal.pages.dev${path}`);
       expect(h.ogUrl).toBe(h.canonical);
       expect(h.ogTitle).toBe(h.title);
-      expect(h.ogImage).toBe("https://playcabal.pages.dev/og.png");
+      // A table and its replay show their own board; every other page the site's card.
+      const code = /^\/(?:g|replay)\/([A-Z0-9]{6})$/.exec(path)?.[1];
+      expect(h.ogImage).toBe(code ? `https://playcabal.pages.dev/share/g/${code}.png` : "https://playcabal.pages.dev/og.png");
       expect(h.twitterCard).toBe("summary_large_image");
       expect(h.robots).toBe(indexed ? "index, follow" : "noindex, follow");
       expect(h.robotsHeader).toBe(indexed ? null : "noindex");

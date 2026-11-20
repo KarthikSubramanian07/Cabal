@@ -1,9 +1,9 @@
 /** Ratings, reliability and the trust ledger, folded from finished games into D1 and read back. */
 import { describe, expect, it } from "vitest";
-import { type GamePlayerRecord, type GameRecord, GameSettings, LeaderboardResponse, PlayerProfile, TrustLeaderboardResponse } from "@cabal/protocol";
+import { type GamePlayerRecord, type GameRecord, GameSettings, LeaderboardResponse, PlayerProfile, RatingHistoryResponse, TrustLeaderboardResponse } from "@cabal/protocol";
 import { Game } from "@cabal/engine";
 import { RATING_RULES } from "../src/ratings.js";
-import { Client, call, createAs, index, inRoom, joinAs, newPlayer, serverEnv, sleep, start, untilIndexed } from "./helpers.js";
+import { Client, call, createAs, freshHandle, index, inRoom, joinAs, newPlayer, serverEnv, sleep, start, untilIndexed } from "./helpers.js";
 
 
 const db = () => serverEnv.DB!;
@@ -265,5 +265,72 @@ describe("rating finished games", () => {
         expect(body.offset, `${path}?${q}`).toBeLessThanOrEqual(10_000);
       }
     }
+  });
+});
+
+describe("rating history", () => {
+  const history = async (handle: string, query = "") => {
+    const res = await call(`/api/players/${handle}/ratings${query}`, null);
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(res.headers.get("cache-control")).toContain("public");
+    return RatingHistoryResponse.parse(await res.json());
+  };
+
+  it("lists every rated game oldest first, each starting where the last one ended", async () => {
+    const [a, b, c] = await Promise.all([newPlayer(), newPlayer(), newPlayer()]);
+    const played: GameRecord[] = [];
+    for (const share of [1, 0, 0.5]) {
+      const game = finished([
+        { playerId: a.player.id, score: share },
+        { playerId: b.player.id, score: share === 1 ? 0 : share === 0 ? 1 : 0.5 },
+        { playerId: c.player.id, score: 0 },
+      ]);
+      await index().recordGame(game);
+      played.push(game);
+      await sleep(2);
+    }
+    // An unrated game is on the record but has no point here.
+    await index().recordGame(finished([{ playerId: a.player.id, score: 1 }, { playerId: b.player.id, score: 0 }]));
+    const h = await history(a.player.handle);
+    expect(h.more).toBe(false);
+    expect(h.points.map((p) => p.gameId)).toEqual(played.map((g) => g.gameId));
+    expect(h.points[0]).toMatchObject({ power: "AUSTRIA", result: "solo", score: 1, ratingBefore: 1500 });
+    expect(h.points[0]!.ratingAfter).toBeGreaterThan(1500);
+    expect(h.points[1]!.ratingAfter).toBeLessThan(h.points[1]!.ratingBefore);
+    for (let i = 1; i < h.points.length; i++) expect(h.points[i]!.ratingBefore).toBeCloseTo(h.points[i - 1]!.ratingAfter, 9);
+    // The last point is the rating the profile shows.
+    const profile = PlayerProfile.parse(await (await call(`/api/players/${a.player.handle}`, null)).json());
+    expect(h.points.at(-1)!.ratingAfter).toBeCloseTo(profile.rating!.rating, 9);
+    // Any spelling of the handle that reads the same finds it.
+    expect((await history(a.player.handle.toUpperCase())).points).toHaveLength(3);
+    // Every point keeps the deviation it had, so a chart can draw the range.
+    for (const p of h.points) expect(p.rdAfter).toBeLessThan(p.rdBefore);
+  });
+
+  it("pages to the most recent games and says when older ones exist", async () => {
+    const [a, b, c] = await Promise.all([newPlayer(), newPlayer(), newPlayer()]);
+    const ids: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const game = finished([
+        { playerId: a.player.id, score: i % 2 },
+        { playerId: b.player.id, score: 1 - (i % 2) },
+        { playerId: c.player.id, score: 0 },
+      ]);
+      await index().recordGame(game);
+      ids.push(game.gameId);
+      await sleep(2);
+    }
+    const h = await history(a.player.handle, "?limit=2");
+    expect(h.points.map((p) => p.gameId)).toEqual(ids.slice(2));
+    expect(h.more).toBe(true);
+    // Absurd limits are clamped rather than refused.
+    expect((await history(a.player.handle, "?limit=100000")).points).toHaveLength(4);
+    expect((await history(a.player.handle, "?limit=abc")).points).toHaveLength(4);
+  });
+
+  it("answers an empty history for a player with no rated game, and 404 for nobody", async () => {
+    const lone = await newPlayer();
+    expect(await history(lone.player.handle)).toEqual({ ladder: expect.any(String), points: [], more: false });
+    expect((await call(`/api/players/${freshHandle("Nobody")}/ratings`, null)).status).toBe(404);
   });
 });

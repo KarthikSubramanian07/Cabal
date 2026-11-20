@@ -14,6 +14,7 @@ const GamePage = lazy(() => import("../pages/GamePage.jsx"));
 const LedgerPage = lazy(() => import("../pages/LedgerPage.jsx"));
 const ProfilePage = lazy(() => import("../pages/ProfilePage.jsx"));
 const ReplayPage = lazy(() => import("../pages/ReplayPage.jsx"));
+const ServerStatusPage = lazy(() => import("../pages/ServerStatusPage.jsx"));
 const NotFoundPage = lazy(() => import("../pages/NotFoundPage.jsx"));
 
 export function App() {
@@ -41,6 +42,8 @@ export function App() {
               <LedgerPage />
             ) : route.name === "profile" ? (
               <ProfilePage handle={route.params["handle"] ?? ""} />
+            ) : route.name === "status" ? (
+              <ServerStatusPage />
             ) : (
               <ReplayPage code={route.params["code"] ?? ""} />
             )}
