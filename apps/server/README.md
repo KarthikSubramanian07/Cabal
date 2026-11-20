@@ -60,6 +60,7 @@ Secrets and variables:
   To rotate, run `node scripts/vapid-keys.mjs <dir>` (it writes `vapid-private.txt` and `vapid-public.txt`), put the new public key in `wrangler.jsonc`, set the secret and deploy. Every browser must subscribe again after a rotation.
 - `VAPID_SUBJECT` (variable). Who runs the server, for push services: an `https:` URL or a `mailto:` address. Defaults to the web app's URL.
 - `PUSH_REMINDER_MINUTES` (variable, default 60, 5 to 1440). How long before a deadline a player whose orders are not in is reminded, once per phase, in phases at least twice that long.
+- `ORIGIN_KEY` (secret, optional). The HMAC key new accounts per network address are counted under (`src/moderation.ts`), so the count's table cannot be searched for an address. Without it a key is derived from `VAPID_PRIVATE_KEY` with HKDF; with neither secret, that count is off. Set it with `wrangler secret put ORIGIN_KEY` to keep it independent of the push keys.
 - `ADMIN_TOKEN` (secret, optional). The bearer token for `GET /api/metrics`, `POST /api/metrics/datc` and `GET /api/reports` (players' reports and bursts of accounts, for review; `src/moderation.ts`). Without it those routes answer 404. Set it with `wrangler secret put ADMIN_TOKEN` (the value is prompted for).
 
 Check a change to the config with `pnpm --filter @cabal/server exec wrangler deploy --dry-run`. Deploys are manual (`pnpm deploy:server`).

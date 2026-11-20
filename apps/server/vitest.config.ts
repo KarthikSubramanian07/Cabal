@@ -4,7 +4,7 @@ import { unstable_readConfig } from "wrangler";
 import { defineConfig } from "vitest/config";
 
 /** Secrets the server reads. Tests never see a real one, whatever the developer's machine holds. */
-const SECRETS = ["ANTHROPIC_API_KEY", "VAPID_PRIVATE_KEY", "ADMIN_TOKEN", "BUILD_ID"];
+const SECRETS = ["ANTHROPIC_API_KEY", "VAPID_PRIVATE_KEY", "ADMIN_TOKEN", "ORIGIN_KEY", "BUILD_ID"];
 
 /**
  * Every key a developer's local env files define (`.dev.vars`, `.env` and their per-environment
@@ -48,6 +48,8 @@ export default defineConfig({
           // The operator's token for the metrics routes. Push stays off unless a suite turns it on
           // with its own keys (push.test.ts), as on a deployment without the VAPID secret.
           ADMIN_TOKEN: "test-admin-token",
+          // The key new accounts per network address are counted under (moderation.ts).
+          ORIGIN_KEY: "test-origin-key",
           // The real migration files, applied to the local D1 database before any test runs
           // (test/setup.ts), so tests and production share one schema.
           TEST_MIGRATIONS: await readD1Migrations("./migrations"),

@@ -6,9 +6,11 @@
  *   GET  /api/reports                  admin: recent reports and busy addresses, newest first
  *
  * A report is one row per reporter, player and UTC day (more change nothing). The address heuristic
- * keeps no address: a SHA-256 of the day and the address, and how many accounts it made that day,
- * kept for two days. From `MULTI_ACCOUNT_REVIEW` accounts in a day, each new one is logged as
- * `multi_account_suspect` with its id, for a maintainer to look at.
+ * keeps no address: an HMAC-SHA-256 of the day and the address under a key that lives only in the
+ * Worker's secrets, and how many accounts it made that day, kept for two days. An unkeyed hash would
+ * not do: there are only 2^32 IPv4 addresses and the day is public, so anyone who could read the
+ * table could try them all. Without a key the heuristic is off. From `MULTI_ACCOUNT_REVIEW` accounts
+ * in a day, each new one is logged as `multi_account_suspect` with its id, for a maintainer to look at.
  */
 import { type PlayerReportRequest, type ReportsResponse } from "@cabal/protocol";
 import type { Env } from "./env.js";
@@ -23,9 +25,33 @@ export const MULTI_ACCOUNT_REVIEW = 3;
 /** Reports listed for review at once. */
 const REVIEW_PAGE = 100;
 
-async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+const hex = (bytes: ArrayBuffer) => [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+/** Where the origin key comes from: its own secret, or else one derived from the VAPID private key. */
+export type OriginSecrets = Pick<Env, "ORIGIN_KEY" | "VAPID_PRIVATE_KEY">;
+
+/**
+ * The HMAC key for origin keys, or null when the Worker holds no secret to make one from. The VAPID
+ * private key is never used as it is: HKDF derives a separate key from it for this one purpose.
+ */
+async function originKey(secrets: OriginSecrets): Promise<CryptoKey | null> {
+  const encoder = new TextEncoder();
+  if (secrets.ORIGIN_KEY) return crypto.subtle.importKey("raw", encoder.encode(secrets.ORIGIN_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  if (!secrets.VAPID_PRIVATE_KEY) return null;
+  const base = await crypto.subtle.importKey("raw", encoder.encode(secrets.VAPID_PRIVATE_KEY), "HKDF", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: encoder.encode("cabal account origins v1") },
+    base,
+    { name: "HMAC", hash: "SHA-256", length: 256 },
+    false,
+    ["sign"],
+  );
+}
+
+/** The key one address has on one day, or null when there is no secret to key it with. */
+export async function originKeyOf(secrets: OriginSecrets, day: number, address: string): Promise<string | null> {
+  const key = await originKey(secrets);
+  return key ? hex(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${day}:${address}`))) : null;
 }
 
 /**
@@ -33,12 +59,19 @@ async function sha256Hex(text: string): Promise<string> {
  * address has made `MULTI_ACCOUNT_REVIEW` accounts today. Returns the day's count. Never throws:
  * a moderation hook must not cost a player their account.
  */
-export async function noteAccountOrigin(db: D1Database | undefined, request: Request, playerId: string, now: number): Promise<number> {
+export async function noteAccountOrigin(
+  env: OriginSecrets & Pick<Env, "DB">,
+  request: Request,
+  playerId: string,
+  now: number,
+): Promise<number> {
+  const db = env.DB;
   const address = request.headers.get("cf-connecting-ip");
   if (!db || !address) return 0;
   try {
     const day = dayOf(now);
-    const key = await sha256Hex(`${day}:${address}`);
+    const key = await originKeyOf(env, day, address);
+    if (!key) return 0;
     const [, counted] = await db.batch([
       db.prepare("DELETE FROM account_origins WHERE day < ?").bind(day - DAY_MS),
       db

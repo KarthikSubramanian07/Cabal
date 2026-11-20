@@ -1,6 +1,6 @@
 -- Moderation (issue #12): players' reports about other players, for a maintainer to review, and a
 -- daily count of the accounts made from one network address, which flags a burst of accounts for
--- review. The address is never stored: only a SHA-256 of the day and the address, kept two days.
+-- review. The address is never stored: only an HMAC of the day and the address under a Worker secret, kept two days.
 -- D1 only. Never edit a migration that has shipped.
 CREATE TABLE IF NOT EXISTS player_reports (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

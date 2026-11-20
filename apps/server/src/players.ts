@@ -105,7 +105,7 @@ export async function playerRoute(request: Request, env: Env, url: URL): Promise
     if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
     const made = await store.createPlayer(body.data.handle ?? null, now);
     if ("ok" in made) return refused(made as Exclude<RenameOutcome, { ok: true }>);
-    await noteAccountOrigin(env.DB, request, made.player.id, now);
+    await noteAccountOrigin(env, request, made.player.id, now);
     return withCors(privateJson(made, 201));
   }
 

@@ -2,7 +2,7 @@
 import { SELF } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlayerSession, ReportsResponse } from "@cabal/protocol";
-import { MULTI_ACCOUNT_REVIEW } from "../src/moderation.js";
+import { MULTI_ACCOUNT_REVIEW, noteAccountOrigin, originKeyOf } from "../src/moderation.js";
 import { call, freshHandle, newPlayer, serverEnv } from "./helpers.js";
 
 const db = () => serverEnv.DB!;
@@ -91,6 +91,31 @@ describe("a burst of accounts from one address", () => {
     expect(JSON.stringify(rows)).not.toContain(address);
     expect(rows.some((r) => (r as { accounts: number }).accounts === MULTI_ACCOUNT_REVIEW + 1)).toBe(true);
     expect((await reviewList()).busyOrigins.some((o) => o.accounts === MULTI_ACCOUNT_REVIEW + 1)).toBe(true);
+  });
+
+  it("keys each address with a secret, so the table cannot be searched for an address", async () => {
+    const address = "198.51.100.23";
+    const day = Math.floor(Date.now() / 86_400_000) * 86_400_000;
+    const res = await SELF.fetch("http://cabal/api/players", { method: "POST", headers: { "cf-connecting-ip": address }, body: "{}" });
+    expect(res.status).toBe(201);
+    // Hashing every address with the public day finds nothing: the stored key is not a plain SHA-256.
+    const plain = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${day}:${address}`)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    expect(await db().prepare("SELECT 1 FROM account_origins WHERE origin_key = ?").bind(plain).first()).toBeNull();
+    const keyed = await originKeyOf(serverEnv, day, address);
+    expect(keyed).not.toBeNull();
+    expect(await db().prepare("SELECT accounts FROM account_origins WHERE origin_key = ?").bind(keyed).first()).toEqual({ accounts: 1 });
+    // Another key gives another value, and the VAPID key is used only through a key derived from it.
+    expect(await originKeyOf({ ORIGIN_KEY: "another" }, day, address)).not.toBe(keyed);
+    const derived = await originKeyOf({ VAPID_PRIVATE_KEY: "vapid-secret" }, day, address);
+    expect(derived).not.toBeNull();
+    expect(derived).not.toBe(await originKeyOf({ ORIGIN_KEY: "vapid-secret" }, day, address));
+  });
+
+  it("counts nothing when the Worker has no secret to key an address with", async () => {
+    const request = new Request("http://cabal/api/players", { headers: { "cf-connecting-ip": "192.0.2.200" } });
+    const before = (await db().prepare("SELECT COUNT(*) AS n FROM account_origins").first<{ n: number }>())!.n;
+    expect(await noteAccountOrigin({ DB: db() }, request, "pl_nobody", Date.now())).toBe(0);
+    expect((await db().prepare("SELECT COUNT(*) AS n FROM account_origins").first<{ n: number }>())!.n).toBe(before);
   });
 
   it("does not flag addresses that make one account each", async () => {
