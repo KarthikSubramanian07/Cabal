@@ -1,6 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { OrderResult } from "../engine.js";
-import { receiptFor, wordsFromCode } from "./receipts.js";
+import { VERDICTS, cycleNote, namePlaces, receiptFor, verdictFor, wordsFromCode } from "./receipts.js";
 
 const names = { PAR: { name: "Paris" }, MUN: { name: "Munich" }, BUR: { name: "Burgundy" }, TYR: { name: "Tyrolia" } };
 
@@ -12,9 +13,9 @@ function result(reason: string, code = "illegal", ok = false): OrderResult {
 const MOVEMENT = [
   ["bounced with MUN", "bounce"],
   ["bounced with MUN, TYR", "bounce"],
-  ["repelled by BUR", "bounce"],
-  ["lost head-to-head with MUN", "bounce"],
-  ["cannot dislodge own unit", "bounce"],
+  ["repelled by BUR", "repelled"],
+  ["lost head-to-head with MUN", "head_to_head"],
+  ["cannot dislodge own unit", "own_unit"],
   ["no convoy path", "no_path"],
   ["dislodged by MUN", "dislodged"],
   ["support cut by MUN", "cut"],
@@ -118,6 +119,25 @@ describe("receiptFor", () => {
     }
   });
 
+  it("stamps each failure as it always has", () => {
+    const stamps = MOVEMENT.map(([reason, code]) => `${reason}: ${receiptFor(result(reason, code), "S1901M", names).verdict}`);
+    expect(stamps).toEqual([
+      "bounced with MUN: Bounced",
+      "bounced with MUN, TYR: Bounced",
+      "repelled by BUR: Repelled",
+      "lost head-to-head with MUN: Bounced",
+      "cannot dislodge own unit: Stopped",
+      "no convoy path: No convoy",
+      "dislodged by MUN: Dislodged",
+      "support cut by MUN: Support cut",
+      "supporter dislodged by MUN: Dislodged",
+      "support void (no matching order): Support wasted",
+      "convoy dislodged by MUN: Dislodged",
+      "convoy fails (paradox, Szykman rule): Paradox",
+      "convoy void (no matching move): Convoy wasted",
+    ]);
+  });
+
   it("uses place names when it has them and codes when it does not", () => {
     expect(receiptFor(result("bounced with MUN", "bounce"), "S1901M", names).detail).toBe(
       "Bounced with the unit from Munich, which had at least as much strength.",
@@ -168,6 +188,44 @@ describe("receiptFor", () => {
     expect(unknown.detail).toContain("something brand new");
     const odd = receiptFor(result("struck by lightning (ActOfGod)", "weird"), "S1901M");
     expect(odd.detail).toBe("Struck by lightning (act of god).");
+  });
+});
+
+describe("the one place for outcome copy", () => {
+  it("has a stamp for every engine code, and says which order was wasted", () => {
+    for (const code of ["ok", "bounce", "repelled", "head_to_head", "own_unit", "no_path", "cut", "void", "dislodged", "paradox", "illegal", "disband"]) {
+      expect(VERDICTS[code], code).toBeTruthy();
+    }
+    expect(verdictFor("void", "A MAR S A PAR - BUR")).toBe("Support wasted");
+    expect(verdictFor("void", "A MAR S A PAR")).toBe("Support wasted");
+    expect(verdictFor("void", "F ENG C A BRE - LON")).toBe("Convoy wasted");
+    expect(verdictFor("void")).toBe("Wasted");
+    expect(verdictFor("something_new")).toBe("Failed");
+  });
+
+  it("stamps an unfamiliar reason by its code when the code is known", () => {
+    expect(receiptFor(result("pushed back somehow", "bounce"), "S1901M").verdict).toBe("Bounced");
+  });
+
+  it("explains a circle of orders by the rule that settled it", () => {
+    expect(cycleNote("convoy_paradox")).toContain("Szykman");
+    expect(cycleNote("circular_movement")).toContain("succeed together");
+    expect(cycleNote("a_rule_from_the_future")).toContain("backup rule");
+  });
+
+  it("names provinces and coasts but leaves units in notation", () => {
+    const more = { ...names, STP: { name: "St Petersburg" } };
+    expect(namePlaces("A PAR bounced in BUR with A MUN.", more)).toBe("A PAR bounced in Burgundy with A MUN.");
+    expect(namePlaces("F LON moved to STP/NC.", more)).toBe("F LON moved to St Petersburg (north coast).");
+    expect(namePlaces("A PAR moved to XYZ.", more)).toBe("A PAR moved to XYZ.");
+    expect(namePlaces("A PAR moved to BUR.")).toBe("A PAR moved to BUR.");
+  });
+
+  it("is the only place: the Why panel's module writes no sentences of its own", () => {
+    for (const file of ["./explain/explain.ts", "./explain/whatIf.ts"]) {
+      const source = readFileSync(new URL(file, import.meta.url), "utf8").replace(/^\s*(\/\/|\*|\/\*\*).*$/gm, "");
+      expect(source.match(/["'`][A-Z][a-z]+ [a-z]+[^"'`]*["'`]/g) ?? [], file).toEqual([]);
+    }
   });
 });
 

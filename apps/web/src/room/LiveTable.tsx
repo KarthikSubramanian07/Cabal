@@ -78,6 +78,7 @@ export function LiveTable({ room, view }: { room: Room; view: RoomView }) {
   const online = useOnline();
 
   const load = useDesk({
+    gameId: view.gameId,
     power: me,
     phase: view.phase,
     state: view.state,
