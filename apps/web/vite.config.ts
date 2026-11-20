@@ -201,7 +201,13 @@ function trustPagesInDev(): Plugin {
 
 export default defineConfig({
   plugins: [react(), firstLoad(), edge(), trustPagesInDev()],
-  build: { target: "esnext" },
+  build: {
+    target: "esnext",
+    // The app has one stylesheet, written into every page that runs the app (firstLoad above).
+    // Split per chunk, the room's chunk would list it as its own, and opening the room would wait
+    // for a second copy of the stylesheet to arrive and be applied before it could draw.
+    cssCodeSplit: false,
+  },
   server: { port: 5173, strictPort: true, proxy: api },
   preview: { proxy: api },
 });
