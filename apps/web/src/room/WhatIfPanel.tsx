@@ -65,7 +65,7 @@ export function WhatIfPanel({
             style={{ "--power": POWER_COLOR[p] } as CSSProperties}
           >
             <span className="swatch" aria-hidden="true" />
-            {p === me ? "You" : titleCase(p)}
+            {p === me ? "You" : titleCase(p)}{" "}
             <span className="guess-n">
               {Object.keys(orders[p] ?? {}).length}
               <span className="sr-only"> {Object.keys(orders[p] ?? {}).length === 1 ? "order" : "orders"}</span>

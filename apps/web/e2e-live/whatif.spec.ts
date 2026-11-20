@@ -44,7 +44,7 @@ test.describe("what if, live", () => {
     await expect(predicted).toContainText("Standoff in Burgundy");
     await predicted.getByRole("button", { name: "Why? A PAR - BUR" }).click();
     await expect(ada.getByRole("region", { name: "Why A PAR - BUR failed" })).toContainText("A MUN");
-    await expect(ada.getByRole("group", { name: "Sketch orders for" }).getByRole("button", { name: /^Germany/ })).toHaveAttribute("aria-pressed", "true");
+    await expect(ada.getByRole("group", { name: "Sketch orders for" }).getByRole("button", { name: "Germany 1 order" })).toHaveAttribute("aria-pressed", "true");
     await scan(ada, "what if in a live room");
 
     // Not one frame left this device while the sketch was open.
