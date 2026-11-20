@@ -10,7 +10,10 @@ import { powerLabel } from "./terms.js";
 function occupant(seat: SeatView): string {
   if (seat.kind === "open") return "Open seat";
   if (seat.kind === "ai") return seat.brain === "claude" ? "Played by Claude" : "Played by the bot";
-  if (seat.kind === "civil_disorder") return seat.autopilot ? `${seat.name ?? "Player"}, the bot covering` : `${seat.name ?? "Player"}, in civil disorder`;
+  if (seat.kind === "civil_disorder") {
+    if (!seat.autopilot) return `${seat.name ?? "Player"}, in civil disorder`;
+    return `${seat.name ?? "Player"}, ${seat.brain === "claude" ? "Claude" : "the bot"} covering`;
+  }
   return seat.name ?? "Player";
 }
 
