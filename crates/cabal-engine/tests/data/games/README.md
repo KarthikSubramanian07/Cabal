@@ -55,7 +55,7 @@ options and build allowances across 35 phases, but not result codes.
 
 ## Recorded games
 
-Ten games played on Cabal itself, kept exactly as they were written.
+Eleven games played on Cabal itself, kept exactly as they were written.
 
 - `recorded/sandbox_*.json` (2): played in the web sandbox. The real page was
   driven with Playwright, order by order with clicks, the Support and Convoy
@@ -67,6 +67,13 @@ Ten games played on Cabal itself, kept exactly as they were written.
   `cabal arena --games 8 --seed 1901 --max-year 1904 --out DIR`, seven
   heuristic bots at mixed levels playing to the end of 1904, about seventeen
   phases each, with supports, convoys, dislodgements and retreats in every one.
+- `recorded/server_arena_2LRYDA.json` (1): a game of `pnpm arena --wrangler`,
+  seven `@cabal/agents` seats on the Rust bot playing `cabal-server` under
+  `wrangler dev` over the same WebSocket protocol people use, with press and
+  pledges, to Germany's solo in Fall 1909. It is the response of
+  `GET /api/games/2LRYDA/replay` as the server wrote it, so it also checks that
+  a room's replay (its `cabal` block carries the server's own fields) loads and
+  replays: 38 phases and 102 receipted pledges, 19 of them broken.
 
 They are not rewritten when rulings change. If one starts to diverge, a ruling
 changed under a game somebody played, and that is a decision to make, not a
