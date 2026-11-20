@@ -1,0 +1,327 @@
+/*
+ * The social layer's own pieces on top of the room: quoting in press, and (below) the dispatch
+ * slips that bring news from a part of the room the player is not looking at.
+ */
+
+/* ---- quoting: the original's words, set into the reply like a cutting pasted on a dispatch */
+
+.dispatch-act {
+  min-height: 24px;
+  min-width: 24px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-3);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: 620;
+  text-decoration: underline;
+  text-decoration-color: var(--rule);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.dispatch-act:hover {
+  color: var(--ink);
+  text-decoration-color: currentColor;
+}
+
+.dispatch-act[aria-pressed="true"] {
+  border-color: var(--brass-deep);
+  color: var(--brass-ink);
+  text-decoration: none;
+}
+
+.dispatch-quote,
+.quote-slip {
+  margin: 2px 0 6px;
+  padding: 6px 10px 7px;
+  border: 1px solid var(--rule);
+  background: var(--bone-2);
+}
+
+.quote-from {
+  margin: 0 0 2px;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.quote-from::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  background: var(--power);
+  vertical-align: 0;
+}
+
+.quote-text {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+}
+
+.quote-slip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 8px;
+  margin: 0;
+  border-style: dashed;
+  border-color: var(--brass-deep);
+}
+
+.quote-slip .quote-from,
+.quote-slip .quote-text {
+  grid-column: 1;
+}
+
+.quote-slip .dispatch-act {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
+/* ---- dispatch slips: news from out of sight, pinned to the edge of the room */
+
+.dispatch-board {
+  position: fixed;
+  left: var(--space-4);
+  bottom: 96px;
+  z-index: var(--z-toast);
+  width: min(360px, calc(100vw - 2 * var(--space-4)));
+  pointer-events: none;
+}
+
+.dispatch-board[hidden] {
+  display: none;
+}
+
+.dispatch-board ol {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.slip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px 10px;
+  padding: 10px 10px 8px 14px;
+  border: 1px solid var(--ink);
+  border-top: 4px solid var(--power);
+  background: var(--paper);
+  /* A slip of paper pinned over the room: a hard edge under it, never a soft glow. */
+  box-shadow: 3px 3px 0 var(--ink);
+  pointer-events: auto;
+}
+
+.slip-text {
+  min-width: 0;
+}
+
+.slip-title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 680;
+  line-height: 1.3;
+}
+
+.slip-line {
+  margin: 2px 0 0;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.slip .rubber.small {
+  margin: 4px 2px 0 0;
+  background: var(--paper);
+}
+
+.slip.stamped.broken {
+  border-color: var(--vermilion-deep);
+  border-top-color: var(--power);
+}
+
+.slip-acts {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.slip-acts .btn.small {
+  min-height: 32px;
+}
+
+.slip-close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.slip-close:hover {
+  border-color: var(--rule);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .slip {
+    animation: slip-pin var(--dur-base) var(--ease-out);
+  }
+
+  .slip.stamped .rubber {
+    animation: stamp-down var(--dur-slow) var(--ease-thud) 120ms both;
+  }
+
+  @keyframes slip-pin {
+    from {
+      transform: translateY(10px);
+      opacity: 0;
+    }
+  }
+}
+
+/* On a phone the foot of the screen is the order sheet's: slips hang under the seat strip. */
+@media (max-width: 1000px) {
+  .dispatch-board {
+    left: 12px;
+    right: 12px;
+    top: calc(var(--topbar-h) + 60px);
+    bottom: auto;
+    width: auto;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .slip {
+      animation-name: slip-drop;
+    }
+
+    @keyframes slip-drop {
+      from {
+        transform: translateY(-10px);
+        opacity: 0;
+      }
+    }
+  }
+}
+
+/* A phone has room for two slips over the map; older news waits in the room itself. */
+@media (max-width: 1000px) {
+  .slip:nth-last-child(n + 3) {
+    display: none;
+  }
+}
+
+/* ---- the Ledger at the table: a player's trust on their place card */
+
+.place-trust {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+.trust-figure {
+  display: inline-block;
+  min-width: 3.4ch;
+  padding: 0 3px;
+  border: 1px solid var(--ink-4);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-align: center;
+}
+
+/* A card grows a line for trust: the state still sits at its foot. */
+.place-card,
+.place-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.place-card > .place-state,
+.place-pick > .place-take {
+  align-self: flex-start;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+/* In the room's narrow sidebar the Host and You marks take their own line over the power's name. */
+.live-side .place-marks {
+  position: static;
+  order: -1;
+  margin-bottom: 2px;
+}
+
+.live-side .place-marks:empty {
+  display: none;
+}
+
+/* ---- the seat strip: each player's name, and the whole cell as the way to their record */
+
+.chair-name {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  padding-top: 2px;
+  border-top: 1px dotted var(--rule);
+  color: var(--ink-2);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chair.has-record .chair-name {
+  text-decoration: underline;
+  text-decoration-color: var(--ink-4);
+  text-underline-offset: 2px;
+}
+
+.chair-link {
+  position: absolute;
+  inset: -1px;
+  z-index: 1;
+}
+
+.chair-link:hover {
+  background: rgba(18, 17, 16, 0.04);
+}
+
+.chair-link:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+
+/* Over the map on a phone the strip stays two lines tall; the name is in each cell's label. */
+.chairs.at-stage .chair-name {
+  display: none;
+}

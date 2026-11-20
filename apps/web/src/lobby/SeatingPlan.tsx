@@ -6,6 +6,7 @@ import { Link } from "../app/router.jsx";
 import type { PowerName, SeatView } from "@cabal/protocol";
 import type { CSSProperties } from "react";
 import { powerLabel } from "./terms.js";
+import { trustFigure, trustNote, useTrust } from "./trust.js";
 
 function occupant(seat: SeatView): string {
   if (seat.kind === "open") return "Open seat";
@@ -39,11 +40,13 @@ export function SeatingPlan({
   selected: PowerName | null;
   onSelect: (power: PowerName | null) => void;
 }) {
+  const trust = useTrust(seats.map((s) => s.handle));
   return (
     <ul className="seating" aria-label="Seats">
       {seats.map((seat) => {
         const style = { "--power": `var(--p-${seat.power.toLowerCase()})` } as CSSProperties;
         const status = state(seat, running);
+        const word = seat.handle && seat.kind !== "open" ? trust[seat.handle.toLowerCase()] : undefined;
         const marks = (
           <>
             {seat.host ? <span className="mark">Host</span> : null}
@@ -61,6 +64,11 @@ export function SeatingPlan({
             ) : (
               <span className="place-who">{occupant(seat)}</span>
             )}
+            {word ? (
+              <span className="place-trust">
+                <span className="trust-figure">{trustFigure(word)}</span> trust, {trustNote(word)}
+              </span>
+            ) : null}
             {status ? <span className={`place-state${seat.present || seat.kind === "ai" ? " here" : ""}`}>{status}</span> : null}
             <span className="place-marks">{marks}</span>
           </>

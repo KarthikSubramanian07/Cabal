@@ -12,7 +12,7 @@
  */
 import type { OrderVerdict as ServerVerdict, PowerName, StateView } from "@cabal/protocol";
 import type { ConnectionStatus, Frame } from "@cabal/protocol/client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Game, type OrderVerdict, type State, engineReady } from "../engine.js";
 import { type OrderBook, eraseOrder, toBook, waiveBuild, writeOrder } from "../game/book.js";
 import type { ComposeContext, Piece } from "../game/compose.js";
@@ -177,6 +177,8 @@ export function useDesk(props: Props): DeskLoad {
   }, [power, phase, bookPhase, serverPhase, serverOrders, kind, edits]);
 
   const timer = useRef<number | null>(null);
+  /** The filing waiting out its pause, to be sent at once if the desk goes away first. */
+  const waiting = useRef<(() => void) | null>(null);
 
   /** Send `orders` as edit number `sending`. Resolves true once the server has them on file. */
   const send = useCallback(
@@ -223,18 +225,33 @@ export function useDesk(props: Props): DeskLoad {
     const sending = edits;
     const orders = Object.values(book);
     setSync("pending");
-    timer.current = window.setTimeout(() => {
+    const fileNow = () => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = null;
+      waiting.current = null;
       if (ready) unready(phase);
       void send(orders, sending);
-    }, 350);
+    };
+    waiting.current = fileNow;
+    timer.current = window.setTimeout(fileNow, 350);
     return () => {
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = null;
+      waiting.current = null;
     };
     // `ready` is read, not watched: becoming ready must not refile.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edits, connection, canOrder, power, phase, bookPhase]);
+
+  // Leaving the room (a seat's record opened from the strip, say) inside the pause files what is
+  // waiting at once instead of dropping it. A layout effect's cleanup runs before the room's
+  // socket is closed by the page's own effects, so the orders still go out on it.
+  useLayoutEffect(
+    () => () => {
+      waiting.current?.();
+    },
+    [],
+  );
 
   const latest = useRef(book);
   latest.current = book;
