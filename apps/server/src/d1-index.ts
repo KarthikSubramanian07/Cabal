@@ -497,6 +497,13 @@ export class D1Index implements GameIndex, PlayerStore {
     ]);
   }
 
+  async currentHandles(playerIds: readonly string[]): Promise<Map<string, string>> {
+    const ids = [...new Set(playerIds)];
+    if (ids.length === 0) return new Map();
+    const rows = (await this.db.prepare(`SELECT id, handle FROM players WHERE id IN (${placeholders(ids.length)})`).bind(...ids).all<{ id: string; handle: string }>()).results;
+    return new Map(rows.map((r) => [r.id, r.handle]));
+  }
+
   async schemaVersion(): Promise<number> {
     const row = await this.db.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").first<{ name: string }>();
     return row ? Number.parseInt(row.name, 10) || 0 : 0;
