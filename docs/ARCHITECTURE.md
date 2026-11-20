@@ -65,8 +65,10 @@ cabal/
     agents/          @cabal/agents  LLM player harness
   apps/
     web/             @cabal/web  Vite + React 19, Cloudflare Pages
-    server/          @cabal/server  Worker + GameRoom Durable Object
-  docs/              PLAN, ARCHITECTURE, RULES, PROTOCOL, ADRs, diagrams
+    server/          @cabal/server  Worker, GameRoom and Registry Durable Objects, D1 migrations
+  tools/             mapgen (the board from Natural Earth), the bench gate, the godip oracle check
+  fuzz/              cargo fuzz targets for the parser and legal order sets
+  docs/              PLAN, ARCHITECTURE, RULES, PROTOCOL, BOT, PERFORMANCE, ADRs
   .github/           CI, issue and PR templates
 ```
 
@@ -222,7 +224,7 @@ Web Push tells a signed-in player who is away from a game (no socket open for th
 
 ## 6. Protocol
 
-The WebSocket protocol is specified in [PROTOCOL.md](PROTOCOL.md) and enforced with zod schemas in `@cabal/protocol`. Order text follows the MILA / Cicero notation (`A PAR - BUR`, `F NTH C A LON - BRE`, `A LON - BRE VIA`) so existing AI research tooling and saved games interoperate.
+The WebSocket protocol (version 2, `PROTOCOL_VERSION` in `@cabal/protocol`, also reported by `/health`) is specified in [PROTOCOL.md](PROTOCOL.md) and enforced with zod schemas in `@cabal/protocol`; a test fails when the page and the schemas disagree. A socket opens as a spectator and binds to a seat with a first `hello` frame, every broadcast carries a sequence number, and a client that reconnects resumes with `sync { since }` instead of reloading the game. Order text follows the MILA / Cicero notation (`A PAR - BUR`, `F NTH C A LON - BRE`, `A LON - BRE VIA`) so existing AI research tooling and saved games interoperate.
 
 ## 7. Agents (`packages/agents`)
 
@@ -237,6 +239,8 @@ A Claude agent (`@cabal/agents`) is just another client. It receives the same st
 - `src/game/compose.ts` is a pure, unit-tested state machine for Backstabbr-style ordering (unit then destination, click twice to hold, S and C for support and convoy, coast picker). It only emits orders present in the engine's legal list.
 - `src/game/useSandbox.ts` owns the engine `Game`, the order book per power, the phase history (for replay and undo by re-adjudication) and MILA import and export.
 - The board supports zoom (buttons, ctrl or pinch wheel, two-finger pinch) and drag to pan when zoomed.
+- **The edge.** Pages runs in advanced mode: `scripts/emit-agent-site.mjs` bundles `worker/entry.ts` (which calls `src/agent/gateway.ts`) into `dist/_worker.js`. The gateway forwards `/api/*`, sockets included, to `cabal-server` through the `SERVER` service binding; answers every app route with the shell and that route's own title, description and share card; serves the prerendered front door; hands Markdown to clients that ask for it (`Accept: text/markdown`, `/llms.txt`); and returns real 404s.
+- **Counts the site quotes.** The number of adjudication test cases on the footer, the front door and How to play comes from `src/app/adjudication.json`, which `src/app/adjudication.test.ts` holds to the engine's own fixtures.
 
 ## 9. Deployment
 

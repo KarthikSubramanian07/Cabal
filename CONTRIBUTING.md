@@ -32,12 +32,13 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 pnpm check
 pnpm test:e2e          # Playwright against the built site, no server
-pnpm test:e2e:live     # the lobby against cabal-server under wrangler dev, if you touched apps/web or the API
+pnpm test:e2e:live     # the site against cabal-server under wrangler dev, if you touched apps/web or the API
 ```
 
-`pnpm test:e2e:live` starts `wrangler dev` for `apps/server` on port 8799 and `vite preview` of the
-built site on port 4184 with `/api` and the game sockets proxied to it, then plays the lobby with two
-browser contexts. It needs `pnpm engine:build` first. Move the ports with `LIVE_SERVER_PORT` and
+`pnpm test:e2e:live` applies the D1 migrations to a local database, starts `wrangler dev` for
+`apps/server` on port 8799 and `vite preview` of the built site on port 4184 with `/api` and the game
+sockets proxied to it, then plays the front door, the lobby, whole turns and a game with several
+browser contexts, on a desktop and on a phone. It needs `pnpm engine:build` first. Move the ports with `LIVE_SERVER_PORT` and
 `E2E_LIVE_PORT` when another checkout holds them.
 
 CI also runs a deploy dry run on every pull request: it bundles `apps/server` with `wrangler deploy --dry-run` (no credentials, nothing uploaded) and fails if the gzipped Worker bundle is over its budget. To reproduce it locally after `pnpm engine:build`:
@@ -70,24 +71,24 @@ If your login can see more than one account, wrangler asks which to use. Answer 
 
 1. Start from an up to date `main` with no local changes: `git switch main && git pull --ff-only && git status`.
 2. Check that CI is green for that exact commit: `gh run list --branch main --limit 1` (or the badge on the README). Do not deploy a red or still-running commit.
-3. If the commits since the last deploy add a Durable Object migration tag in `apps/server/wrangler.jsonc`, deploy that change on its own and read the migration notes below first.
+3. If the commits since the last deploy add a Durable Object migration tag in `apps/server/wrangler.jsonc`, deploy that change on its own and read the migration notes below first. New D1 migrations (`apps/server/migrations/`) need nothing extra: `deploy:server` applies them to the remote `cabal` database before the Worker goes out.
 4. Deploy:
 
    ```sh
    pnpm deploy:all       # server, then web (the site binds to the Worker); each builds the wasm engine first
    pnpm deploy:web       # only the site: builds apps/web and publishes dist to Pages, branch main
-   pnpm deploy:server    # only the Worker: wrangler deploy in apps/server
+   pnpm deploy:server    # only the Worker: D1 migrations to the remote database, then wrangler deploy
    ```
 
    Use `deploy:all`, not `pnpm deploy`: a bare `pnpm deploy` is a built-in pnpm command and does something else.
 5. Check it (the health check):
 
    ```sh
-   curl -s https://cabal-server.karthik-e5e.workers.dev/health          # {"ok":true}
+   curl -s https://cabal-server.karthik-e5e.workers.dev/health          # {"ok":true,"protocol":2,...,"index":{"backend":"d1","reachable":true,"schema":12}}
    curl -s -o /dev/null -w '%{http_code}\n' https://playcabal.pages.dev/  # 200
    ```
 
-   Then open https://playcabal.pages.dev on a phone and a desktop and play one order. `/health` does not yet report the deployed commit, so note the commit you deployed (`git rev-parse --short HEAD`) in the PR or issue that needed the deploy.
+   `/health` answers 503 with `ok: false` while the D1 index is unreachable or its schema is older than the build needs. `build` is the Worker version id; it does not name a commit, so note the commit you deployed (`git rev-parse --short HEAD`) in the PR or issue that needed the deploy. Then open https://playcabal.pages.dev on a phone and a desktop and play one order.
 
 ### Preview deploys
 
@@ -113,6 +114,10 @@ The `migrations` list in `apps/server/wrangler.jsonc` is applied once per tag an
 - never edit or remove an existing migration tag; add a new one;
 - a class rename or delete needs `renamed_classes` or `deleted_classes` in a new tag, and a delete destroys that class's data;
 - schema migrations inside an object (its versioned SQL) should only add tables and columns, so that older code can still open newer storage.
+
+### D1 migrations
+
+The cross-game index is the D1 database `cabal` (binding `DB`). Its schema is the numbered files in `apps/server/migrations/`. Add a new file for every change and never edit one that has shipped. `pnpm dev` applies them to a local database, the test suites apply them to their own, and `pnpm deploy:server` applies them to the remote database before `wrangler deploy`, so a Worker never runs ahead of its schema. A Worker rollback does not roll a migration back, so a migration should only add tables, columns and indexes that older code can ignore. D1 Time Travel restores the database to any minute in the last 30 days (`wrangler d1 time-travel restore cabal --timestamp=<unix time>`).
 
 ## Conventions
 
