@@ -24,7 +24,16 @@ The server runs on Cloudflare Workers, Durable Objects and D1. Cloudflare proces
 
 ## Leaving
 
-Sign out of a device from the player menu to end its session; its notifications stop with it. To have an account and its record removed, open an issue as below with your handle and the maintainer will follow up privately.
+Sign out of a device from the player menu to end its session; its notifications stop with it.
+
+To leave for good, open the account card from the player menu (Rename, Recovery code and Sign out all open it), choose **Delete this account** at its foot and type your handle to confirm. It takes effect at once and cannot be undone:
+
+- Your account goes from the server: the handle (free for anyone to take), every device session, the recovery code, your rating and its history, your reliability and Ledger totals, your notification switches and every push subscription.
+- Your seats become ghosts. In a lobby the seat opens again. In a running game it falls into civil disorder, as if you had walked away: it is open to a substitute, and the bot holds it where the table asked for AI seats. Finished games keep their results and their orders, under the name "Ghost" instead of yours.
+- Other players keep what their games gave them. Their ratings moved against yours, and those moves stay, but the record of whom they played no longer points to you.
+- Press you sent stays in each game, signed by the power you played (never by your handle), because the players you sent it to and the receipts that judged your pledges rely on it.
+
+This device then forgets the account, its seats and its notifications. Cloudflare's ordinary request logs age out on their own schedule.
 
 ## Contact
 
