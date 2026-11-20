@@ -20,6 +20,11 @@ test.describe("the status page", () => {
     await expect(facts).toContainText("Answering, schema 13 (D1)");
     await expect(facts).toContainText("Version 2, the same as this page");
     await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
+    // Only the verdict is a live region: the facts and the time that change every 30 seconds are not.
+    const live = page.locator("main [aria-live]");
+    await expect(live).toHaveCount(1);
+    await expect(live.getByRole("heading", { level: 1 })).toHaveCount(1);
+    await expect(page.locator("[aria-live] .status-facts, [aria-live] .status-checked")).toHaveCount(0);
     const { violations } = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
     expect(violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => v.id)).toEqual([]);
     if (OUT) await page.screenshot({ path: `${OUT}/${info.project.name}-status-ok.png`, fullPage: true });

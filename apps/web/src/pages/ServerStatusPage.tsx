@@ -74,10 +74,14 @@ export default function ServerStatusPage() {
           {stamp}
         </p>
         <p className="eyebrow">Status</p>
-        <h1 ref={heading} tabIndex={-1}>
-          {title}
-        </h1>
-        <div className="status-body" aria-live="polite">
+        {/* Only the verdict is live: the facts and the time under it change every 30 seconds, and a
+            screen reader should hear the page again only when what it says about the server changes. */}
+        <div aria-live="polite" aria-atomic="true">
+          <h1 ref={heading} tabIndex={-1}>
+            {title}
+          </h1>
+        </div>
+        <div className="status-body">
           {state === "silent" ? (
             <p>Games already in progress keep their state on the server and pick up where they were when it answers again.</p>
           ) : null}
