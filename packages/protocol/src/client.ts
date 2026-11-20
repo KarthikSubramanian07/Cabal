@@ -654,7 +654,8 @@ export function createApi(options: ApiOptions = {}) {
   const as = (secret?: string) => (secret ? { token: secret } : {});
 
   return {
-    health: () => call(HealthResponse, "GET", "/health"),
+    /** The deployment's health; `/api/health` so it also answers through the web app's `/api` proxy. */
+    health: () => call(HealthResponse, "GET", "/api/health"),
     /** With a player secret the creator sits under their handle and `name` may be left out. */
     createGame: (body: z.input<typeof CreateGameRequest>, secret?: string) => call(CreateGameResponse, "POST", "/api/games", { body, ...as(secret) }),
     joinGame: (gameId: string, body: JoinGameRequest, secret?: string) => call(JoinGameResponse, "POST", `/api/games/${gameId}/join`, { body, ...as(secret) }),

@@ -122,7 +122,8 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   const url = new URL(request.url);
 
-  if (url.pathname === "/health") {
+  // `/api/health` is the same answer where only `/api` reaches the server (the web app's status page).
+  if (url.pathname === "/health" || url.pathname === "/api/health") {
     // Unauthenticated and it reaches the one index object, so it is limited like any other read.
     if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
     const report = await health(env);

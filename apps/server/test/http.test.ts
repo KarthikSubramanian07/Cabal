@@ -133,6 +133,8 @@ describe("health and failure", () => {
     for (let i = 0; i < 5; i++) await worker.fetch(new Request("http://cabal/health"), { ...serverEnv, REGISTRY: counting });
     expect(probes).toBe(1);
     expect(health.build.length).toBeGreaterThan(0);
+    // The same answer under /api, where a web app's proxy forwards only /api to the server.
+    expect(HealthResponse.parse(await (await get("/api/health")).json())).toMatchObject({ ok: true, engine: health.engine, build: health.build });
     expect(Math.abs(health.time - Date.now())).toBeLessThan(5_000);
 
     const named = await worker.fetch(new Request("http://cabal/health"), { ...serverEnv, BUILD_ID: "abc1234" });
