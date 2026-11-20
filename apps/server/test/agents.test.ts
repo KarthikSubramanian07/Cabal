@@ -661,6 +661,8 @@ describe("AI takeover of a seat in civil disorder", () => {
     await until(async () => (await seatOf(ann.gameId, bob.power)).ready, "Claude to order for the seat", 20_000);
     const asked = requests.filter((r) => r.prompt.includes(`You are ${bob.power}.`));
     expect(asked.map((r) => r.step)).toEqual(["order"]);
+    // The model is told it is covering for a person, and to give orders only.
+    expect(asked[0]!.prompt).toContain("You are covering this seat for its player");
     const filed = await sql<{ source: string }>(ann.gameId, "SELECT source FROM orders WHERE phase = 'F1901M' AND power = ?", bob.power);
     expect(filed).toEqual([{ source: "claude" }]);
     // An agent's orders are not the player coming back: the seat stays his and stays in civil disorder.
@@ -755,7 +757,7 @@ describe("AI takeover of a seat in civil disorder", () => {
     await until(async () => queued.some((t) => t.power === power), "a turn for the covered seat");
     const room = stubOf(ann.gameId);
     const brief = (await room.agentBrief(power, "S1901M", "order"))!;
-    expect(brief).toMatchObject({ power, step: "order" });
+    expect(brief).toMatchObject({ power, step: "order", covering: true });
     const holds = brief.state.units[power]!.map((u) => `${u} H`);
     const report = { model: CLAUDE_MODEL, usage: USAGE, billed: "yes" } as const;
     const decision = { orders: holds, messages: [{ to: ann.power, body: "Bob here: I hold, trust me." }, { to: "ALL", body: "France is back." }], pledge: { to: ann.power, orders: holds, sealed: true } };
@@ -772,5 +774,35 @@ describe("AI takeover of a seat in civil disorder", () => {
     // Bob's trust ledger carries nothing he did not promise himself.
     const record = await inRoom(ann.gameId, (r) => (r as unknown as { playersRecord(): { power: string; playerId: string | null; ledger: unknown }[] }).playersRecord());
     expect(record.find((s) => s.power === power)).toMatchObject({ playerId: "p_bob_absent", ledger: { kept: 0, broken: 0, void: 0 } });
+  }, 60_000);
+
+  it("shows the agent covering a seat only the table's press, never the absent player's letters", async () => {
+    const { ann, bob, power, queued } = await covered({ pacing: "live", movementSeconds: 120 });
+    await until(async () => queued.some((t) => t.power === power), "a turn for the covered seat");
+    // Letters from before Bob went quiet, private and public.
+    await sql(
+      ann.gameId,
+      "INSERT INTO press (id, phase, sender, recipient, body, sent_at) VALUES ('old1', 'W1900A', ?, ?, 'PRIVATE: Bob, I am attacking Germany', 1), ('old2', 'W1900A', ?, 'ALL', 'Peace in our time', 2)",
+      ann.power,
+      power,
+      ann.power,
+    );
+    // And this phase: a letter to his seat, one he writes himself, and a word to the table.
+    const a = await Client.connect(ann.gameId, ann.token);
+    await a.next("welcome");
+    a.send({ t: "press.send", p: { to: power, body: "PRIVATE: Bob, are you there?" } });
+    await a.next("press", (m) => m.p.body.startsWith("PRIVATE"));
+    a.send({ t: "press.send", p: { to: "ALL", body: "Spring is here" } });
+    await a.next("press", (m) => m.p.body === "Spring is here");
+    const b = await Client.connect(ann.gameId, bob.token);
+    await b.next("welcome");
+    b.send({ t: "press.send", p: { to: ann.power, body: "PRIVATE: Ann, I will be back" } });
+    await a.next("press", (m) => m.p.from === power);
+    const brief = (await stubOf(ann.gameId).agentBrief(power, "S1901M", "order"))!;
+    expect(brief.press.map((p) => p.body)).toEqual(["Spring is here"]);
+    expect(brief.earlierPress.map((p) => p.body)).toEqual(["Peace in our time"]);
+    expect(JSON.stringify(brief)).not.toContain("PRIVATE");
+    a.close();
+    b.close();
   }, 60_000);
 });

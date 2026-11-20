@@ -280,6 +280,12 @@ export interface AgentBrief {
   press: PressView[];
   /** What the seat sent or received in earlier phases, oldest first. */
   earlierPress: { phase: string; from: string; to: string; body: string }[];
+  /**
+   * True when the agent is covering a person's seat in civil disorder. It gives orders only: its
+   * press and pledges are refused, and both press fields above hold only the table's public press,
+   * never the absent player's letters.
+   */
+  covering: boolean;
   trust: Record<string, { kept: number; broken: number }>;
   /** The seat's own diary and relationships, as it left them last turn. */
   memory: Memory;
@@ -2101,18 +2107,18 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
-  /** What `power` sent or received before `phase`, oldest first: the context a Claude seat reads. */
-  private pressHistory(power: PowerName, phase: string, limit: number): AgentBrief["earlierPress"] {
+  /**
+   * What `power` sent or received before `phase`, oldest first: the context a Claude seat reads.
+   * With `publicOnly`, only what was said to the whole table, by anyone.
+   */
+  private pressHistory(power: PowerName, phase: string, limit: number, publicOnly = false): AgentBrief["earlierPress"] {
     return this.sql
       .exec<{ phase: string; sender: string; recipient: string; body: string }>(
         `SELECT phase, sender, recipient, body FROM (
            SELECT rowid AS rid, phase, sender, recipient, body, sent_at FROM press
-           WHERE phase <> ? AND (sender = ? OR recipient = ?) ORDER BY sent_at DESC, rowid DESC LIMIT ?
+           WHERE phase <> ? AND ${publicOnly ? "recipient = 'ALL'" : "(sender = ? OR recipient = ?)"} ORDER BY sent_at DESC, rowid DESC LIMIT ?
          ) ORDER BY sent_at, rid`,
-        phase,
-        power,
-        power,
-        limit,
+        ...(publicOnly ? [phase, limit] : [phase, power, power, limit]),
       )
       .toArray()
       .map((r) => ({ phase: r.phase, from: r.sender, to: r.recipient, body: r.body }));
@@ -3187,14 +3193,18 @@ export class GameRoom extends DurableObject<Env> {
       }
       this.sql.exec("UPDATE agent_calls SET claimed_at = ? WHERE phase = ? AND power = ? AND step = ?", Date.now(), phase, power, step);
       const ledger = this.ledger();
+      // A person's seat in civil disorder: their letters, before and during the absence, were
+      // written to or by them, never to a model. The agent covering it reads the table only.
+      const covering = seat.kind === "civil_disorder";
       return {
         gameId: meta.id,
         power,
         phase,
         step,
         state: game.state() as StateView,
-        press: this.pressFor(power, phase).slice(-LIMITS.briefPress),
-        earlierPress: this.pressHistory(power, phase, LIMITS.briefEarlierPress),
+        press: this.pressFor(covering ? null : power, phase).slice(-LIMITS.briefPress),
+        earlierPress: this.pressHistory(power, phase, LIMITS.briefEarlierPress, covering),
+        covering,
         trust: Object.fromEntries(Object.entries(ledger).map(([p, l]) => [p, { kept: l.kept, broken: l.broken }])),
         memory: this.agentMemory(power),
         deadlineAt: meta.deadlineAt,
