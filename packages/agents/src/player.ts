@@ -245,6 +245,8 @@ function normalise(text: string): string {
   return text
     .trim()
     .toUpperCase()
+    // A note the model copied from the menu's framing, `A PAR - BUR (EMPTY)`, is not part of the order.
+    .replace(/\s*[([][^()[\]]*[)\]]$/, "")
     .replace(/^[A-Z]+:\s*/, "")
     .replace(/[.;,]+$/, "")
     .replace(/\s*-+>\s*/g, " - ")

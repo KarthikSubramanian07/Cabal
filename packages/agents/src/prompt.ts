@@ -160,9 +160,68 @@ export function boardReport(input: PromptInput): string {
   return lines.join("\n");
 }
 
+/**
+ * A unit with more legal orders than this is framed as candidates: a line saying where its moves
+ * lead, then its orders grouped as hold and moves, supports for its own side, supports for other
+ * powers, and convoys. A fleet in the middle of the board can have forty orders, nearly all of
+ * them supports for units it has no reason to help; flat, those bury the three moves that matter.
+ */
+export const CROWDED_UNIT = 12;
+
+/** `SPA/SC` -> `SPA`; `A MAR` -> `MAR`. */
+const provinceId = (text: string): string => text.replace(/^[AF] /, "").slice(0, 3);
+
+/** Who stands in a province and whose centre it is, from `power`'s point of view. */
+function describeProvince(id: string, input: PromptInput): string {
+  const { state, map, power } = input;
+  const occupant = Object.entries(state.units).find(([, units]) => units.some((u) => provinceId(u) === id))?.[0];
+  const parts = [occupant === undefined ? "empty" : occupant === power ? "your unit" : `${occupant} unit`];
+  if (map.provinces.find((p) => p.id === id)?.supply_center != null) {
+    const owner = Object.entries(state.centers).find(([, centres]) => centres.includes(id))?.[0];
+    parts.push(owner === undefined ? "neutral centre" : owner === power ? "your centre" : `${owner} centre`);
+  }
+  return parts.join(", ");
+}
+
+/** The power that owns the unit a support or convoy is for: `A MAR S A PAR - BUR` -> owner of `A PAR`. */
+function helpedPower(order: string, input: PromptInput): string | undefined {
+  const helped = / [SC] ([AF] [A-Z]{3})/.exec(order)?.[1];
+  if (helped === undefined) return undefined;
+  const id = provinceId(helped);
+  return Object.entries(input.state.units).find(([, units]) => units.some((u) => provinceId(u) === id))?.[0];
+}
+
+function candidates(unit: string, orders: string[], input: PromptInput): string[] {
+  const holds = orders.filter((o) => o.endsWith(" H"));
+  const moves = orders.filter((o) => / - /.test(o) && !/ [SC] /.test(o));
+  const supports = orders.filter((o) => / S /.test(o));
+  const own = supports.filter((o) => helpedPower(o, input) === input.power);
+  const others = supports.filter((o) => helpedPower(o, input) !== input.power);
+  const convoys = orders.filter((o) => / C /.test(o));
+  const rest = orders.filter((o) => !holds.includes(o) && !moves.includes(o) && !supports.includes(o) && !convoys.includes(o));
+  const reach = [...new Set(moves.map((o) => o.split(" - ")[1]!.replace(/ VIA$/, "")))].map(
+    (to) => `${to} (${describeProvince(provinceId(to), input)})`,
+  );
+  const lines = [`${unit}: ${orders.length} orders. Moves reach ${reach.length ? reach.join("; ") : "nowhere"}.`];
+  const group = (label: string, list: string[]) => {
+    if (list.length === 0) return;
+    if (label) lines.push(`  [${label}]`);
+    for (const o of list) lines.push(`  ${o}`);
+  };
+  group("", [...holds, ...moves, ...rest]);
+  group("supports for your own units", own);
+  group("supports for other powers' units", others);
+  group("convoys", convoys);
+  return lines;
+}
+
 export function legalMenu(input: PromptInput): string {
   const lines: string[] = [];
   for (const [unit, orders] of Object.entries(input.legal.by_unit)) {
+    if (unit && orders.length > CROWDED_UNIT) {
+      lines.push(...candidates(unit, orders, input));
+      continue;
+    }
     lines.push(`${unit || "adjustments (choose as many as the allowance, each for a different province)"}:`);
     for (const o of orders) lines.push(`  ${o}`);
   }

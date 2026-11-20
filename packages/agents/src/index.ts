@@ -41,6 +41,7 @@ export {
   type PromptInput,
   type Relationship,
   SYSTEM_PROMPT,
+  CROWDED_UNIT,
   type Step,
   boardReport,
   legalMenu,
