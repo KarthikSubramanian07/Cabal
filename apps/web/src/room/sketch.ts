@@ -30,12 +30,24 @@ export function legalForEveryone(game: Pick<Game, "legal" | "status" | "state">,
   return out;
 }
 
+/**
+ * How many orders a power owes this phase, from its legal orders and allowance: one per unit it
+ * can order (each dislodged unit in a retreat phase), or its builds or disbands in a winter.
+ * The order tools a room offers follow the power being written for, which while sketching is
+ * whichever power is being guessed, not the seat.
+ */
+export function ordersOwed(
+  kind: PhaseKind,
+  legal: Readonly<Record<string, readonly string[]>> | undefined,
+  allowance: number | undefined,
+): number {
+  if (kind === "A") return Math.abs(allowance ?? 0);
+  return Object.keys(legal ?? {}).filter((u) => u !== "").length;
+}
+
 /** The powers with something to guess this phase, the seat's own first. */
 export function sketchPowers(everyone: Everyone, me: string, kind: PhaseKind): string[] {
-  const owes = (p: string) => {
-    const units = Object.keys(everyone.legal[p] ?? {}).filter((u) => u !== "");
-    return kind === "A" ? (everyone.allowance[p] ?? 0) !== 0 : units.length > 0;
-  };
+  const owes = (p: string) => ordersOwed(kind, everyone.legal[p], everyone.allowance[p]) > 0;
   const others = Object.keys(everyone.legal).filter((p) => p !== me && owes(p)).sort();
   return [me, ...others];
 }

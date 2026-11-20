@@ -3,7 +3,9 @@ import { fileURLToPath } from "node:url";
 import { Game, ready } from "@cabal/engine";
 import { beforeAll, describe, expect, it } from "vitest";
 import { predict } from "../game/explain/whatIf.js";
-import { legalForEveryone, sameOrders, sketchCount, sketchGhosts, sketchMarks, sketchPowers, sketchSyncLine } from "./sketch.js";
+import { type ComposeContext, click, disbandSelected } from "../game/compose.js";
+import { ordersOwed, legalForEveryone, sameOrders, sketchCount, sketchGhosts, sketchMarks, sketchPowers, sketchSyncLine } from "./sketch.js";
+import { piecesOf } from "./useDesk.js";
 
 beforeAll(async () => {
   await ready(readFileSync(fileURLToPath(new URL("../../../../packages/engine/pkg/cabal_engine_bg.wasm", import.meta.url))));
@@ -45,6 +47,42 @@ describe("the sketch on the board", () => {
     const list = sketchPowers(all, "TURKEY", "M");
     expect(list[0]).toBe("TURKEY");
     expect(list.slice(1)).toEqual(["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA"]);
+  });
+});
+
+describe("guessing another power's retreat", () => {
+  /** Fall 1901 retreats: Russia has dislodged Germany's army in Prussia and owes nothing itself. */
+  const retreat = () => {
+    const g = new Game();
+    g.process({ orders: { GERMANY: ["A BER - PRU"], RUSSIA: ["A MOS - LVN"] } });
+    g.process({ orders: { GERMANY: ["A PRU H"], RUSSIA: ["A WAR - PRU", "A LVN S A WAR - PRU"] } });
+    expect(g.state().name).toBe("F1901R");
+    return g;
+  };
+
+  it("owes the orders of the power being written for, not the seat's", () => {
+    const all = legalForEveryone(retreat(), "R");
+    expect(ordersOwed("R", all.legal.RUSSIA, all.allowance.RUSSIA)).toBe(0);
+    expect(ordersOwed("R", all.legal.GERMANY, all.allowance.GERMANY)).toBe(1);
+    expect(sketchPowers(all, "RUSSIA", "R")).toEqual(["RUSSIA", "GERMANY"]);
+  });
+
+  it("lets the seat with no retreat of its own sketch the other power's retreat and disband", () => {
+    const g = retreat();
+    const all = legalForEveryone(g, "R");
+    const ctx: ComposeContext = { phase: "R", pieces: piecesOf(g.state()), legal: all.legal, active: "RUSSIA", allowance: all.allowance, orders: {} };
+    // Tapping the dislodged army picks it up for Germany, though the seat is Russia's.
+    const picked = click(ctx, { step: "idle" }, "PRU");
+    expect(picked.draft).toEqual({ step: "unit", power: "GERMANY", unit: "A PRU" });
+    const guessed = { ...ctx, active: "GERMANY" };
+    expect(click(guessed, picked.draft, "BER").effect).toEqual({ kind: "order", power: "GERMANY", key: "A PRU", text: "A PRU R BER" });
+    expect(disbandSelected(guessed, picked.draft).effect).toEqual({ kind: "order", power: "GERMANY", key: "A PRU", text: "A PRU D" });
+  });
+
+  it("counts a winter's builds and disbands from the allowance", () => {
+    expect(ordersOwed("A", { "": ["A PAR B"] }, 2)).toBe(2);
+    expect(ordersOwed("A", undefined, -1)).toBe(1);
+    expect(ordersOwed("M", { "A PAR": ["A PAR H"], "": [] }, 0)).toBe(1);
   });
 });
 

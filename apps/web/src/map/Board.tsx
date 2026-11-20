@@ -37,6 +37,7 @@ import {
   homeView,
   boardSizes,
   isWholeView,
+  leaderFor,
   placeLabels,
   resolveTap,
   touchReach,
@@ -393,8 +394,11 @@ const Labels = memo(function Labels({ board, size, r }: { board: BoardData; size
           // A thinned outline is plenty for placing a label, and far cheaper to test against.
           const outline = outlineOf(pathRings(p.d, LABEL_OUTLINE_TOLERANCE));
           // Supply centres keep their codes first when not all fit, then the land, then the seas.
+          // A centre's code is never left out: when its province is too small at this zoom, it
+          // is set beside it with a leader to the centre.
           const worth = p.sc ? 0 : p.kind === "sea" ? 2 : 1;
-          return { code, unit: p.unit, label: p.label, worth, inside: (point: Point) => insideOutline(outline, point[0], point[1]) };
+          const inside = (point: Point) => insideOutline(outline, point[0], point[1]);
+          return { code, unit: p.unit, label: p.label, worth, keep: Boolean(p.sc), anchor: p.sc, inside };
         }),
     [board],
   );
@@ -411,6 +415,12 @@ const Labels = memo(function Labels({ board, size, r }: { board: BoardData; size
   }, [spots, r, size]);
   return (
     <g className="labels" style={{ "--label-size": `${size}px` } as CSSProperties}>
+      {spots.map(({ code, anchor, inside }) => {
+        // A code set outside the province it names is tied to its centre by a hairline.
+        const spot = at[code];
+        const leader = spot && anchor && !inside(spot) ? leaderFor(spot, anchor, size) : null;
+        return leader ? <line key={`leader-${code}`} className="leader" x1={leader[0][0]} y1={leader[0][1]} x2={leader[1][0]} y2={leader[1][1]} /> : null;
+      })}
       {spots.map(({ code }) => {
         const p = board.provinces[code]!;
         if (!at[code]) return null;

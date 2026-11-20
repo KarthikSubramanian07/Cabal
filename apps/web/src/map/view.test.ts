@@ -7,6 +7,7 @@ import {
   isWholeView,
   labelSize,
   layoutLabels,
+  leaderFor,
   placeLabel,
   resolveTap,
   touchReach,
@@ -240,11 +241,47 @@ describe("layoutLabels", () => {
     expect(out["KIE"]![1]).toBeLessThan(100);
   });
 
+  it("on an overview, sets a kept code beside a province too small for it instead of leaving it out", () => {
+    // A province smaller than its own code, crowded by a neighbour's piece.
+    const tiny = ([x, y]: [number, number]) => Math.abs(x - 100) < 8 && Math.abs(y - 100) < 8;
+    const spots = [
+      { code: "HOL", unit: [100, 100] as [number, number], label: [100, 100] as [number, number], inside: tiny, keep: true, anchor: [96, 98] as [number, number] },
+      { code: "BEL", unit: [100, 130] as [number, number], label: [100, 140] as [number, number] },
+    ];
+    expect(layoutLabels(spots.map((s) => ({ ...s, keep: false })), 12, 20, { drop: true })["HOL"]).toBeUndefined();
+    const at = layoutLabels(spots, 12, 20, { drop: true })["HOL"]!;
+    expect(at).toBeDefined();
+    // Clear of both pieces, and near the centre it names.
+    for (const unit of [spots[0]!.unit, spots[1]!.unit]) {
+      const dx = Math.max(Math.abs(unit[0] - at[0]) - 20 * 1.02, 0);
+      const dy = Math.max(Math.abs(unit[1] - at[1]) - 20 * 0.45, 0);
+      expect(Math.hypot(dx, dy)).toBeGreaterThanOrEqual(12);
+    }
+    expect(Math.hypot(at[0] - 96, at[1] - 98)).toBeLessThan(80);
+  });
+
   it("is stable: the same input gives the same layout", () => {
     const spots = [
       { code: "A", unit: [0, 0] as [number, number], label: [0, 16] as [number, number] },
       { code: "B", unit: [20, 5] as [number, number], label: [20, 21] as [number, number] },
     ];
     expect(layoutLabels(spots, 12, 14)).toEqual(layoutLabels(spots, 12, 14));
+  });
+});
+
+describe("leaderFor", () => {
+  it("draws no leader for a code written right by its centre", () => {
+    expect(leaderFor([100, 110], [100, 100], 20)).toBeNull();
+  });
+
+  it("runs from just off the centre to the near edge of a code set further away", () => {
+    const line = leaderFor([100, 160], [100, 100], 20)!;
+    expect(line).not.toBeNull();
+    const [[x0, y0], [x1, y1]] = line;
+    expect(x0).toBe(100);
+    expect(y0).toBeGreaterThan(100);
+    expect(x1).toBe(100);
+    // The top of the code (half its height and a little padding above its middle).
+    expect(y1).toBeCloseTo(160 - 20 * 0.45 - 20 * 0.25, 5);
   });
 });
