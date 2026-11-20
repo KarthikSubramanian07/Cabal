@@ -177,6 +177,7 @@ describe("docs/PROTOCOL.md", () => {
     const sent = new Set([...room.matchAll(/code: "([a-z_]+)"/g)].map((m) => m[1]!));
     // Reported to the Claude consumer over the private binding; never sent to a client.
     sent.delete("bad_message");
+    sent.delete("covered_seat");
     const line = /Error codes: (.*)\n/.exec(doc)![1]!;
     const documented = new Set([...line.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]!));
     expect([...documented].sort()).toEqual([...sent].sort());
