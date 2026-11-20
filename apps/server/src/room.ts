@@ -39,6 +39,7 @@ import {
   type OrderResultView,
   type OrderVerdict,
   PROTOCOL_VERSION,
+  QUOTE_CHARS,
   type PhaseSummary,
   type PledgeView,
   type PowerName,
@@ -51,6 +52,7 @@ import {
   type StateView,
   type VotesView,
   drawScores,
+  excerpt,
   parseClientMessage,
   ratingCluster,
 } from "@cabal/protocol";
@@ -107,9 +109,6 @@ export interface ForsakeAnswer {
  * Must stay well under `DELETED_HANDLE_HOLD_MS`, the time a deleted account's handle is held.
  */
 export const ACCOUNTS_FRESH_MS = 30_000;
-
-/** How much of a quoted message travels with the reply that quotes it. */
-const QUOTE_CHARS = 280;
 
 /** Abuse limits. A room is single threaded, so every unbounded input is a way to stall a game. */
 export const LIMITS = {
@@ -2290,9 +2289,8 @@ export class GameRoom extends DurableObject<Env> {
   private quoteView(id: string): PressQuote | null {
     const row = this.sql.exec<{ id: string; phase: string; sender: string; body: string }>("SELECT id, phase, sender, body FROM press WHERE id = ?", id).toArray()[0];
     if (!row) return null;
-    const chars = [...row.body];
-    const excerpt = chars.length <= QUOTE_CHARS ? row.body : `${chars.slice(0, QUOTE_CHARS - 1).join("").trimEnd()}…`;
-    return { id: row.id, from: row.sender as PowerName, phase: row.phase, excerpt };
+    // Cut as a reader counts characters, by the same function the client previews a quote with.
+    return { id: row.id, from: row.sender as PowerName, phase: row.phase, excerpt: excerpt(row.body, QUOTE_CHARS) };
   }
 
   private pledgeView(id: string, viewer: PowerName | null): PledgeView | null {

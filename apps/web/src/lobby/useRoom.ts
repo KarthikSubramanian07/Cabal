@@ -24,7 +24,7 @@ export interface Room {
   /** Sit down as the signed-in player: at `power`, or any open seat. */
   join: (player: { id: string; handle: string; secret: string }, power?: PowerName) => Promise<void>;
   start: () => Promise<void>;
-  say: (body: string) => Promise<void>;
+  say: (body: string, quote?: string) => Promise<void>;
   retry: () => void;
   /** Replace this seat's orders for the phase. Resolves with the server's verdict on each. */
   setOrders: (phase: string, orders: string[]) => Promise<Frame<"orders.ack">>;
@@ -187,10 +187,10 @@ export function useRoom(code: string): Room {
     await api.startGame(code, seat.token);
   }, [code, seat]);
 
-  const say = useCallback(async (body: string) => {
+  const say = useCallback(async (body: string, quote?: string) => {
     const ws = socket.current;
     if (!ws) throw new Error("not connected");
-    await ws.press("ALL", body);
+    await ws.press("ALL", body, undefined, quote);
   }, []);
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);

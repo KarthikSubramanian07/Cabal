@@ -4,8 +4,12 @@
  * waits while the pointer or focus is on it, and goes on its own after a while. Everything on a
  * slip is also in the room itself (the thread's unread count, the results, the seal's stamp), so
  * a slip that leaves takes nothing with it.
+ *
+ * The board is at the end of the page, so a keyboard has a shortcut to it: N (for news) moves focus
+ * to the newest slip, and again to the one before it. Focus on a slip holds it, as hovering does.
  */
 import { type CSSProperties, useCallback, useEffect, useId, useRef, useState } from "react";
+import { useShortcuts } from "../app/prefs.js";
 import type { RoomView } from "../lobby/room.js";
 import { type Dispatch, type DispatchContext, pinDispatches, roomDispatches } from "./dispatches.js";
 
@@ -18,7 +22,34 @@ export interface Dispatches {
   up: Dispatch[];
   /** The latest news in words, for the board's live region. */
   said: string;
+  /** Say something through the board's live region. */
+  say: (words: string) => void;
   dismiss: (key: string) => void;
+}
+
+/** The key that moves focus to the slips (with the other single-key shortcuts, see HowToPlay). */
+export const NEWS_KEY = "n";
+
+/**
+ * Which slip the news key moves to, of `count` slips listed oldest first: the newest, or, from a
+ * slip, the one before it, round again to the newest after the oldest. -1 when there are none.
+ */
+export function newsTarget(count: number, current: number): number {
+  if (count <= 0) return -1;
+  return current > 0 && current < count ? current - 1 : count - 1;
+}
+
+/**
+ * The news key, pressed: focus the slip `newsTarget` names (its first action), or say why there is
+ * none to go to. `root` is the document the board is in.
+ */
+export function focusNews(say: (words: string) => void, root: Document = document): void {
+  const board = root.querySelector<HTMLElement>(".dispatch-board");
+  if (!board) return say("No news from the table.");
+  if (board.hidden) return say("The news waits until the order sheet is closed.");
+  const slips = [...board.querySelectorAll<HTMLElement>(".slip")];
+  const current = slips.findIndex((slip) => slip.contains(root.activeElement));
+  slips[newsTarget(slips.length, current)]?.querySelector<HTMLElement>(".slip-acts button")?.focus();
 }
 
 /** Watch the room for news and keep the slips that are up. */
@@ -65,7 +96,7 @@ export function useDispatches(view: RoomView, ctx: DispatchContext): Dispatches 
   }, [ctx.reading]);
 
   const dismiss = useCallback((key: string) => setUp((current) => current.filter((d) => d.key !== key)), []);
-  return { up, said, dismiss };
+  return { up, said, say, dismiss };
 }
 
 /**
@@ -83,8 +114,8 @@ export function DispatchBoard({ dispatches, tucked = false, onOpen }: { dispatch
       {up.length ? (
         <section className="dispatch-board" aria-label="News from the table" hidden={tucked}>
           <ol>
-            {up.map((d) => (
-              <Slip key={d.key} d={d} paused={tucked} onOpen={onOpen} onDismiss={dismiss} />
+            {up.map((d, i) => (
+              <Slip key={d.key} d={d} newest={i === up.length - 1} paused={tucked} onOpen={onOpen} onDismiss={dismiss} />
             ))}
           </ol>
         </section>
@@ -93,7 +124,8 @@ export function DispatchBoard({ dispatches, tucked = false, onOpen }: { dispatch
   );
 }
 
-function Slip({ d, paused, onOpen, onDismiss }: { d: Dispatch; paused: boolean; onOpen: (d: Dispatch) => void; onDismiss: (key: string) => void }) {
+function Slip({ d, newest, paused, onOpen, onDismiss }: { d: Dispatch; newest: boolean; paused: boolean; onOpen: (d: Dispatch) => void; onDismiss: (key: string) => void }) {
+  const [shortcuts] = useShortcuts();
   const [held, setHeld] = useState(false);
   const self = useRef<HTMLLIElement>(null);
   const titleId = useId();
@@ -137,8 +169,14 @@ function Slip({ d, paused, onOpen, onDismiss }: { d: Dispatch; paused: boolean; 
         </span>
       ) : null}
       <div className="slip-acts">
-        <button type="button" className="btn small" onClick={() => onOpen(d)}>
+        <button type="button" className="btn small" onClick={() => onOpen(d)} aria-keyshortcuts={newest && shortcuts ? NEWS_KEY.toUpperCase() : undefined}>
           {d.kind === "resolved" ? "See the results" : d.kind === "receipt" ? "See the seal" : "Read it"}
+          {/* The key, shown as the order tools show theirs; said through aria-keyshortcuts instead. */}
+          {newest && shortcuts ? (
+            <kbd className="keys-only" aria-hidden="true">
+              {NEWS_KEY.toUpperCase()}
+            </kbd>
+          ) : null}
         </button>
         {/* Named "Dismiss" alone, and described by the slip's title, so it says which slip it closes. */}
         <button type="button" className="slip-close" aria-label="Dismiss" aria-describedby={titleId} onClick={() => onDismiss(d.key)}>

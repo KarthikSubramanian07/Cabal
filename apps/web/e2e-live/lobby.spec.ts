@@ -104,6 +104,24 @@ test.describe("the lobby, live", () => {
     await expect(page.getByLabel("Message the table")).toHaveValue("");
     await expect(page.getByLabel("Message the table")).toBeFocused();
 
+    // Before the start, a line at the table can be quoted as in the game's own press. The Quote
+    // button is described by whose line it is, and the server sets the original's words in.
+    const beaLine = hostLog.locator(".dispatch").filter({ hasText: "I come in peace, mostly." });
+    const quote = beaLine.getByRole("button", { name: "Quote", exact: true });
+    await expect(quote).toHaveAccessibleDescription(new RegExp(`^${power}$`, "i"));
+    await quote.click();
+    await expect(quote).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByLabel("Message the table")).toBeFocused();
+    await expect(page.locator(".quote-slip")).toContainText(new RegExp(`Quoting ${power}`, "i"));
+    await expect(page.locator(".quote-slip")).toContainText("I come in peace, mostly.");
+    await page.getByLabel("Message the table").fill("Mostly is doing a lot of work there.");
+    await page.getByLabel("Message the table").press("Enter");
+    await expect(page.locator(".quote-slip")).toHaveCount(0);
+    const answer = guest.getByRole("log", { name: "Table talk" }).locator(".dispatch").filter({ hasText: "Mostly is doing a lot of work there." });
+    await expect(answer.locator(".dispatch-quote")).toContainText(new RegExp(power, "i"));
+    await expect(answer.locator(".dispatch-quote")).toContainText("Evening. I come in peace, mostly.");
+    await scan(guest, "table talk with a quote");
+
     // The host starts; the bot takes the five empty seats; the table becomes the game room for both.
     await page.getByRole("button", { name: "Start the game" }).click();
     for (const p of [page, guest]) {

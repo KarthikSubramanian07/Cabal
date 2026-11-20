@@ -8,6 +8,7 @@ import { type Seat, closeSheet, liveTable, scan, sitDown, tab, titleCase, unique
 
 test.describe("the social layer, live", () => {
   test("a dispatch slip brings a private message in, and the reply quotes it", async ({ browser, request }, info) => {
+    test.slow(); // two devices, two scans and twenty seconds of waiting out slips on purpose
     const { host, guest } = await liveTable(request);
     const ada = await sitDown(browser, info, host, host.gameId);
     const bea = await sitDown(browser, info, guest, guest.gameId);
@@ -41,9 +42,13 @@ test.describe("the social layer, live", () => {
     expect(await slip.evaluate((el) => getComputedStyle(el).boxShadow)).toMatch(/^rgb\([^)]*\) 3px 3px 0px/);
     // Ada is reading that very thread: her own words bring her no slip.
     await expect(ada.getByRole("region", { name: "News from the table" })).toHaveCount(0);
-    // A slip leaves on its own after nine seconds, but never while the player is on it. Bea moves
-    // onto it, and it stays past its time (and past a slow scan on a busy machine).
-    await slip.getByRole("button", { name: "Read it" }).focus();
+    // The board has a key of its own, N, named on the newest slip (and in How to play). A slip
+    // leaves on its own after nine seconds, but never while the player is on it. Bea presses N,
+    // lands on it, and it stays past its time (and past a slow scan on a busy machine).
+    const read = slip.getByRole("button", { name: "Read it" });
+    await expect(read).toHaveAttribute("aria-keyshortcuts", "N");
+    await bea.keyboard.press("n");
+    await expect(read).toBeFocused();
     await bea.waitForTimeout(10_000);
     await expect(slip).toBeVisible();
     await scan(bea, "a dispatch slip over the room");
@@ -54,6 +59,10 @@ test.describe("the social layer, live", () => {
     await expect(thread).toBeVisible();
     await expect(thread).toBeFocused();
     await expect(slip).toHaveCount(0);
+    // With no slip up, the key says so rather than doing nothing.
+    await bea.keyboard.press("n");
+    await expect(bea.locator(".dispatch-said")).toHaveText("No news from the table.");
+    await expect(thread).toBeFocused();
 
     // Bea quotes it in her answer. The button says whose message it quotes as its description, so
     // the live thread does not read a long button name out with every message.
@@ -156,7 +165,8 @@ test.describe("the social layer, live", () => {
     await entry.press("Enter");
     await link.click();
     await expect(page).toHaveURL(new RegExp(`/u/${bob.player.handle}$`));
-    await expect(page.getByRole("heading", { level: 1 })).toContainText(bob.player.handle);
+    // The record page is its own chunk, which a loaded machine can take a while to bring in.
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(bob.player.handle, { timeout: 15_000 });
 
     await page.goBack();
     await expect(page.locator("svg.board text.label").first()).toBeVisible({ timeout: 30_000 });

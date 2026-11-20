@@ -175,6 +175,12 @@
   min-height: 32px;
 }
 
+/* The news key, as the order tools show theirs. */
+.slip-acts .btn kbd {
+  margin-left: 8px;
+  color: var(--ink-3);
+}
+
 .slip-close {
   display: grid;
   place-items: center;
@@ -319,6 +325,14 @@
 .chair-link:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 1px;
+}
+
+/* Pointing at the cell, or tabbing to it, inks the name it leads to, as any link in the room. */
+.chair-link:hover ~ .chair-name,
+.chair-link:focus-visible ~ .chair-name {
+  color: var(--ink);
+  text-decoration-color: currentColor;
+  text-decoration-thickness: 2px;
 }
 
 /* Over the map on a phone the strip stays two lines tall; the name is in each cell's label. */
