@@ -36,6 +36,27 @@
       }
     },
     {
+      "id": "full_game",
+      "title": "Full 7 seat game",
+      "target": "finishes with no manual intervention",
+      "value": "finished: draw by vote after 17 phases, 2.9 s, 2 people and 5 bots",
+      "pass": true,
+      "where": "production",
+      "date": "2026-11-20",
+      "commit": "4eaf613daef1",
+      "detail": {
+        "origin": "https://playcabal.pages.dev",
+        "gameId": "8XF9L6",
+        "status": "finished",
+        "result": "draw",
+        "reason": "vote",
+        "phases": 17,
+        "lastPhase": "COMPLETED",
+        "humans": 2,
+        "seconds": 2.9
+      }
+    },
+    {
       "id": "landing_to_game",
       "title": "Landing page to a game in progress",
       "target": "under 60 s, AI seats filling the table",
@@ -58,6 +79,28 @@
       "detail": {}
     },
     {
+      "id": "landing_to_game",
+      "title": "Landing page to a game in progress",
+      "target": "under 60 s, AI seats filling the table",
+      "value": "6.6 s",
+      "pass": true,
+      "where": "production, desktop",
+      "date": "2026-11-20",
+      "commit": "4eaf613daef1",
+      "detail": {}
+    },
+    {
+      "id": "landing_to_game",
+      "title": "Landing page to a game in progress",
+      "target": "under 60 s, AI seats filling the table",
+      "value": "3.3 s",
+      "pass": true,
+      "where": "production, phone",
+      "date": "2026-11-20",
+      "commit": "4eaf613daef1",
+      "detail": {}
+    },
+    {
       "id": "order_rtt",
       "title": "Order submit round trip",
       "target": "p95 under 150 ms (Europe or North America)",
@@ -76,6 +119,27 @@
         "p99": 111.3,
         "min": 1.7,
         "max": 388.1
+      }
+    },
+    {
+      "id": "order_rtt",
+      "title": "Order submit round trip",
+      "target": "p95 under 150 ms (Europe or North America)",
+      "value": "p95 111.3 ms (p50 70.2, p99 148.5, n 100)",
+      "pass": true,
+      "where": "production, from the US West Coast",
+      "date": "2026-11-20",
+      "commit": "4eaf613daef1",
+      "detail": {
+        "origin": "https://playcabal.pages.dev",
+        "gameId": "4UER5V",
+        "phase": "S1901M",
+        "n": 100,
+        "p50": 70.2,
+        "p95": 111.3,
+        "p99": 148.5,
+        "min": 60.7,
+        "max": 230.8
       }
     }
   ]

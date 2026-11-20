@@ -165,11 +165,15 @@ Each line has a repeatable command in [tools/metrics](../tools/metrics/README.md
 |---|---|---|---|---|---|---|
 | DATC v3.0 | 100 percent, zero skipped | 171 of 171 passed, 0 failed, 0 skipped | local (cargo) | 2026-11-20 | `2b4ff1396e59` | pass |
 | Full 7 seat game | finishes with no manual intervention | finished: draw by vote after 16 phases, 2.5 s, 2 people and 5 bots | local (wrangler dev) | 2026-11-20 | `2b4ff1396e59` | pass |
+| Full 7 seat game | finishes with no manual intervention | finished: draw by vote after 17 phases, 2.9 s, 2 people and 5 bots | production | 2026-11-20 | `4eaf613daef1` | pass |
 | Landing page to a game in progress | under 60 s, AI seats filling the table | 1.8 s | local (wrangler dev), desktop | 2026-11-20 | `2b4ff1396e59` | pass |
 | Landing page to a game in progress | under 60 s, AI seats filling the table | 2.0 s | local (wrangler dev), phone | 2026-11-20 | `2b4ff1396e59` | pass |
+| Landing page to a game in progress | under 60 s, AI seats filling the table | 6.6 s | production, desktop | 2026-11-20 | `4eaf613daef1` | pass |
+| Landing page to a game in progress | under 60 s, AI seats filling the table | 3.3 s | production, phone | 2026-11-20 | `4eaf613daef1` | pass |
 | Order submit round trip | p95 under 150 ms (Europe or North America) | p95 39.9 ms (p50 7, p99 111.3, n 100) | local (wrangler dev) | 2026-11-20 | `2b4ff1396e59` | pass |
+| Order submit round trip | p95 under 150 ms (Europe or North America) | p95 111.3 ms (p50 70.2, p99 148.5, n 100) | production, from the US West Coast | 2026-11-20 | `4eaf613daef1` | pass |
 
-**Production: not measured yet.** After the next `pnpm deploy:all`, run the four production commands in the [tools/metrics README](../tools/metrics/README.md#production-runs) and replace the local lines.
+**Production, 2026-11-20, build `4eaf613daef1`:** every target is met. The full game is also #8's exit criterion: two people and five bots finished a game on production with no operator. Rerun the four production commands in the [tools/metrics README](../tools/metrics/README.md#production-runs) after each deploy.
 
 Size and start-up, from the same commit (`pnpm engine:build`, `wrangler deploy --dry-run`, `pnpm --filter @cabal/server cold-start -- --runs 5`, on an Apple Silicon laptop; CI's own figures are in each run's summary):
 
@@ -180,3 +184,5 @@ Size and start-up, from the same commit (`pnpm engine:build`, `wrangler deploy -
 | Engine instantiation in the GameRoom, median | 0 ms | `cold-start` job, [PERFORMANCE.md](PERFORMANCE.md#gameroom-cold-start) |
 | First adjudication, engine only, median | 4 ms | `cold-start` job |
 | First request to a fresh isolate (create a game), median | 52 ms | `cold-start` job |
+| Production: a fresh room's first request (engine ready and first game), Workers Logs | 12 to 17 ms CPU, 40 to 89 ms wall (3 rooms, build `4eaf613daef1`) | none; see [PERFORMANCE.md](PERFORMANCE.md#in-production) |
+| Production: a woken room's first request that also resolves a phase | 56 to 105 ms CPU, 75 to 179 ms wall (4 rooms) | none |
