@@ -52,6 +52,13 @@ describe("client error reports", () => {
     expect(scrubMessage("fetch https://playcabal.pages.dev/g/ABC123?x=1 failed")).toBe("fetch <url>/g failed");
     expect(scrubMessage("bad seat token st_9f8e7d6c5b4a39281706")).toBe("bad seat token <id>");
     expect(scrubMessage("two\n\nlines")).toBe("two lines");
+    // A table's code says which table broke: masked, in any case, digits or none. Words and the
+    // six-letter powers are not codes.
+    expect(scrubMessage("no such game K7Q2XZ")).toBe("no such game <code>");
+    expect(scrubMessage("no such game k7q2xz")).toBe("no such game <code>");
+    expect(scrubMessage("seat ABCDEF is taken")).toBe("seat <code> is taken");
+    expect(scrubMessage("FRANCE cannot move: failed")).toBe("FRANCE cannot move: failed");
+    expect(scrubMessage("Cannot render object")).toBe("Cannot render object");
     expect(scrubMessage("x".repeat(400))).toHaveLength(300);
   });
 
