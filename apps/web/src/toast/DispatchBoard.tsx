@@ -5,7 +5,7 @@
  * slip is also in the room itself (the thread's unread count, the results, the seal's stamp), so
  * a slip that leaves takes nothing with it.
  */
-import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useId, useRef, useState } from "react";
 import type { RoomView } from "../lobby/room.js";
 import { type Dispatch, type DispatchContext, pinDispatches, roomDispatches } from "./dispatches.js";
 
@@ -73,6 +73,7 @@ export function DispatchBoard({ dispatches, onOpen }: { dispatches: Dispatches; 
 function Slip({ d, onOpen, onDismiss }: { d: Dispatch; onOpen: (d: Dispatch) => void; onDismiss: (key: string) => void }) {
   const [held, setHeld] = useState(false);
   const self = useRef<HTMLLIElement>(null);
+  const titleId = useId();
 
   // Gone after a while, unless the player is reading it. New words for the slip start the wait again.
   useEffect(() => {
@@ -101,7 +102,9 @@ function Slip({ d, onOpen, onDismiss }: { d: Dispatch; onOpen: (d: Dispatch) => 
       onBlur={release}
     >
       <div className="slip-text">
-        <p className="slip-title">{d.title}</p>
+        <p className="slip-title" id={titleId}>
+          {d.title}
+        </p>
         <p className="slip-line">{d.line}</p>
       </div>
       {d.stamp ? (
@@ -113,9 +116,9 @@ function Slip({ d, onOpen, onDismiss }: { d: Dispatch; onOpen: (d: Dispatch) => 
         <button type="button" className="btn small" onClick={() => onOpen(d)}>
           {d.kind === "resolved" ? "See the results" : d.kind === "receipt" ? "See the seal" : "Read it"}
         </button>
-        <button type="button" className="slip-close" onClick={() => onDismiss(d.key)}>
+        {/* Named "Dismiss" alone, and described by the slip's title, so it says which slip it closes. */}
+        <button type="button" className="slip-close" aria-label="Dismiss" aria-describedby={titleId} onClick={() => onDismiss(d.key)}>
           <span aria-hidden="true">×</span>
-          <span className="sr-only">Dismiss: {d.title}</span>
         </button>
       </div>
     </li>
