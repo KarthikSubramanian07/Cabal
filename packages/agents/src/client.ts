@@ -14,7 +14,7 @@
  */
 import { Game, type MapInfo, mapInfo } from "@cabal/engine";
 import type { PressView, ServerMessage, StateView } from "@cabal/protocol";
-import type { Played, Player } from "./player.js";
+import { type Played, type Player, yearOf } from "./player.js";
 import { outgoingPress } from "./press.js";
 import { type Step, phaseKind } from "./prompt.js";
 import { type DecisionRecord, decisionRecord } from "./record.js";
@@ -35,6 +35,11 @@ export interface AgentClientOptions {
   listenMs?: number;
   /** Time kept back before the deadline for the order step itself. Default 5 seconds. */
   orderReserveMs?: number;
+  /**
+   * Play no phase after this year: the seat stays connected and silent, and its turn counts as
+   * done. An arena stops a game at a year this way without the seats racing past it.
+   */
+  lastYear?: number;
   /** Injectable clock, for tests. */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -191,6 +196,11 @@ export class AgentClient {
   /** Play the current phase. */
   private async act(): Promise<void> {
     if (this.busy || !this.state || !this.map) return;
+    const year = yearOf(this.phase);
+    if (this.opts.lastYear !== undefined && year !== null && year > this.opts.lastYear) {
+      this.completeTurn();
+      return;
+    }
     this.busy = true;
     // Everything below answers for this phase, even if the server moves on mid-decision.
     const phase = this.phase;
