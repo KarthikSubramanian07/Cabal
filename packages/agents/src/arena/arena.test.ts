@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { BotBrain } from "../bot-brain.js";
 import { type Brain, type BrainReply, type BrainRequest, PERSONAS, Player } from "../player.js";
 import { runLocalArena } from "./local.js";
+import { type SavedPledge, phaseLogs } from "./saved.js";
 import { arenaReport, gateFailures, summarise } from "./summary.js";
 
 beforeAll(async () => {
@@ -97,5 +98,22 @@ describe("the local arena", { timeout: 60_000 }, () => {
     expect(report).toContain("All 1 games pass the gates.");
     for (const heading of ["Off-menu", "Illegal submitted", "Hold rate", "Honesty", "Cost", "Replay"]) expect(report).toContain(heading);
     expect(report).toContain("| AUSTRIA | cabal-bot/easy |");
+  });
+});
+
+describe("phase logs read back from a saved game", { timeout: 60_000 }, () => {
+  it("match the log the arena kept while refereeing, phase for phase", async () => {
+    const game = await runLocalArena({ gameId: "BACK01", players: bots("BACK01", 0.4), untilYear: 1903 });
+    const back = phaseLogs(game.saved);
+    expect(back).toEqual(game.phases);
+    expect(summarise({ ...game, phases: back })).toEqual(summarise(game));
+  });
+
+  it("count each pledge once when several seats saw it, and skip pledges not yet receipted", async () => {
+    const game = await runLocalArena({ gameId: "BACK02", players: bots("BACK02", 0.4), untilYear: 1901 });
+    const pledges = (JSON.parse(game.saved) as { cabal: { pledges: SavedPledge[] } }).cabal.pledges;
+    expect(pledges.length).toBeGreaterThan(0);
+    const seenTwice = [...pledges, ...pledges, { ...pledges[0]!, id: "LATE", receipt: null }];
+    expect(phaseLogs(game.saved, seenTwice)).toEqual(game.phases);
   });
 });
