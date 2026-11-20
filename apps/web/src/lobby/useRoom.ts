@@ -11,7 +11,7 @@ import { CabalError } from "@cabal/protocol/client";
 import { ApiError, api, failureText, openSocket } from "../net/api.js";
 import { readPlayer } from "../net/player.js";
 import { type HeldSeat, forgetSeat, readSeat, saveName, saveSeat } from "../net/seats.js";
-import { type RoomView, applyFrame, fromSummary, markThreadRead } from "./room.js";
+import { type RoomView, afterSummaryFailure, applyFrame, fromSummary, markThreadRead } from "./room.js";
 
 export type RoomLoad = { kind: "loading" } | { kind: "missing" } | { kind: "unreachable"; message: string } | { kind: "ready"; view: RoomView };
 
@@ -78,8 +78,8 @@ export function useRoom(code: string): Room {
       },
       (error: unknown) => {
         if (!live) return;
-        if (error instanceof ApiError && error.status === 404) setLoad({ kind: "missing" });
-        else setLoad({ kind: "unreachable", message: failureText(error) });
+        const failed: RoomLoad = error instanceof ApiError && error.status === 404 ? { kind: "missing" } : { kind: "unreachable", message: failureText(error) };
+        setLoad((current) => afterSummaryFailure(current, failed));
       },
     );
     return () => {

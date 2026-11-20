@@ -57,6 +57,28 @@ test("the socket is dialled while the summary is still on its way", async ({ bro
   await page.context().close();
 });
 
+test("a summary that fails after the socket's welcome leaves the live room standing", async ({ browser, request }, info) => {
+  const { host } = await liveTable(request);
+  let failed = false;
+  const page = await sitDown(browser, info, host, host.gameId, async (context) => {
+    // The socket gets through and draws the board; the summary, slow, then fails (a 429 from the
+    // read limit the two share, or a 5xx): the room must not give way to "not answering".
+    await context.route(`**/api/games/${host.gameId}`, async (route) => {
+      await new Promise((r) => setTimeout(r, 4000));
+      failed = true;
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "unavailable", message: "down" } }) }).catch(() => undefined);
+    });
+  });
+  await expect(page.locator("svg.board-live g.unit").first()).toBeAttached();
+  await expect.poll(() => failed, { timeout: 15_000 }).toBe(true);
+  await page.waitForTimeout(500);
+  await expect(page.getByText(/not answering/i)).toHaveCount(0);
+  await expect(page.locator("svg.board-live g.unit").first()).toBeAttached();
+  // Still live: the seat can say it is ready once the rules are in.
+  await expect(page.getByRole("button", { name: /^Ready for/ })).toBeEnabled({ timeout: 30_000 });
+  await page.context().close();
+});
+
 type Paint = { t: number; size: number; el: string };
 
 /** The first paint and every largest paint of a spectator's load of a table on Lighthouse's phone. */
