@@ -33,6 +33,9 @@ import {
   type RatingHistoryResponse,
   type RatingView,
   type TrustLeaderboardResponse,
+  type SyncRequest,
+  type SyncResponse,
+  SyncedPrefs,
 } from "@cabal/protocol";
 import type { GameIndex, ListFinished, ListLive, SeatClaim } from "./game-index.js";
 import { ALIAS_HOLD_MS, DELETED_HANDLE_HOLD_MS, HANDLE_PROBLEMS, RENAME_COOLDOWN_MS, handleKey, handleProblem, pickHandle } from "./handles.js";
@@ -104,6 +107,10 @@ export interface PlayerStore {
   ): Promise<{ session: PlayerSession; outcome: "signed_in" | "linked" | "created" } | "taken">;
   /** Forget the player's Google link, if any. */
   unlinkGoogle(playerId: string): Promise<void>;
+  /** The settings and sandbox game that follow the player between devices. */
+  sync(playerId: string): Promise<SyncResponse>;
+  /** Keep each part of `update` that is newer than the copy held; answers what is held after. */
+  pushSync(playerId: string, update: SyncRequest): Promise<SyncResponse>;
   /** The rating after each of the player's most recent rated games, oldest first; null for no such player. */
   ratingHistory(handle: string, now: number, limit?: number): Promise<RatingHistoryResponse | null>;
   /** Every game the player holds or held a seat in, as the index knows it. */
@@ -698,6 +705,59 @@ export class D1Index implements GameIndex, PlayerStore {
     await this.db.prepare("DELETE FROM google_links WHERE player_id = ?").bind(playerId).run();
   }
 
+  async sync(playerId: string): Promise<SyncResponse> {
+    const row = await this.db
+      .prepare("SELECT prefs_json, prefs_at, sandbox, sandbox_at FROM player_sync WHERE player_id = ?")
+      .bind(playerId)
+      .first<{ prefs_json: string | null; prefs_at: number | null; sandbox: string | null; sandbox_at: number | null }>();
+    let prefs: SyncedPrefs | null = null;
+    if (row?.prefs_json) {
+      try {
+        const parsed = SyncedPrefs.safeParse(JSON.parse(row.prefs_json));
+        prefs = parsed.success ? parsed.data : null;
+      } catch {
+        prefs = null;
+      }
+    }
+    return {
+      prefs,
+      prefsAt: prefs ? (row?.prefs_at ?? null) : null,
+      sandbox: row?.sandbox && row.sandbox_at !== null ? { savedAt: row.sandbox_at, body: row.sandbox } : null,
+    };
+  }
+
+  async pushSync(playerId: string, update: SyncRequest): Promise<SyncResponse> {
+    const writes: D1PreparedStatement[] = [];
+    if (update.prefs) {
+      writes.push(
+        this.db
+          .prepare(
+            `INSERT INTO player_sync (player_id, prefs_json, prefs_at) VALUES (?, ?, ?)
+             ON CONFLICT(player_id) DO UPDATE SET prefs_json = excluded.prefs_json, prefs_at = excluded.prefs_at
+             WHERE player_sync.prefs_at IS NULL OR player_sync.prefs_at < excluded.prefs_at`,
+          )
+          .bind(playerId, JSON.stringify(update.prefs.value), update.prefs.at),
+      );
+    }
+    if (update.sandbox) {
+      const cleared = "cleared" in update.sandbox;
+      const at = "cleared" in update.sandbox ? update.sandbox.cleared : update.sandbox.savedAt;
+      const body = "cleared" in update.sandbox ? null : update.sandbox.body;
+      writes.push(
+        this.db
+          .prepare(
+            `INSERT INTO player_sync (player_id, sandbox, sandbox_at) VALUES (?, ?, ?)
+             ON CONFLICT(player_id) DO UPDATE SET sandbox = excluded.sandbox, sandbox_at = excluded.sandbox_at
+             WHERE player_sync.sandbox_at IS NULL OR player_sync.sandbox_at < excluded.sandbox_at`,
+          )
+          // A cleared game keeps its time, so an older copy from a device still catching up is not kept.
+          .bind(playerId, cleared ? null : body, at),
+      );
+    }
+    if (writes.length > 0) await this.db.batch(writes);
+    return this.sync(playerId);
+  }
+
   async issueRecoveryCode(playerId: string, now: number): Promise<{ recoveryCode: string; issuedAt: number }> {
     const recoveryCode = mintRecoveryCode();
     await this.db
@@ -1042,6 +1102,7 @@ export class D1Index implements GameIndex, PlayerStore {
       this.db.prepare("DELETE FROM handle_aliases WHERE player_id = ?").bind(playerId),
       this.db.prepare("DELETE FROM player_sessions WHERE player_id = ?").bind(playerId),
       this.db.prepare("DELETE FROM google_links WHERE player_id = ?").bind(playerId),
+      this.db.prepare("DELETE FROM player_sync WHERE player_id = ?").bind(playerId),
       ...forgetInModeration(this.db, playerId),
       this.db.prepare("DELETE FROM players WHERE id = ?").bind(playerId),
     ]);

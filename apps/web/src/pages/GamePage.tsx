@@ -71,7 +71,7 @@ function JoinPanel({ view, selected, onJoin }: { view: RoomView; selected: Power
     if (busy) return;
     setError(null);
     try {
-      await asPlayer("You are about to take a seat. The table, the Ledger and your record will know you by this name.", async (me) => {
+      await asPlayer("You are about to take a seat.", async (me) => {
         setBusy(true);
         await onJoin(me, selected ?? undefined);
       });

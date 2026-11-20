@@ -1,5 +1,6 @@
 /**
- * The games room: the seats this device holds, public tables waiting for players, and public
+ * The games room: the player's seats (this browser's, and for a signed-in player every seat their
+ * account holds, from any device), public tables waiting for players, and public
  * games in play, all from `GET /api/games`. A table is joined by its row, by code, or by a
  * pasted link; a new one is set from the create dialog.
  */
@@ -11,7 +12,10 @@ import { SeatStrip } from "../lobby/SeatStrip.jsx";
 import { ago, phaseLabel, powerLabel, shortTerms, timeLeft } from "../lobby/terms.js";
 import { api, failureText } from "../net/api.js";
 import { parseGameCode, spacedCode } from "../net/code.js";
-import { type HeldSeat, listSeats } from "../net/seats.js";
+import { listSeats } from "../net/seats.js";
+import { type ListedSeat, yourSeats } from "../lobby/yourSeats.js";
+import { usePlayer } from "../profile/usePlayer.js";
+import type { MyGame } from "@cabal/protocol";
 
 /** How often the lists refresh while the page is in view. */
 const REFRESH_MS = 15_000;
@@ -147,7 +151,27 @@ function ListingTable({ caption, games, kind, now }: { caption: string; games: G
   );
 }
 
-function YourSeats({ seats }: { seats: HeldSeat[] }) {
+/** The account's own games, for a signed-in player; null until read, or when signed out. */
+function useAccountGames(): MyGame[] | null {
+  const player = usePlayer();
+  const secret = player?.secret ?? null;
+  const [games, setGames] = useState<MyGame[] | null>(null);
+  useEffect(() => {
+    setGames(null);
+    if (!secret) return;
+    let live = true;
+    api.myGames(secret).then(
+      (g) => live && setGames(g),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [secret]);
+  return games;
+}
+
+function YourSeats({ seats }: { seats: ListedSeat[] }) {
   if (seats.length === 0) return null;
   return (
     <section className="room-section" aria-labelledby="your-seats">
@@ -160,6 +184,7 @@ function YourSeats({ seats }: { seats: HeldSeat[] }) {
               <span className="held-code">{spacedCode(s.gameId)}</span>
               <span className="held-detail">
                 {powerLabel(s.power)}, as {s.name || "you"}
+                {s.elsewhere ? <span className="fine"> (from another device)</span> : null}
               </span>
             </Link>
           </li>
@@ -173,6 +198,8 @@ export default function GamesPage() {
   const [lists, refresh] = useListings();
   const [creating, setCreating] = useState(false);
   const [held] = useState(listSeats);
+  const player = usePlayer();
+  const accountGames = useAccountGames();
   const heading = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
@@ -201,7 +228,7 @@ export default function GamesPage() {
         </div>
       </header>
 
-      <YourSeats seats={held} />
+      <YourSeats seats={yourSeats(held, accountGames, player?.handle ?? null)} />
 
       {lists.kind === "loading" ? (
         <p className="room-wait" role="status">

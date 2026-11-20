@@ -104,7 +104,7 @@ export function CreateGameDialog({ open, onClose }: { open: boolean; onClose: ()
     const settings: GameSettingsInput = { pacing, press, rulebook, dias, scoring, aiFill, aiBrain, visibility };
     setError(null);
     try {
-      const made = await asPlayer("You are about to set a table. The other players, the Ledger and your record will know you by this name.", async (me) => {
+      const made = await asPlayer("You are about to set a table.", async (me) => {
         setBusy(true);
         const res = await api.createGame({ settings }, me.secret);
         keepCreatedSeat({ gameId: res.gameId, power: res.power, token: res.token, name: me.handle, userId: me.id });

@@ -140,7 +140,7 @@ function PlayNow({ onCreate }: { onCreate: () => void }) {
     if (busy) return;
     setError(null);
     try {
-      const code = await asPlayer("You are about to sit down against six bots. The table, the Ledger and your record will know you by this name.", async (me) => {
+      const code = await asPlayer("You are about to sit down against six bots.", async (me) => {
         setBusy(true);
         const { startQuickGame } = await import("../lobby/quickGame.js");
         return startQuickGame(me);
@@ -208,7 +208,7 @@ export default function LandingPage() {
               seal is opened and the Ledger keeps score of who kept their word.
             </p>
             <PlayNow onCreate={() => setCreating(true)} />
-            <p className="hero-fine">No email and no download. Pick a handle and you are at the table.</p>
+            <p className="hero-fine">No download. Sign in with Google or just pick a handle, and you are at the table.</p>
           </div>
           <Theatre />
         </div>

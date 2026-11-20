@@ -1,13 +1,13 @@
 /**
- * The player's seal in the top bar: who is playing on this device, and the way to their record,
- * their account and its recovery code. Before anyone has played here it offers a handle.
+ * The player's seal in the top bar. Signed out, it is a Sign in button: with Google where the
+ * deployment has it (one account on every device), otherwise a menu offering a guest handle or a
+ * recovery code. Signed in, it is the player's menu: their games, record, account and Sign out.
  */
 import { useEffect, useId, useRef, useState } from "react";
 import { Link, usePathname } from "../app/router.jsx";
-import { GoogleButton, useGoogleSignInOn } from "./GoogleButton.jsx";
+import { useGoogleSignInOn } from "./GoogleButton.jsx";
 import { useIdentity } from "./Identity.jsx";
 import { useAccount } from "./usePlayer.js";
-import { accountFailure } from "./handles.js";
 
 /** A small square wax seal with the handle's first letter, as the player's mark. */
 export function PlayerSeal({ handle, size = 26 }: { handle: string; size?: number }) {
@@ -23,9 +23,9 @@ export function PlayerSeal({ handle, size = 26 }: { handle: string; size?: numbe
 
 export function ProfileMenu() {
   const { player, ensurePlayer, openAccount, openRestore } = useIdentity();
-  const { googleSignIn } = useAccount();
-  const [googleError, setGoogleError] = useState<string | null>(null);
+  const { signOut } = useAccount();
   const googleOn = useGoogleSignInOn();
+  const [leaving, setLeaving] = useState(false);
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -56,73 +56,78 @@ export function ProfileMenu() {
     fn();
   };
 
+  /** An account that signs in with Google signs out in one go: Google brings it back on any device. */
+  const signOutNow = async () => {
+    setOpen(false);
+    setLeaving(true);
+    await signOut();
+    setLeaving(false);
+    button.current?.focus();
+  };
+
   return (
     <div className="player-menu" ref={wrap}>
       <button
         ref={button}
         type="button"
-        className="player-button"
-        aria-expanded={open}
-        aria-controls={listId}
-        onClick={() => setOpen((o) => !o)}
+        className={`player-button${player ? "" : " signin-button"}`}
+        aria-expanded={player || !googleOn ? open : undefined}
+        aria-controls={player || !googleOn ? listId : undefined}
+        disabled={leaving}
+        onClick={() => {
+          // Signed out with Google on, the button is the way in: no menu, straight to signing in.
+          if (!player && googleOn) return void ensurePlayer();
+          setOpen((o) => !o);
+        }}
       >
         {player ? <PlayerSeal handle={player.handle} /> : <span className="player-seal empty" aria-hidden="true" />}
         {/* The name is the visible text (WCAG 2.5.3); on a phone it is read out but not shown. */}
-        <span className="player-name">{player ? <><span className="sr-only">Your account, </span>{player.handle}</> : "Your account"}</span>
+        <span className="player-name">{player ? <><span className="sr-only">Your account, </span>{player.handle}</> : leaving ? "Signing out" : "Sign in"}</span>
       </button>
       <div className="player-list" id={listId} hidden={!open}>
         {player ? (
           <>
             <p className="player-head">
-              Playing as <strong>{player.handle}</strong>
+              Signed in as <strong>{player.handle}</strong>
+              <span className="player-kind">{player.google ? "With Google, on every device" : "Guest account, in this browser only"}</span>
             </p>
+            {!player.google && googleOn ? (
+              <button type="button" className="player-keep" onClick={act(() => openAccount("google"))}>
+                Sign in with Google to keep it
+              </button>
+            ) : null}
+            <Link href="/games">Your games</Link>
             <Link href={`/u/${encodeURIComponent(player.handle)}`}>Your record</Link>
             <button type="button" onClick={act(() => openAccount("handle"))}>
               Rename
             </button>
-            {googleOn ? (
-              <button type="button" onClick={act(() => openAccount("google"))}>
-                Link Google
-              </button>
-            ) : null}
-            <button type="button" onClick={act(() => openAccount("recovery"))}>
-              Recovery code
-            </button>
             <button type="button" onClick={act(() => openAccount("notifications"))}>
               Notifications
             </button>
-            <button type="button" onClick={act(openRestore)}>
-              Restore another account
-            </button>
-            <button type="button" onClick={act(() => openAccount("device"))}>
-              Sign out
-            </button>
+            {player.google ? null : (
+              <>
+                <button type="button" onClick={act(() => openAccount("recovery"))}>
+                  Recovery code
+                </button>
+                <button type="button" onClick={act(openRestore)}>
+                  Restore another account
+                </button>
+              </>
+            )}
+            {player.google ? (
+              <button type="button" onClick={() => void signOutNow()}>
+                Sign out
+              </button>
+            ) : (
+              // A guest account may have no way back: the account card says so before it goes.
+              <button type="button" onClick={act(() => openAccount("device"))}>
+                Sign out
+              </button>
+            )}
           </>
         ) : (
           <>
-            <p className="player-head">
-              {googleOn
-                ? "Nobody plays on this device yet. Continue with Google to play as you everywhere, or just pick a handle."
-                : "Nobody plays on this device yet. A handle is all it takes: no email, no password."}
-            </p>
-            {/* Rendered only while the menu is open, so Google's script loads when it is wanted. */}
-            {open ? (
-              <GoogleButton
-                className="player-google"
-                onCredential={(c) => {
-                  setGoogleError(null);
-                  googleSignIn(c).then(
-                    () => setOpen(false),
-                    (err: unknown) => setGoogleError(accountFailure(err)),
-                  );
-                }}
-              />
-            ) : null}
-            {googleError ? (
-              <p className="form-error player-error" role="alert">
-                {googleError}
-              </p>
-            ) : null}
+            <p className="player-head">Nobody is signed in here. A handle is all it takes: no email, no password.</p>
             <button type="button" onClick={act(() => void ensurePlayer())}>
               Choose a handle
             </button>

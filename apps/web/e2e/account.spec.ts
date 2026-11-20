@@ -42,7 +42,7 @@ test.describe("the player's account", () => {
     await signedIn(page);
     await page.goto("/games");
     await openMenu(page);
-    await expect(page.getByText("Playing as ada_l")).toBeVisible();
+    await expect(page.getByText("Signed in as ada_l")).toBeVisible();
     await page.getByRole("button", { name: "Rename" }).click();
     const card = page.getByRole("dialog", { name: "Your account" });
     await expect(card.getByLabel("Handle")).toHaveValue("ada_l");
@@ -133,10 +133,10 @@ test.describe("the player's account", () => {
     await page.getByRole("button", { name: "Sign out" }).click();
     const card = page.getByRole("dialog", { name: "Your account" });
     await card.getByRole("button", { name: "Sign out of this device" }).click();
-    await expect(card.getByText("You have no recovery code.")).toBeVisible();
+    await expect(card.getByText("This guest account has no recovery code", { exact: false })).toBeVisible();
     await card.getByRole("button", { name: "Sign out of this device" }).click();
     await expect(card).toBeHidden();
-    await expect(page.locator(".player-button")).toHaveAccessibleName("Your account");
+    await expect(page.locator(".player-button")).toHaveAccessibleName("Sign in");
     expect(await page.evaluate(() => localStorage.getItem("cabal.player"))).toBeNull();
   });
 
@@ -207,13 +207,13 @@ test.describe("the player's account", () => {
     // must not survive a reload or a closed tab.
     expect(await page.evaluate(() => localStorage.getItem("cabal.seat.Z2BSVX"))).toBeNull();
     expect(await page.evaluate(() => localStorage.getItem("cabal.player"))).toBeNull();
-    await expect(page.locator(".player-button")).toHaveAccessibleName("Your account");
+    await expect(page.locator(".player-button")).toHaveAccessibleName("Sign in");
     // The public profile is fetched again past the browser's cache, so the deleted record is not
     // what this device shows next.
     await expect.poll(() => server.calls.includes("GET /api/players/ada_l")).toBe(true);
     await card.getByRole("button", { name: "Close", exact: true }).last().click();
     await expect(card).toBeHidden();
-    await expect(page.locator(".player-button")).toHaveAccessibleName("Your account");
+    await expect(page.locator(".player-button")).toHaveAccessibleName("Sign in");
   });
 
   test("a deletion some games could not hear of yet says so instead of promising the name is gone", async ({ page }) => {
@@ -260,7 +260,7 @@ test.describe("the player's account", () => {
     await openMenu(page);
     await page.getByRole("button", { name: "Restore another account" }).click();
     const dialog = page.getByRole("dialog", { name: "Restore your account" });
-    await expect(dialog.getByText("that account has no recovery code")).toBeVisible();
+    await expect(dialog.getByText("a guest account with no recovery code", { exact: false })).toBeVisible();
     // A new handle would lose the account just the same: that way is not offered here.
     await expect(dialog.getByRole("button", { name: "Choose a new handle instead" })).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: "Keep playing as ada_l" })).toBeVisible();
@@ -329,7 +329,7 @@ test.describe("the player's account", () => {
     await page.goto("/games");
     await openMenu(page);
     await page.getByRole("button", { name: "Recovery code" }).click();
-    await expect(page.locator(".player-button")).toHaveAccessibleName("Your account");
+    await expect(page.locator(".player-button")).toHaveAccessibleName("Sign in");
     expect(await page.evaluate(() => localStorage.getItem("cabal.player"))).toBeNull();
   });
 

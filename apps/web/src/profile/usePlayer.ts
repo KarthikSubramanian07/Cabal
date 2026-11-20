@@ -1,15 +1,18 @@
 /**
- * The signed-in guest on this device, and what they can do with their account. The account is
- * made the first time a person plays (see IdentityProvider), not when they arrive: browsing the
- * front door, the sandbox or a profile never creates one.
+ * The account this device is signed in to, and what the player can do with it. Signing in with
+ * Google is the main way in: it opens the same account on every device. A guest account (a
+ * handle and nothing else) is the quick way to play without one, and lives in this browser.
+ * Nobody is asked to sign in until they play: browsing the front door, the sandbox or a profile
+ * never makes an account.
  */
 import type { DeleteMeResponse, MeResponse, RecoveryCodeResponse } from "@cabal/protocol";
 import { useCallback, useSyncExternalStore } from "react";
 import { isApiFailure } from "../net/failure.js";
 import { loadApi, localRefusal } from "../net/lazy.js";
-import { type StoredPlayer, forgetPlayer, readPlayer, renameStoredPlayer, savePlayer, subscribePlayer, tidyRecoveryCode } from "../net/player.js";
+import { type StoredPlayer, forgetPlayer, markGoogle, readPlayer, renameStoredPlayer, savePlayer, subscribePlayer, tidyRecoveryCode } from "../net/player.js";
 import { turnOffPush } from "../net/push.js";
 import { forgetSeatsOf } from "../net/seats.js";
+import { settleBeforeSignOut } from "../net/sync.js";
 
 export function usePlayer(): StoredPlayer | null {
   return useSyncExternalStore(subscribePlayer, readPlayer, () => null);
@@ -27,11 +30,12 @@ function signedOutIfRefused(error: unknown): never {
  * play as it nor be told about its games. Best effort: a server that cannot be reached still leaves
  * the device clean.
  */
-export async function leaveDevice(account: StoredPlayer): Promise<void> {
+export async function leaveDevice(account: StoredPlayer, everywhere = false): Promise<void> {
+  await settleBeforeSignOut(account).catch(() => undefined);
   try {
     const { api } = await loadApi();
     await turnOffPush((endpoint) => api.unsubscribePush(account.secret, endpoint)).catch(() => undefined);
-    await api.logout(account.secret).catch(() => undefined);
+    await api.logout(account.secret, everywhere).catch(() => undefined);
   } catch {
     // The client did not load: nothing reached the server, but the device is still cleared.
   }
@@ -54,7 +58,7 @@ export function useAccount() {
     const stored = { id: session.player.id, handle: session.player.handle, secret: session.secret };
     savePlayer(stored);
     await replaced(before, stored);
-    return readPlayer() ?? { ...stored, savedAt: Date.now() };
+    return readPlayer() ?? { ...stored, google: false, savedAt: Date.now() };
   }, []);
 
   const recover = useCallback(async (code: string): Promise<StoredPlayer> => {
@@ -63,6 +67,8 @@ export function useAccount() {
     const session = await api.recoverPlayer(tidyRecoveryCode(code));
     savePlayer({ id: session.player.id, handle: session.player.handle, secret: session.secret });
     await replaced(before, session.player);
+    // The code may open an account that also signs in with Google: ask, so the menu says so.
+    await api.me(session.secret).then((m) => markGoogle(m.account.google === true)).catch(() => undefined);
     return readPlayer()!;
   }, []);
 
@@ -75,7 +81,7 @@ export function useAccount() {
     const { api } = await loadApi();
     const before = readPlayer();
     const session = await api.googleSignIn(credential, before?.secret);
-    const stored = { id: session.player.id, handle: session.player.handle, secret: session.secret };
+    const stored = { id: session.player.id, handle: session.player.handle, secret: session.secret, google: true };
     savePlayer(stored);
     if (before && before.id === stored.id && before.secret !== stored.secret) await api.logout(before.secret).catch(() => undefined);
     await replaced(before, stored);
@@ -88,7 +94,9 @@ export function useAccount() {
     if (!current) throw localRefusal(401, "not signed in");
     try {
       const { api } = await loadApi();
-      return await api.unlinkGoogle(current.secret);
+      const res = await api.unlinkGoogle(current.secret);
+      markGoogle(false);
+      return res;
     } catch (error) {
       return signedOutIfRefused(error);
     }
@@ -101,6 +109,7 @@ export function useAccount() {
       const { api } = await loadApi();
       const res = await api.me(current.secret);
       if (res.player.handle !== current.handle) renameStoredPlayer(res.player.handle);
+      markGoogle(res.account.google === true);
       return res;
     } catch (error) {
       return signedOutIfRefused(error);
@@ -132,14 +141,15 @@ export function useAccount() {
   }, []);
 
   /**
-   * End this device's session. The account stays; a recovery code brings it back. Its seats and
-   * notifications on this device go with it.
+   * Sign out: end this device's session, or with `everywhere` every device's. The account stays:
+   * Google (or a recovery code) signs back in. Its seats, sandbox copy and notifications on this
+   * device go with it.
    */
-  const signOut = useCallback(async (): Promise<void> => {
+  const signOut = useCallback(async (everywhere = false): Promise<void> => {
     const current = readPlayer();
     if (!current) return;
     // Signed out here whatever the server said; a secret it no longer knows is harmless.
-    await leaveDevice(current);
+    await leaveDevice(current, everywhere);
     forgetPlayer();
   }, []);
 

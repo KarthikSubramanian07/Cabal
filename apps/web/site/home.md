@@ -6,7 +6,7 @@ Cabal is a browser Diplomacy game. Seven great powers write their orders in secr
 
 ## Play
 
-- **Play now**: sit down against six bots and start in seconds. Choose a handle; no email and no password.
+- **Play now**: sit down against six bots and start in seconds. Sign in with Google, or play as a guest under a handle; no email and no password.
 - **Set a table for friends**: pick the pacing (ten minutes, a day, or two days a move), the press rules and who fills empty seats, and send the code.
 - **Watch** a public game in play from the [games room](/games).
 - **Try the [sandbox](/sandbox)**: order all seven powers yourself, resolve each phase in your browser and replay the game.

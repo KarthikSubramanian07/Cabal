@@ -10,7 +10,8 @@ import { type Board, loadBoard } from "../map/boardData.js";
 import { type OrderBook, eraseOrder, flatten, keepLegal, waiveBuild, writeOrder } from "./book.js";
 import type { Piece } from "./compose.js";
 import { POWER_NAMES, type PhaseKind, parseUnit, phaseKind } from "./notation.js";
-import { clearSave, readSave, writeSave } from "./persist.js";
+import { noteSandboxCleared, noteSandboxSaved, pullSandbox } from "../net/sync.js";
+import { clearSave, encodeSave, readSave, writeSave } from "./persist.js";
 import { type Loaded, type PhaseRecord, loadSaved, replay, tidyLegal, tidyOutcome } from "./saved.js";
 import { type TrackedHistory, trackUnits } from "./unitIds.js";
 
@@ -107,10 +108,11 @@ export function useSandbox(): SandboxLoad {
   useEffect(() => {
     let live = true;
     setError(null);
-    Promise.all([engineReady(), loadBoard()]).then(
+    // A signed-in player's newer game from another device is written here first, if it comes in time.
+    Promise.all([engineReady(), loadBoard(), pullSandbox()]).then(
       ([, b]) => {
         if (!live) return;
-        // Pick up the game saved on this device, if there is one this build can read.
+        // Pick up the game saved on this device (or just brought from the account), if this build can read it.
         let loaded: Loaded | null = null;
         const save = readSave();
         if (save) {
@@ -217,13 +219,16 @@ export function useSandbox(): SandboxLoad {
       clearSave();
       return;
     }
-    writeSave({
+    const save = {
       savedAt: Date.now(),
       game: game.toSaved("cabal-sandbox"),
       written: history.map((h) => h.orders),
       orders,
       active,
-    });
+    };
+    writeSave(save);
+    // Signed in, the game also goes to the account, so the player's other devices open on it.
+    noteSandboxSaved(encodeSave(save));
   }, [game, snapshot, orders, history, active]);
 
   const setOrder = useCallback(
@@ -290,6 +295,7 @@ export function useSandbox(): SandboxLoad {
     setOrders({});
     setResumed(null);
     clearSave();
+    noteSandboxCleared();
     bump();
   }, []);
 

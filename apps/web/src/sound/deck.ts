@@ -11,6 +11,7 @@
  *   press, so Safari, which only starts audio from a gesture, plays the first phase too.
  * - A burst of the same sound within a few milliseconds plays once.
  */
+import { notePrefsChanged } from "../net/sync.js";
 import { useCallback, useSyncExternalStore } from "react";
 import type { Cue, SoundName } from "./cues.js";
 import { type Ctx, type Source, VOICES, rng } from "./voices.js";
@@ -36,8 +37,12 @@ interface Store {
 export interface Deck {
   /** Whether sound is on. */
   enabled(): boolean;
-  /** Turn sound on or off. Call from the tap that asked for it: that is what lets audio start. */
-  setEnabled(on: boolean): void;
+  /**
+   * Turn sound on or off. Call from the tap that asked for it: that is what lets audio start.
+   * `quiet` (a setting arriving from the player's other device) skips the tick that confirms it;
+   * the first gesture then starts the audio as it does on any visit with sound already on.
+   */
+  setEnabled(on: boolean, quiet?: boolean): void;
   /** Play one sound now, or `delayMs` from now. */
   play(sound: SoundName, opts?: { delayMs?: number; weight?: number }): void;
   /**
@@ -138,7 +143,7 @@ export function createDeck(options: DeckOptions): Deck {
 
   return {
     enabled: read,
-    setEnabled(next) {
+    setEnabled(next, quiet = false) {
       on = next;
       try {
         store?.set(next ? "on" : "off");
@@ -146,8 +151,10 @@ export function createDeck(options: DeckOptions): Deck {
         // storage can be unavailable (private windows); the choice still holds for this visit
       }
       if (next) {
-        context();
-        voice("tick", 0, 1);
+        if (!quiet) {
+          context();
+          voice("tick", 0, 1);
+        }
       } else {
         for (const s of live) {
           try {
@@ -218,6 +225,9 @@ export const deck: Deck = createDeck({
 /** Whether sound is on, and the switch. */
 export function useSound(): [boolean, (on: boolean) => void] {
   const value = useSyncExternalStore(deck.subscribe, deck.enabled, () => false);
-  const set = useCallback((next: boolean) => deck.setEnabled(next), []);
+  const set = useCallback((next: boolean) => {
+    deck.setEnabled(next);
+    notePrefsChanged();
+  }, []);
   return [value, set];
 }

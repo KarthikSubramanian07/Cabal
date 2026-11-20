@@ -53,6 +53,8 @@ import {
   SeatTokenResponse,
   ServerMessage,
   SubstituteInviteResponse,
+  type SyncRequest,
+  SyncResponse,
   TrustLeaderboardResponse,
   type UpdateNotificationPreferences,
 } from "./index.js";
@@ -696,6 +698,10 @@ export function createApi(options: ApiOptions = {}) {
       call(GoogleSignInResponse, "POST", "/api/auth/google", { body: { credential }, ...(secret ? { token: secret } : {}) }),
     /** Unlink the Google account; the recovery code still works. */
     unlinkGoogle: (secret: string) => call(MeResponse, "DELETE", "/api/me/google", { token: secret }),
+    /** What follows the player between devices: settings and the sandbox game. */
+    sync: (secret: string) => call(SyncResponse, "GET", "/api/me/sync", { token: secret }),
+    /** Send this device's newer settings or sandbox game; the answer is what the account now holds. */
+    pushSync: (secret: string, update: SyncRequest) => call(SyncResponse, "PATCH", "/api/me/sync", { token: secret, body: update }),
     profile: (handle: string) => call(PlayerProfile, "GET", `/api/players/${encodeURIComponent(handle)}`),
     /** A player's rating after each rated game, oldest first. */
     ratingHistory: (handle: string, limit?: number) =>

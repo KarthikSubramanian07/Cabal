@@ -76,10 +76,22 @@ export function framesSent(page: Page): string[] {
 /** Handles are unique on the server, which keeps them between runs: each test makes its own. */
 export const uniqueHandle = (stem: string) => `${stem}_${Date.now().toString(36).slice(-5)}${Math.floor(Math.random() * 36).toString(36)}`;
 
+/**
+ * The handle form the first sit-down leads to. With Google sign-in on, the dialog opens on Google
+ * and the handle form is behind Play as a guest; without it, the dialog opens on the form.
+ */
+export async function guestDialog(page: Page) {
+  const signIn = page.getByRole("dialog", { name: "Sign in to Cabal" });
+  const form = page.getByRole("dialog", { name: /^(Choose your handle|Play as a guest)$/ });
+  await expect(signIn.or(form)).toBeVisible();
+  if (await signIn.isVisible()) await signIn.getByRole("button", { name: "Play as a guest" }).click();
+  await expect(form).toBeVisible();
+  return form;
+}
+
 /** The handle dialog that the first sit-down opens: write one in and take it. */
 export async function chooseHandle(page: Page, handle: string) {
-  const dialog = page.getByRole("dialog", { name: "Choose your handle" });
-  await expect(dialog).toBeVisible();
+  const dialog = await guestDialog(page);
   await dialog.getByLabel("Handle").fill(handle);
   await dialog.getByRole("button", { name: "Take this handle" }).click();
   await expect(dialog).toBeHidden();

@@ -22,9 +22,10 @@ export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8" } });
 }
 
-export async function readJson(request: Request): Promise<unknown> {
+/** The body as JSON, or undefined when it is not JSON or is longer than `max` bytes. */
+export async function readJson(request: Request, max = MAX_BODY_BYTES): Promise<unknown> {
   const declared = Number(request.headers.get("content-length") ?? "0");
-  if (declared > MAX_BODY_BYTES) return undefined;
+  if (declared > max) return undefined;
   const reader = request.body?.getReader();
   if (!reader) return {};
   const chunks: Uint8Array[] = [];
@@ -34,7 +35,7 @@ export async function readJson(request: Request): Promise<unknown> {
       const { value, done } = await reader.read();
       if (done) break;
       byteLength += value.byteLength;
-      if (byteLength > MAX_BODY_BYTES) {
+      if (byteLength > max) {
         await reader.cancel();
         return undefined;
       }

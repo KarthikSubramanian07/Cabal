@@ -101,7 +101,11 @@ function GoogleSection({ me, onChanged }: { me: MeResponse; onChanged: (m: MeRes
     setError(null);
     try {
       const done = await googleSignIn(credential);
-      setSaid(done.outcome === "linked" ? "Linked. Continue with Google on any device to play as you." : `That Google account already had a Cabal account, so this device now plays as ${done.handle}.`);
+      setSaid(
+        done.outcome === "linked"
+          ? "Done. This account now signs in with Google: Continue with Google on any device to play as you."
+          : `That Google account already had a Cabal account, so this device now plays as ${done.handle}.`,
+      );
       onChanged(null);
     } catch (err) {
       setError(accountFailure(err));
@@ -127,14 +131,24 @@ function GoogleSection({ me, onChanged }: { me: MeResponse; onChanged: (m: MeRes
     <>
       {me.account.google ? (
         <>
-          <p>Linked. On any device, Continue with Google opens this account. Cabal keeps no email address, only a sealed mark of your Google account.</p>
+          <p>
+            You sign in with Google. On any device, Continue with Google opens this account, with your games, seats, rating and settings. Cabal keeps no email address, only a
+            sealed mark of your Google account.
+          </p>
+          <p className="fine">
+            Unlinking makes this a guest account again, kept only on the devices already signed in.{" "}
+            {me.account.recoveryIssuedAt === null ? "Make a recovery code first if you want a way back without Google." : "Your recovery code still works."}
+          </p>
           <button type="button" className="btn" disabled={busy} onClick={() => void unlink()}>
             Unlink Google
           </button>
         </>
       ) : (
         <>
-          <p>Link Google and you can sign in on any device with one tap, no recovery code needed. Cabal keeps no email address.</p>
+          <p>
+            This is a guest account, kept in this browser. Sign in with Google to keep it: your games, seats, rating and settings then follow you to every device, and Sign out
+            is safe. Cabal keeps no email address.
+          </p>
           <GoogleButton onCredential={(c) => void link(c)} />
         </>
       )}
@@ -152,7 +166,7 @@ function GoogleSection({ me, onChanged }: { me: MeResponse; onChanged: (m: MeRes
   );
 }
 
-function RecoverySection({ me, onIssued }: { me: MeResponse; onIssued: () => void }) {
+function RecoverySection({ me, onIssued, googleOn }: { me: MeResponse; onIssued: () => void; googleOn: boolean }) {
   const { issueRecoveryCode } = useAccount();
   const [code, setCode] = useState<RecoveryCodeResponse | null>(null);
   const [busy, setBusy] = useState(false);
@@ -223,7 +237,11 @@ function RecoverySection({ me, onIssued }: { me: MeResponse; onIssued: () => voi
           <p>
             {issued
               ? `You made a recovery code on ${day(issued)}. If you have lost it, make a new one: the old one stops working.`
-              : "Your account lives in this browser. Make a recovery code and keep it safe: it is the only way to use this account on another device, or to get it back if this browser's data is cleared."}
+              : me.account.google
+                ? "Google signs you in on any device; a recovery code is a spare way back, should you ever unlink Google."
+                : googleOn
+                  ? "A guest account lives in this browser. Sign in with Google above to keep it everywhere, or make a recovery code and keep it safe: without one or the other, clearing this browser's data loses the account."
+                  : "Your account lives in this browser. Make a recovery code and keep it safe: it is the only way to use this account on another device, or to get it back if this browser's data is cleared."}
           </p>
           <button type="button" className={issued ? "btn" : "btn brass"} onClick={issue} disabled={busy}>
             {busy ? "Making a code" : issued ? "Make a new recovery code" : "Make a recovery code"}
@@ -246,45 +264,57 @@ function RecoverySection({ me, onIssued }: { me: MeResponse; onIssued: () => voi
 
 function DeviceSection({ me, onSignedOut }: { me: MeResponse; onSignedOut: () => void }) {
   const { signOut } = useAccount();
-  const [sure, setSure] = useState(false);
+  const [sure, setSure] = useState<"here" | "everywhere" | null>(null);
   const [busy, setBusy] = useState(false);
-  const unsafe = me.account.recoveryIssuedAt === null;
+  const google = me.account.google === true;
+  // Signing out of a guest account with no recovery code loses it: that needs saying first.
+  const unsafe = !google && me.account.recoveryIssuedAt === null;
+  const go = async (everywhere: boolean) => {
+    setBusy(true);
+    await signOut(everywhere);
+    setBusy(false);
+    onSignedOut();
+  };
+  const devices = me.account.sessions === 1 ? "This is the only device signed in to your account." : `${me.account.sessions} devices are signed in to your account.`;
   return (
     <div className="account-device">
       <p>
-        {me.account.sessions === 1 ? "This is the only device signed in to your account." : `${me.account.sessions} devices are signed in to your account.`} Signing out here ends this
-        device's session only. Your seats leave this device with you, and return when you sign in here again; this device stops being told about your games.
+        {devices}{" "}
+        {google
+          ? "Sign out whenever you like: Continue with Google brings everything back, here or anywhere."
+          : "Signing out here ends this device's session only. Your seats leave this device with you, and return when you sign in here again."}
       </p>
       {sure ? (
         <div className="account-confirm" role="group" aria-label="Confirm signing out">
           <p className={unsafe ? "form-error" : undefined}>
             {unsafe
-              ? "You have no recovery code. Once you sign out, nobody can get this account back. Make a code first, unless you mean to leave it."
-              : "You can sign back in with your recovery code."}
+              ? "This guest account has no recovery code and no Google sign-in. Once you sign out, nobody can get it back. Sign in with Google or make a code first, unless you mean to leave it."
+              : google
+                ? sure === "everywhere"
+                  ? "Every device signed in to this account is signed out, this one too."
+                  : "This device is signed out."
+                : "You can sign back in with your recovery code."}
           </p>
           <div className="seal-actions">
-            <button
-              type="button"
-              className="btn"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                await signOut();
-                setBusy(false);
-                onSignedOut();
-              }}
-            >
-              {busy ? "Signing out" : "Sign out of this device"}
+            <button type="button" className="btn" disabled={busy} onClick={() => void go(sure === "everywhere")}>
+              {busy ? "Signing out" : sure === "everywhere" ? "Sign out everywhere" : "Sign out of this device"}
             </button>
-            <button type="button" className="btn" onClick={() => setSure(false)}>
+            <button type="button" className="btn" onClick={() => setSure(null)}>
               Stay signed in
             </button>
           </div>
         </div>
       ) : (
-        <button type="button" className="btn" onClick={() => setSure(true)}>
-          Sign out of this device
-        </button>
+        <div className="seal-actions">
+          <button type="button" className="btn" onClick={() => (google ? void go(false) : setSure("here"))} disabled={busy}>
+            {busy ? "Signing out" : "Sign out of this device"}
+          </button>
+          {me.account.sessions > 1 ? (
+            <button type="button" className="btn" onClick={() => setSure("everywhere")} disabled={busy}>
+              Sign out everywhere
+            </button>
+          ) : null}
+        </div>
       )}
     </div>
   );
@@ -500,14 +530,17 @@ export function AccountDialog({ open, section, onClose }: { open: boolean; secti
             </section>
             {googleOn || account.account.google ? (
               <section id="account-google" aria-labelledby="account-google-title">
-                <h3 id="account-google-title">Google</h3>
+                <h3 id="account-google-title">Sign in with Google</h3>
                 <GoogleSection me={account} onChanged={(m) => (m ? setAccount(m) : setTick((n) => n + 1))} />
               </section>
             ) : null}
-            <section id="account-recovery" aria-labelledby="account-recovery-title">
-              <h3 id="account-recovery-title">Recovery code</h3>
-              <RecoverySection me={account} onIssued={() => setTick((n) => n + 1)} />
-            </section>
+            {/* Google is the way back to an account that has it; a recovery code is for guests. */}
+            {account.account.google && account.account.recoveryIssuedAt === null ? null : (
+              <section id="account-recovery" aria-labelledby="account-recovery-title">
+                <h3 id="account-recovery-title">Recovery code</h3>
+                <RecoverySection me={account} googleOn={googleOn} onIssued={() => setTick((n) => n + 1)} />
+              </section>
+            )}
             <section id="account-notifications" aria-labelledby="account-notifications-title">
               <h3 id="account-notifications-title">Notifications</h3>
               <Suspense fallback={<p className="fine">Reading your notification settings</p>}>
@@ -515,7 +548,7 @@ export function AccountDialog({ open, section, onClose }: { open: boolean; secti
               </Suspense>
             </section>
             <section id="account-device" aria-labelledby="account-device-title">
-              <h3 id="account-device-title">This device</h3>
+              <h3 id="account-device-title">Signing out</h3>
               <DeviceSection me={account} onSignedOut={onClose} />
             </section>
             <section id="account-delete" aria-labelledby="account-delete-title">
