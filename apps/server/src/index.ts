@@ -9,6 +9,7 @@
  *   POST /api/games/:id/substitute    a seated player opens a vacated seat to an invited substitute
  *   GET  /api/games/:id               public summary
  *   GET  /api/games/:id/replay        MILA saved game JSON, plus the resolved pledges and receipts
+ *   GET  /api/games/:id/centres       who holds which supply centres now (the share card's whole need)
  *   GET  /api/games/:id/ledger        pledge totals per power and every resolved pledge the caller may read
  *   GET  /api/games/:id/press         one page of press history (`before`, `with`, `limit`)
  *   GET  /api/games/:id/ws            WebSocket; a player then sends `hello { token }`
@@ -16,6 +17,7 @@
  *   GET  /api/push/key                the VAPID public key a browser subscribes with (null when push is off)
  *   POST /api/metrics                 anonymous timings from a browser; GET (admin) the phase 1 metrics
  *   POST /api/metrics/datc            admin: record the DATC totals for a commit
+ *   POST /api/errors                  a page that broke reports it, anonymously (one log line)
  *
  * Players, profiles, the leaderboard and the trust ledger are served by players.ts. A signed-in
  * player sends their player secret as the bearer on create and join; they then sit under their
@@ -42,14 +44,16 @@ import { D1_SCHEMA_REQUIRED, copyRegistryOnce, gameIndex, indexBackend, registry
 import { REQUEST_ID_HEADER, currentRequestId, describeError, log, requestIdFrom, withLogContext } from "./log.js";
 import { gameCode, isPlayerSecret } from "./tokens.js";
 import { CORS, json, limited, readJson, tooMany, withCors } from "./http.js";
+import { clientErrorsRoute } from "./client-errors.js";
 import { metricsRoute } from "./metrics.js";
+import { reportsRoute } from "./moderation.js";
 import { vapidKeys } from "./notify.js";
 import { bearerOf, playerRoute, resolvePlayer } from "./players.js";
 
 export { GameRoom } from "./room.js";
 export { Registry } from "./registry.js";
 
-const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|seat|start|substitute|replay|ledger|press|ws))?$/;
+const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|seat|start|substitute|replay|centres|ledger|press|ws))?$/;
 
 /** A request to a room, carrying the current request id so the room's log lines share it. */
 function roomFetch(stub: { fetch(request: Request): Promise<Response> }, path: string, init: RequestInit | Request = {}): Promise<Response> {
@@ -111,6 +115,7 @@ async function health(env: Env): Promise<HealthResponse> {
     protocol: PROTOCOL_VERSION,
     engine: engineVersion(),
     build: buildId(env),
+    version: env.CF_VERSION_METADATA?.id ?? null,
     registry: { reachable: probed!.registry !== null, schema: probed!.registry },
     index: { backend, reachable: probed!.index !== null, schema: probed!.index },
     time: Date.now(),
@@ -121,7 +126,8 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   const url = new URL(request.url);
 
-  if (url.pathname === "/health") {
+  // `/api/health` is the same answer where only `/api` reaches the server (the web app's status page).
+  if (url.pathname === "/health" || url.pathname === "/api/health") {
     // Unauthenticated and it reaches the one index object, so it is limited like any other read.
     if (await limited(env.READ_LIMITER, request, "read")) return tooMany();
     const report = await health(env);
@@ -136,6 +142,13 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   const metrics = await metricsRoute(request, env, url);
   if (metrics) return metrics;
+
+  const errors = await clientErrorsRoute(request, env, url, buildId(env));
+  if (errors) return errors;
+
+  const reports = await reportsRoute(request, env, url);
+
+  if (reports) return reports;
 
   const players = await playerRoute(request, env, url);
   if (players) return players;
@@ -223,6 +236,7 @@ async function route(request: Request, env: Env): Promise<Response> {
     }
     // Reads that depend on who is asking take the seat token as a bearer header, never in the URL.
     if (action === "replay" && request.method === "GET") return withCors(await roomFetch(stub, "/replay", { headers: authorization }));
+    if (action === "centres" && request.method === "GET") return withCors(await roomFetch(stub, "/centres"));
     if (action === "ledger" && request.method === "GET") return withCors(await roomFetch(stub, "/ledger", { headers: authorization }));
     if (action === "press" && request.method === "GET") {
       if (url.searchParams.has("token")) return withCors(json({ error: "send the seat token as a bearer header, not in the URL" }, 400));

@@ -13,6 +13,14 @@ export function handleProblem(text: string): string | null {
   return "Use letters, digits, _ and - only.";
 }
 
+/**
+ * A handle folded as the server compares them for a confirmation: case and `_` for `-` do not
+ * matter. (The server also folds look-alikes; typing the handle as shown always matches.)
+ */
+export function handleKey(text: string): string {
+  return text.trim().toLowerCase().replace(/_/g, "-");
+}
+
 /** A refusal from the server, said for this dialog. */
 export function accountFailure(error: unknown): string {
   switch (failureCode(error)) {
@@ -28,6 +36,8 @@ export function accountFailure(error: unknown): string {
       return "That recovery code is not valid. Check it against the file you saved; a newer code replaces older ones.";
     case "rename_cooldown":
       return "A handle can be changed once every 14 days.";
+    case "handle_mismatch":
+      return "That is not the account's handle. Type it as it is shown.";
     default:
       return failureText(error);
   }

@@ -181,6 +181,13 @@ describe("browser timings", () => {
     expect((await send("https://evil.example")).status).toBe(403);
     expect((await send("http://cabal")).status).toBe(204);
     expect((await send("http://localhost:5173")).status).toBe(204);
+    // A deployment, reached over https, takes nothing from a page on someone's own machine.
+    const deployed = await SELF.fetch("https://cabal-server.example/api/metrics", {
+      method: "POST",
+      headers: { "cf-connecting-ip": nextIp(), origin: "http://localhost:5173" },
+      body: JSON.stringify({ samples: [{ metric: "order_rtt", ms: 1 }] }),
+    });
+    expect(deployed.status).toBe(403);
   });
 
   it("stop for the day at the deployment's cap, whatever the number of addresses", async () => {

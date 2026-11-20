@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { errors } from "../net/errors.js";
 import { StatusPage } from "./StatusPage.jsx";
 
 /** Catches a crash or a failed lazy chunk so the player gets a way back, not a blank page. */
@@ -11,6 +12,8 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
 
   override componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("Cabal crashed", error, info.componentStack);
+    // The player sees a way back; the server hears what broke (net/errors.ts).
+    errors.report("crash", error);
   }
 
   override render() {

@@ -701,8 +701,14 @@ export const HealthResponse = z.object({
   protocol: z.number().int(),
   /** Semantic version of the Rust engine compiled into this build. */
   engine: z.string(),
-  /** Identifies the deployed build: the `BUILD_ID` variable, else the Worker version id, else `dev`. */
+  /**
+   * Identifies the deployed build: the `BUILD_ID` variable, else the Worker version id, else `dev`.
+   * `pnpm deploy:server` sets `BUILD_ID` to the commit's twelve character hash (`-dirty` when the
+   * tree had uncommitted changes), so this names the commit that is live.
+   */
   build: z.string(),
+  /** The Cloudflare Worker version id of this deployment, when the platform supplies one. */
+  version: z.string().nullable().optional(),
   /** The Registry Durable Object (the Claude budget, and the index from before D1). */
   registry: z.object({ reachable: z.boolean(), schema: z.number().int().nullable() }),
   /** The cross-game index: `d1` in production, `registry` where no D1 database is bound. */
@@ -917,6 +923,89 @@ export type MyGame = z.infer<typeof MyGame>;
 export const MyGamesResponse = z.object({ games: z.array(MyGame) });
 export type MyGamesResponse = z.infer<typeof MyGamesResponse>;
 
+/** One rated game's mark on a player's rating: where it stood before and after. */
+export const RatingPoint = z.object({
+  /** Rated games are always public, so the code is always shown. */
+  gameId: z.string(),
+  /** The power the player held, when the index still has the seat. */
+  power: PowerName.nullable(),
+  result: GameResult.nullable(),
+  /** This player's share of the result. */
+  score: z.number().nullable(),
+  ratingBefore: z.number(),
+  rdBefore: z.number(),
+  ratingAfter: z.number(),
+  rdAfter: z.number(),
+  /** When the game ended. */
+  at: z.number().int(),
+});
+export type RatingPoint = z.infer<typeof RatingPoint>;
+
+/** `GET /api/players/:handle/ratings`: the player's rating history, oldest first. */
+export const RatingHistoryResponse = z.object({
+  ladder: z.string(),
+  points: z.array(RatingPoint),
+  /** True when older rated games exist than the ones listed (`limit`, default 50, at most 200). */
+  more: z.boolean(),
+});
+export type RatingHistoryResponse = z.infer<typeof RatingHistoryResponse>;
+
+/**
+ * `DELETE /api/me`: delete the account for good. `handle` must be the account's handle as it reads
+ * now, so a stray request cannot delete anyone.
+ */
+export const DeleteMeRequest = z.object({ handle: z.string().min(1).max(40) });
+export type DeleteMeRequest = z.infer<typeof DeleteMeRequest>;
+
+/** What a deletion did: the seats that became ghosts, by game. */
+export const DeleteMeResponse = z.object({
+  deleted: z.literal(true),
+  /** Games where a seat was held (or had been): every one now shows a ghost in its place. */
+  games: z.number().int(),
+  /** Games whose room could not be reached; their seat is anonymised when the game is recorded. */
+  unreached: z.number().int(),
+});
+export type DeleteMeResponse = z.infer<typeof DeleteMeResponse>;
+
+/** Why a player reports another. */
+export const ReportReason = z.enum(["cheating", "abuse", "multi_account", "other"]);
+export type ReportReason = z.infer<typeof ReportReason>;
+
+/**
+ * `POST /api/players/:handle/report` (signed in): tell the maintainers about a player. One report
+ * per reporter, player and day counts; more are accepted and change nothing.
+ */
+export const PlayerReportRequest = z.object({
+  reason: ReportReason,
+  /** What happened, in the reporter's words. Read by a maintainer, never shown to anyone else. */
+  note: z.string().trim().max(500).optional(),
+  /** The table it happened at, if any. */
+  gameId: z.string().regex(/^[A-Z0-9]{6}$/).optional(),
+});
+export type PlayerReportRequest = z.infer<typeof PlayerReportRequest>;
+
+export const PlayerReportResponse = z.object({ received: z.literal(true) });
+export type PlayerReportResponse = z.infer<typeof PlayerReportResponse>;
+
+/** `GET /api/reports` (admin): the most recent reports, newest first, for review. */
+export const ReportsResponse = z.object({
+  reports: z.array(
+    z.object({
+      id: z.number().int(),
+      /** Null once the reporter has deleted their account. */
+      reporter: z.string().nullable(),
+      subject: z.string(),
+      reason: ReportReason,
+      note: z.string().nullable(),
+      gameId: z.string().nullable(),
+      at: z.number().int(),
+    }),
+  ),
+  /** Days, newest first, on which one network address made more accounts than the review threshold. */
+  busyOrigins: z.array(z.object({ day: z.number().int(), accounts: z.number().int() })),
+});
+export type ReportsResponse = z.infer<typeof ReportsResponse>;
+
 /** `GET /api/leaderboard`: established ratings, best first. */
 export const LeaderboardResponse = z.object({
   ladder: z.string(),
@@ -1042,6 +1131,23 @@ export type MetricSample = z.infer<typeof MetricSample>;
  */
 export const MetricsBeacon = z.object({ samples: z.array(MetricSample).min(1).max(10) });
 export type MetricsBeacon = z.infer<typeof MetricsBeacon>;
+
+/**
+ * `POST /api/errors`: a page that broke tells the server, anonymously, so a failure players meet
+ * shows up in the Worker's logs and not only in their console. It names the kind of failure, its
+ * message, the page by route name (never its address, which can hold a game code or a handle) and
+ * the top frame of the stack with the origin cut off. Nothing names the player or the device.
+ */
+export const ClientErrorReport = z.object({
+  /** `crash`: the page's error boundary caught it; `error` and `rejection`: nothing did; `chunk`: code failed to load. */
+  kind: z.enum(["crash", "error", "rejection", "chunk"]),
+  message: z.string().min(1).max(300),
+  /** The route's name (`game`, `ledger`), or `none` for an address no route matches. */
+  route: z.string().regex(/^[a-z]{1,24}$/),
+  /** Where it was thrown: the stack's top frame as `file:line:column`, without the origin. */
+  where: z.string().max(200).optional(),
+});
+export type ClientErrorReport = z.infer<typeof ClientErrorReport>;
 
 /** `POST /api/metrics/datc` (admin): the totals `cabal datc` printed for a commit. */
 export const DatcReport = z.object({

@@ -13,6 +13,7 @@ async function scan(page: Page, state: string) {
 async function recorded(page: Page) {
   const server = await fakeServer(page);
   server.on("GET", /^\/api\/players\/kestrel$/i, () => ({ body: fixture("profile-kestrel") }));
+  server.on("GET", /^\/api\/players\/kestrel\/ratings$/i, () => ({ body: fixture("ratings-kestrel") }));
   server.on("GET", /^\/api\/ledger$/, () => ({ body: fixture("trust") }));
   server.on("GET", /^\/api\/leaderboard$/, () => ({ body: fixture("leaderboard") }));
   server.on("GET", /^\/api\/games\/Z2BSVX$/, () => ({ body: fixture("summary-Z2BSVX") }));
@@ -101,8 +102,14 @@ test.describe("a player's record", () => {
     await expect(points).toHaveCount(6);
     await points.last().focus();
     await expect(page.locator(".rating-tip")).toContainText("to 1515");
+    // The figures are the stored history: where the first rated game began, and each range.
+    await expect(rating.locator("svg")).toHaveAccessibleName("Rating over 5 rated games, now 1515, likely 1264 to 1766");
+    await expect(rating.locator(".rating-band")).toHaveCount(1);
     await rating.getByText("The figures").click();
-    await expect(rating.getByRole("table")).toContainText("Before these games");
+    const figures = rating.getByRole("table");
+    await expect(figures).toContainText("Before the first rated game");
+    await expect(figures.getByRole("columnheader", { name: "Likely range" })).toBeVisible();
+    await expect(figures.getByRole("row").last()).toContainText("1264 to 1766");
     await expect(page.getByRole("region", { name: "Reliability" })).toContainText("Ordered on time in 20 of 21 phases");
     const ledger = page.getByRole("region", { name: "The Ledger" });
     await expect(ledger).toContainText("Kept 10 of 20 promises.");
@@ -112,6 +119,58 @@ test.describe("a player's record", () => {
     await scan(page, "profile");
     await recent.getByRole("link", { name: "Replay the game Z2BSVX" }).click();
     await expect(page).toHaveURL(/\/replay\/Z2BSVX$/);
+  });
+
+  test("a rating history that does not load costs only the chart", async ({ page }) => {
+    const server = await recorded(page);
+    server.on("GET", /^\/api\/players\/kestrel\/ratings$/i, () => ({ status: 503, body: { error: "unavailable" } }));
+    await page.goto("/u/kestrel");
+    const rating = page.getByRole("region", { name: "Rating" });
+    await expect(rating).toContainText("Ranked 1 on the ladder.");
+    await expect(rating.locator(".rating-point")).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Recent games" }).getByRole("row")).toHaveCount(6);
+  });
+
+  test("a signed-in visitor can report the player, quietly, and only once it is asked for", async ({ page }) => {
+    const server = await fakeServer(page);
+    accountRoutes(server);
+    const sent: unknown[] = [];
+    server.on("POST", /^\/api\/players\/kestrel\/report$/i, (request) => {
+      sent.push({ body: request.postDataJSON(), auth: request.headers()["authorization"] });
+      return { status: 202, body: { received: true } };
+    });
+    server.on("GET", /^\/api\/players\/kestrel$/i, () => ({ body: fixture("profile-kestrel") }));
+    server.on("GET", /^\/api\/players\/kestrel\/ratings$/i, () => ({ body: fixture("ratings-kestrel") }));
+    await signedIn(page);
+    await page.goto("/u/kestrel");
+    const report = page.getByRole("region", { name: "Report kestrel" });
+    await report.getByRole("button", { name: "Report kestrel to the maintainers" }).click();
+    // Focus lands on the first choice; a report needs a reason.
+    await expect(report.getByRole("radio", { name: /Cheating/ })).toBeFocused();
+    await report.getByRole("button", { name: "Send the report" }).click();
+    await expect(report.getByRole("alert")).toHaveText("Choose what the report is about.");
+    expect(sent).toEqual([]);
+    await report.getByRole("radio", { name: /Abuse/ }).check();
+    await report.getByLabel("What happened (optional)").fill("Slurs in public press at table Z2BSVX.");
+    await scan(page, "report form");
+    await report.getByRole("button", { name: "Send the report" }).click();
+    await expect(report.getByRole("status")).toContainText("Report received.");
+    expect(sent).toEqual([{ body: { reason: "abuse", note: "Slurs in public press at table Z2BSVX." }, auth: expect.stringMatching(/^Bearer /) }]);
+  });
+
+  test("nobody is offered a report about themselves", async ({ page }) => {
+    await afterAFriendlyGame(page);
+    await signedIn(page);
+    await page.goto("/u/ada_l");
+    await expect(page.getByRole("heading", { level: 1, name: "ada_l" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /to the maintainers/ })).toHaveCount(0);
+  });
+
+  test("a visitor with no account is not offered a report", async ({ page }) => {
+    await recorded(page);
+    await page.goto("/u/kestrel");
+    await expect(page.getByRole("heading", { level: 1, name: "kestrel" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /to the maintainers/ })).toHaveCount(0);
   });
 
   test("an unknown handle says so, and the owner sees their account button", async ({ page }) => {

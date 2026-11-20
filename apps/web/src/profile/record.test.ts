@@ -1,6 +1,6 @@
-import type { PlayerResult } from "@cabal/protocol";
+import type { PlayerResult, RatingHistoryResponse } from "@cabal/protocol";
 import { describe, expect, it } from "vitest";
-import { friendlyGames, ratingPath, ratingTicks, reliabilityLine, resultWord, signed, tableState, trustLine, withOwnCodes } from "./record.js";
+import { friendlyGames, ratingPath, ratingRange, ratingTicks, reliabilityLine, resultWord, signed, tableState, trustLine, withOwnCodes } from "./record.js";
 
 const game = (delta: number | null, at: number): PlayerResult => ({
   gameId: `G${at}`,
@@ -14,20 +14,43 @@ const game = (delta: number | null, at: number): PlayerResult => ({
   finishedAt: at,
 });
 
-const rating = { ladder: "standard", rating: 1530, rd: 120, volatility: 0.06, conservative: 1290, games: 3, established: false, rank: null, lastGameAt: 3 };
+const point = (gameId: string, before: number, after: number, rdBefore: number, rdAfter: number, at: number): RatingHistoryResponse["points"][number] => ({
+  gameId,
+  power: "FRANCE",
+  result: "draw",
+  score: 0.5,
+  ratingBefore: before,
+  rdBefore,
+  ratingAfter: after,
+  rdAfter,
+  at,
+});
 
 describe("ratingPath", () => {
-  it("works back from today's rating through each rated game, oldest first", () => {
-    // Newest first, as the server lists them; the unrated game is skipped.
-    const path = ratingPath({ rating, recent: [game(20, 3), game(null, 2), game(-15, 1), game(25, 0)] });
-    expect(path.map((p) => p.rating)).toEqual([1500, 1525, 1510, 1530]);
-    expect(path[0]!.game).toBeNull();
-    expect(path.at(-1)!.delta).toBe(20);
+  it("draws the history the server stored, oldest first, from where the first game began", () => {
+    // The deviation grows between games and the figures need not chain exactly; the path shows
+    // what was stored, not what a sum of the recent changes would suggest.
+    const path = ratingPath({ points: [point("A", 1500, 1560, 350, 280, 1), point("B", 1560, 1541, 290, 240, 2), point("C", 1541, 1575, 240, 205, 3)] });
+    expect(path.map((p) => p.rating)).toEqual([1500, 1560, 1541, 1575]);
+    expect(path.map((p) => p.rd)).toEqual([350, 280, 240, 205]);
+    expect(path[0]).toMatchObject({ delta: null, game: null });
+    expect(path[2]).toMatchObject({ delta: -19, game: { gameId: "B", power: "FRANCE", finishedAt: 2 } });
   });
 
-  it("is empty before the first rated game", () => {
-    expect(ratingPath({ rating: null, recent: [game(10, 1)] })).toEqual([]);
-    expect(ratingPath({ rating, recent: [game(null, 1)] })).toEqual([]);
+  it("starts at the real rating before the oldest game listed, even when older games are left out", () => {
+    // Only the last two of many games: the path starts at 1612, not at 1500.
+    const path = ratingPath({ points: [point("Y", 1612, 1630, 90, 88, 9), point("Z", 1630, 1618, 88, 86, 10)] });
+    expect(path[0]!.rating).toBe(1612);
+    expect(path.at(-1)!.rating).toBe(1618);
+  });
+
+  it("is empty before the first rated game, or when the history did not load", () => {
+    expect(ratingPath({ points: [] })).toEqual([]);
+    expect(ratingPath(null)).toEqual([]);
+  });
+
+  it("gives the likely range as two deviations either side", () => {
+    expect(ratingRange({ rating: 1575.4, rd: 60.2 })).toEqual([1455, 1696]);
   });
 });
 

@@ -47,7 +47,10 @@ export function createUpdater(container: ContainerLike, reload: () => void) {
   }
 
   /** Watch a registration for a build that has installed behind the one in charge. */
-  function watch(registration: RegistrationLike): void {
+  function watch(registration: RegistrationLike | undefined): void {
+    // A browser that only pretends to register (an automated one with workers blocked resolves
+    // with nothing) has nothing to watch.
+    if (!registration) return;
     // A worker waiting with nobody in charge is the very first install: there is nothing to update.
     if (registration.waiting && container.controller) set(registration.waiting);
     registration.addEventListener("updatefound", () => {

@@ -1,18 +1,18 @@
 /**
  * The account card: the handle and how to change it, the recovery code that carries the account
- * to another device, notifications, and signing this device out. One dialog with every section
- * on it, opened at the one the player asked for.
+ * to another device, notifications, signing this device out, and deleting the account for good.
+ * One dialog with every section on it, opened at the one the player asked for.
  */
 import type { MeResponse, RecoveryCodeResponse } from "@cabal/protocol";
 import { type FormEvent, Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { Link } from "../app/router.jsx";
 import { recoveryFile } from "../net/player.js";
-import { accountFailure, handleProblem } from "./handles.js";
+import { accountFailure, handleKey, handleProblem } from "./handles.js";
 import { useAccount } from "./usePlayer.js";
 
 const NotificationsPanel = lazy(() => import("./NotificationsPanel.jsx").then((m) => ({ default: m.NotificationsPanel })));
 
-export type AccountSection = "handle" | "recovery" | "notifications" | "device";
+export type AccountSection = "handle" | "recovery" | "notifications" | "device" | "delete";
 
 function day(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
@@ -226,6 +226,134 @@ function DeviceSection({ me, onSignedOut }: { me: MeResponse; onSignedOut: () =>
   );
 }
 
+/**
+ * Deleting the account: closed to one line and a button, then a slip that says what goes and asks
+ * for the handle typed out. The safe choice is the one with focus; the destructive one stays
+ * disabled until the handle matches. After it, the slip says what happened; the device is already
+ * signed out.
+ */
+function DeleteSection({ me, onGone }: { me: MeResponse; onGone: (gone: Gone) => void }) {
+  const { deleteAccount } = useAccount();
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const keep = useRef<HTMLButtonElement>(null);
+  const inputId = useId();
+  const noteId = useId();
+  const handle = me.player.handle;
+  const matches = handleKey(typed) === handleKey(handle);
+
+  useEffect(() => {
+    if (open) keep.current?.focus();
+  }, [open]);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!matches || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteAccount(typed.trim(), (result) => onGone({ handle, games: result.games, unreached: result.unreached }));
+    } catch (err) {
+      setError(accountFailure(err));
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <div className="account-delete">
+        <p>Delete the account and everything Cabal keeps under {handle}. It cannot be undone.</p>
+        <button type="button" className="btn" onClick={() => setOpen(true)}>
+          Delete this account
+        </button>
+      </div>
+    );
+  }
+  return (
+    <form className="account-delete" onSubmit={submit} noValidate>
+      <div className="strike-slip" role="group" aria-labelledby={`${noteId}-title`}>
+        <span className="strike-stamp" aria-hidden="true">
+          For good
+        </span>
+        <p className="strike-title" id={`${noteId}-title`}>
+          Strike {handle} from the register
+        </p>
+        <ul className="strike-list">
+          <li>Your handle, rating, record and Ledger entries are deleted, and the handle is free for anyone.</li>
+          <li>
+            Seats you hold become ghosts. A lobby seat opens again; in a running game the seat falls into civil disorder, open to a substitute and held by the bot where the table allows it.
+            Finished games keep their results under the name Ghost.
+          </li>
+          <li>Every device signed in to the account is signed out, its notifications stop, and the recovery code stops working.</li>
+        </ul>
+      </div>
+      <div className="field">
+        <label htmlFor={inputId}>Type {handle} to confirm</label>
+        <input
+          id={inputId}
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          maxLength={40}
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          aria-describedby={error ? `${noteId}-error` : undefined}
+          aria-invalid={error !== null}
+        />
+      </div>
+      {error ? (
+        <p className="form-error" id={`${noteId}-error`} role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="seal-actions">
+        <button ref={keep} type="button" className="btn brass" disabled={busy} onClick={() => (setOpen(false), setTyped(""), setError(null))}>
+          Keep my account
+        </button>
+        <button type="submit" className="btn" disabled={!matches || busy} aria-disabled={!matches || busy}>
+          {busy ? "Deleting" : "Delete for good"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+interface Gone {
+  handle: string;
+  games: number;
+  /** Games whose room could not be told; their seats lose the name when each game is next recorded. */
+  unreached: number;
+}
+
+/** What the card shows once the account is gone. */
+function Farewell({ gone, onClose }: { gone: Gone; onClose: () => void }) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => box.current?.focus(), []);
+  return (
+    <div className="account-farewell" ref={box} tabIndex={-1} role="status">
+      <p className="strike-done">
+        <s>{gone.handle}</s>
+      </p>
+      <p>
+        The account is deleted.{" "}
+        {gone.games === 0
+          ? "Nothing on Cabal carries the name any more."
+          : gone.unreached === 0
+            ? `Its ${gone.games === 1 ? "seat is" : `seats in ${gone.games} games are`} now a ghost's, and nothing on Cabal carries the name.`
+            : `Its seats are now a ghost's, though ${gone.unreached === 1 ? "one game" : `${gone.unreached} games`} could not be reached just now and ${gone.unreached === 1 ? "drops" : "drop"} the name when ${gone.unreached === 1 ? "it is" : "they are"} next saved.`}{" "}
+        This device is signed out.
+      </p>
+      <div className="seal-actions">
+        <button type="button" className="btn brass" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function AccountDialog({ open, section, onClose }: { open: boolean; section: AccountSection; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -233,6 +361,8 @@ export function AccountDialog({ open, section, onClose }: { open: boolean; secti
   const [account, setAccount] = useState<MeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const [gone, setGone] = useState<Gone | null>(null);
+  const close = onClose;
 
   useEffect(() => {
     const d = ref.current;
@@ -242,7 +372,7 @@ export function AccountDialog({ open, section, onClose }: { open: boolean; secti
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || gone) return;
     let live = true;
     setError(null);
     me().then(
@@ -252,7 +382,7 @@ export function AccountDialog({ open, section, onClose }: { open: boolean; secti
     return () => {
       live = false;
     };
-  }, [open, tick, me]);
+  }, [open, tick, me, gone]);
 
   // Open at the section that was asked for: once per opening. The account is read again after a
   // rename or a new recovery code, and that must not pull focus away from what the player is doing.
@@ -270,19 +400,21 @@ export function AccountDialog({ open, section, onClose }: { open: boolean; secti
 
   // Signed out (here or in another tab) while the card is open: nothing left to show.
   useEffect(() => {
-    if (open && !player) onClose();
-  }, [open, player, onClose]);
+    if (open && !player && !gone) onClose();
+  }, [open, player, onClose, gone]);
 
   return (
-    <dialog ref={ref} className="how account" onClose={onClose} aria-labelledby={titleId}>
+    <dialog ref={ref} className="how account" onClose={close} aria-labelledby={titleId}>
       <header>
         <h2 id={titleId}>Your account</h2>
-        <button type="button" className="icon" onClick={onClose} aria-label="Close">
+        <button type="button" className="icon" onClick={close} aria-label="Close">
           ×
         </button>
       </header>
       <div className="how-body">
-        {error ? (
+        {gone ? (
+          <Farewell gone={gone} onClose={close} />
+        ) : error ? (
           <p className="form-error" role="alert">
             {error}
           </p>
@@ -314,6 +446,10 @@ export function AccountDialog({ open, section, onClose }: { open: boolean; secti
             <section id="account-device" aria-labelledby="account-device-title">
               <h3 id="account-device-title">This device</h3>
               <DeviceSection me={account} onSignedOut={onClose} />
+            </section>
+            <section id="account-delete" aria-labelledby="account-delete-title">
+              <h3 id="account-delete-title">Delete the account</h3>
+              <DeleteSection me={account} onGone={setGone} />
             </section>
           </>
         )}

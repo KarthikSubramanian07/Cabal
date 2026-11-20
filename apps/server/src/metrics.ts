@@ -74,11 +74,15 @@ export function fullGameEvent(db: D1Database, record: GameRecord): D1PreparedSta
 /**
  * A beacon comes from this deployment's own pages: no `Origin` (not a browser, or a same-origin
  * request that sent none), the origin the request was made to (the web app forwards `/api` with its
- * own URL), or a local development server. Any other page cannot make its visitors send one.
+ * own URL), or a local development server talking to a local server (plain http: a deployment is
+ * only ever reached over https, so a page on someone's localhost cannot post to it). Any other page
+ * cannot make its visitors send one. This keeps other sites' visitors out; it authenticates nobody,
+ * so the per-address limiter is what bounds a script that sets the header itself.
  */
-function beaconOriginAllowed(request: Request, url: URL): boolean {
+export function beaconOriginAllowed(request: Request, url: URL): boolean {
   const origin = request.headers.get("origin");
   if (origin === null || origin === url.origin) return true;
+  if (url.protocol !== "http:") return false;
   try {
     const host = new URL(origin).hostname;
     return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
@@ -120,7 +124,7 @@ async function recordBeacon(db: D1Database, samples: readonly { metric: string; 
 }
 
 /** True when the request carries this deployment's admin token. */
-async function isAdmin(request: Request, env: Env): Promise<boolean> {
+export async function isAdmin(request: Request, env: Env): Promise<boolean> {
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
   return Boolean(env.ADMIN_TOKEN) && bearer.length > 0 && sameHash(hashToken(bearer), hashToken(env.ADMIN_TOKEN!));
 }

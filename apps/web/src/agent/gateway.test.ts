@@ -1,7 +1,10 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { SECURITY_HEADERS, handleAgentRequest, type AssetEnv } from "./gateway.js";
+import { readChunks, readPalette } from "./png.js";
+import layout from "./share-card.json";
 
-function mockEnv(files: Record<string, { body: string; type: string }>): AssetEnv {
+function mockEnv(files: Record<string, { body: string | Uint8Array; type: string }>): AssetEnv {
   return {
     ASSETS: {
       async fetch(input: RequestInfo | URL) {
@@ -9,7 +12,7 @@ function mockEnv(files: Record<string, { body: string; type: string }>): AssetEn
         const path = url.pathname;
         const file = files[path];
         if (!file) return new Response("missing", { status: 404 });
-        return new Response(file.body, {
+        return new Response(file.body as BodyInit, {
           status: 200,
           headers: { "Content-Type": file.type },
         });
@@ -307,6 +310,63 @@ describe("handleAgentRequest", () => {
       );
       expect(res.status).toBe(404);
       expect(seen).toHaveLength(0);
+    });
+  });
+
+  describe("a table's share card", () => {
+    const board = new Uint8Array(readFileSync(new URL("../../public/share/board.png", import.meta.url)));
+    const withBoard = mockEnv({ ...files, "/share/board.png": { body: board, type: "image/png" } });
+    const saved = { gameId: "K7Q2XZ", phase: "F1902M", centers: { FRANCE: ["PAR", "MAR", "BRE", "SPA"], ENGLAND: ["LON"] } };
+    function live(answer: (path: string) => Response) {
+      const asked: string[] = [];
+      const from: (string | null)[] = [];
+      const server = {
+        async fetch(input: RequestInfo | URL) {
+          const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+          asked.push(path);
+          from.push(input instanceof Request ? input.headers.get("cf-connecting-ip") : null);
+          return answer(path);
+        },
+      };
+      return { env: { ...withBoard, SERVER: server } satisfies AssetEnv, asked, from };
+    }
+
+    it("draws the table's centres from the server's light answer, in any case of the code", async () => {
+      const { env: bound, asked, from } = live(() => Response.json(saved));
+      const res = await handleAgentRequest(new Request("https://playcabal.pages.dev/share/g/k7q2xz.png", { headers: { "cf-connecting-ip": "203.0.113.9" } }), bound);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("image/png");
+      expect(res.headers.get("Cache-Control")).toBe("public, max-age=300");
+      // Only the centres, not the whole saved game, and read as the visitor who asked, so one
+      // scraper cannot spend every other card's read budget.
+      expect(asked).toEqual(["/api/games/K7Q2XZ/centres"]);
+      expect(from).toEqual(["203.0.113.9"]);
+      const card = new Uint8Array(await res.arrayBuffer());
+      const palette = readPalette(card);
+      expect(layout.notches.FRANCE.slice(0, 5).map((i) => palette[i]!.join())).toEqual([...Array(4).fill("78,163,208"), layout.notch.join()]);
+      expect(palette[layout.centres.LON]).not.toEqual(layout.land);
+      expect(palette[layout.centres.BER]).toEqual(layout.land);
+      // The pixels are the shipped board's.
+      expect(readChunks(card).find((c) => c.type === "IDAT")!.data).toEqual(readChunks(board).find((c) => c.type === "IDAT")!.data);
+    });
+
+    it("answers 404 for a code that cannot exist or names no game, and the neutral board when the server cannot say", async () => {
+      const { env: bound, asked } = live((path) => (path.includes("ZZZZZZ") ? Response.json({ error: "no such game" }, { status: 404 }) : new Response("down", { status: 503 })));
+      expect((await handleAgentRequest(new Request("https://playcabal.pages.dev/share/g/K7Q2X0.png"), bound)).status).toBe(404);
+      expect(asked).toEqual([]);
+      const missing = await handleAgentRequest(new Request("https://playcabal.pages.dev/share/g/ZZZZZZ.png"), bound);
+      expect(missing.status).toBe(404);
+      const down = await handleAgentRequest(new Request("https://playcabal.pages.dev/share/g/K7Q2XZ.png"), bound);
+      expect(down.status).toBe(200);
+      expect(down.headers.get("Cache-Control")).toBe("public, max-age=60");
+      expect(new Uint8Array(await down.arrayBuffer())).toEqual(board);
+    });
+
+    it("points a table's page and its replay at the card", async () => {
+      const { env: bound } = live(() => Response.json(saved));
+      const shell = { ...files, "/index.html": { body: readFileSync(new URL("../../index.html", import.meta.url), "utf8"), type: "text/html" } };
+      const page = await handleAgentRequest(new Request("https://playcabal.pages.dev/g/K7Q2XZ", { headers: { Accept: "text/html" } }), { ...mockEnv(shell), SERVER: bound.SERVER });
+      expect(await page.text()).toContain('<meta property="og:image" content="https://playcabal.pages.dev/share/g/K7Q2XZ.png" />');
     });
   });
 });

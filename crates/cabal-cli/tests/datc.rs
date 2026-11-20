@@ -32,11 +32,12 @@ fn report_adjudicates_every_case_and_prints_totals() {
         "{text}"
     );
     let total = text.lines().last().unwrap();
+    // The line's "skipped" is the cases the exit status and the JSON count, not orders.
     assert!(
-        total.starts_with("total: 178 passed, 0 failed, "),
+        total.starts_with("total: 178 passed, 0 failed, 0 skipped; "),
         "{total}"
     );
-    assert!(total.ends_with(" skipped"), "{total}");
+    assert!(total.ends_with(" orders without an expectation"), "{total}");
 }
 
 #[test]
@@ -46,4 +47,30 @@ fn the_summary_omits_the_section_table() {
     assert!(text.contains("171 passed"));
     assert!(!text.contains("6.A:"), "{text}");
     assert_eq!(datc(&["--nonsense"]).0, Some(2));
+}
+
+#[test]
+fn json_reports_every_case_passed_and_none_skipped() {
+    let (code, text) = datc(&["--json"]);
+    assert_eq!(code, Some(0), "{text}");
+    let report: serde_json::Value = serde_json::from_str(&text).expect("one JSON document");
+    let corpus = &report["corpora"][0];
+    assert_eq!(corpus["name"], "DATC v3.0");
+    assert_eq!(corpus["total"], 171);
+    assert_eq!(corpus["passed"], corpus["total"], "{text}");
+    assert_eq!(corpus["failed"], 0);
+    assert_eq!(corpus["skipped"], 0);
+    assert!(corpus["checks"].as_u64().unwrap() > 171);
+    assert_eq!(report["skipped"], 0);
+    assert_eq!(report["failed"], 0);
+    assert_eq!(report["passed"], report["total"]);
+    assert_eq!(report["total"], 178);
+    assert!(report["engine"].as_str().is_some_and(|v| !v.is_empty()));
+    // `--json` with `--report` is still one document; nonsense is still refused.
+    let (code, both) = datc(&["--json", "--report"]);
+    assert_eq!(code, Some(0));
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&both).is_ok(),
+        "{both}"
+    );
 }

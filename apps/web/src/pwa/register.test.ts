@@ -92,6 +92,12 @@ describe("the update prompt", () => {
     updater.dismiss();
     expect(updater.get().waiting).toBe(false);
   });
+
+  it("ignores a registration that resolved with nothing, as a browser with workers blocked gives", () => {
+    const updater = createUpdater(new FakeContainer(), vi.fn());
+    expect(() => updater.watch(undefined)).not.toThrow();
+    expect(updater.get().waiting).toBe(false);
+  });
 });
 
 describe("connecting the worker", () => {
