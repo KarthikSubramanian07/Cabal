@@ -4,7 +4,7 @@ import { Game, type State, preview, ready } from "@cabal/engine";
 import { beforeAll, describe, expect, it } from "vitest";
 import { type OrderBook, flatten } from "../book.js";
 import { receiptFor } from "../receipts.js";
-import { explainPhase, explainerFor, hasWhy, indexOfUnit, namePlaces, whyOf, whyOfResult } from "./explain.js";
+import { explainPhase, explainerFor, hasWhy, indexOfUnit, whyOf, whyOfResult } from "./explain.js";
 import { predict } from "./whatIf.js";
 
 beforeAll(async () => {
@@ -122,6 +122,31 @@ describe("the panel agrees with the receipt", () => {
     expect(whyOf(ex, indexOfUnit(ex, "FRANCE", "A BRE"))!.cycle?.kind).toBe("convoy_paradox");
   });
 
+  it("stamps every way a movement order can fail the way its receipt does", () => {
+    // One table per failure: each order's engine code, and the stamp it must carry in both places.
+    const cases: { name: string; units: Record<string, string[]>; orders: OrderBook; unit: string; code: string; stamp: string }[] = [
+      { name: "bounce", units: { FRANCE: ["A PAR"], GERMANY: ["A MUN"] }, orders: { FRANCE: { "A PAR": "A PAR - BUR" }, GERMANY: { "A MUN": "A MUN - BUR" } }, unit: "A PAR", code: "bounce", stamp: "Bounced" },
+      { name: "repelled", units: { FRANCE: ["A PAR"], GERMANY: ["A BUR"] }, orders: { FRANCE: { "A PAR": "A PAR - BUR" } }, unit: "A PAR", code: "repelled", stamp: "Repelled" },
+      { name: "head to head", units: { FRANCE: ["A PAR"], GERMANY: ["A BUR"] }, orders: { FRANCE: { "A PAR": "A PAR - BUR" }, GERMANY: { "A BUR": "A BUR - PAR" } }, unit: "A PAR", code: "head_to_head", stamp: "Bounced" },
+      { name: "own unit", units: { FRANCE: ["A PAR", "A BUR", "A MAR"] }, orders: { FRANCE: { "A PAR": "A PAR - BUR", "A MAR": "A MAR S A PAR - BUR" } }, unit: "A PAR", code: "own_unit", stamp: "Stopped" },
+      { name: "support cut", units: { FRANCE: ["A PAR", "A MAR"], GERMANY: ["A MUN", "A PIE"] }, orders: { FRANCE: { "A PAR": "A PAR - BUR", "A MAR": "A MAR S A PAR - BUR" }, GERMANY: { "A PIE": "A PIE - MAR" } }, unit: "A MAR", code: "cut", stamp: "Support cut" },
+      { name: "support wasted", units: { FRANCE: ["A PAR", "A MAR"] }, orders: { FRANCE: { "A MAR": "A MAR S A PAR - BUR" } }, unit: "A MAR", code: "void", stamp: "Support wasted" },
+      { name: "convoy wasted", units: { FRANCE: ["A BRE", "F ENG"] }, orders: { FRANCE: { "F ENG": "F ENG C A BRE - LON" } }, unit: "F ENG", code: "void", stamp: "Convoy wasted" },
+      { name: "dislodged", units: { FRANCE: ["A PAR", "A MAR"], GERMANY: ["A BUR"] }, orders: { FRANCE: { "A PAR": "A PAR - BUR", "A MAR": "A MAR S A PAR - BUR" } }, unit: "A BUR", code: "dislodged", stamp: "Dislodged" },
+      { name: "illegal", units: { FRANCE: ["A PAR"] }, orders: { FRANCE: { "A PAR": "A PAR - MUN" } }, unit: "A PAR", code: "illegal", stamp: "Not legal" },
+    ];
+    for (const c of cases) {
+      const state = position(c.units);
+      const out = preview(state, { orders: flatten(c.orders) });
+      const result = out.results.find((r) => r.unit === c.unit)!;
+      expect(result, c.name).toBeDefined();
+      expect(result.code, c.name).toBe(c.code);
+      const why = explainFor(state, c.orders, result.power, c.unit);
+      expect(`${c.name}: ${why.verdict}`).toBe(`${c.name}: ${c.stamp}`);
+      expect(`${c.name}: ${receiptFor(result, state.name, names, out.results).verdict}`).toBe(`${c.name}: ${c.stamp}`);
+    }
+  });
+
   it("shows no holding ledger for an order nothing came at", () => {
     // Tyrolia cannot reach Marseilles, so its support is illegal and it simply holds, unattacked.
     const state = position({ AUSTRIA: ["A TYR"], ITALY: ["A PIE"] });
@@ -146,14 +171,6 @@ describe("phases the engine does not explain", () => {
     expect(hasWhy({ power: "F", unit: "A PAR", order: "A PAR - BUR", ok: true, code: "ok", reason: "" })).toBe(false);
     expect(hasWhy({ power: "F", unit: "A PAR", order: "A PAR D", ok: false, code: "disband", reason: "disbanded" })).toBe(false);
     expect(hasWhy({ power: "F", unit: "A PAR", order: "A PAR - BUR", ok: false, code: "bounce", reason: "" })).toBe(true);
-  });
-});
-
-describe("namePlaces", () => {
-  it("names provinces and coasts but leaves units in notation", () => {
-    expect(namePlaces("A PAR bounced in BUR with A MUN.", names)).toBe("A PAR bounced in Burgundy with A MUN.");
-    expect(namePlaces("F LON moved to STP/NC.", names)).toBe("F LON moved to St Petersburg (north coast).");
-    expect(namePlaces("A PAR moved to XYZ.", names)).toBe("A PAR moved to XYZ.");
   });
 });
 

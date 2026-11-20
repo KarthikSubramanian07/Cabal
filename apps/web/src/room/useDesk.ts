@@ -7,7 +7,9 @@
  *  - Every change is filed with the server shortly after it is made (`orders.set` replaces the
  *    seat's list), and the server's verdict on each order is kept for the order list.
  *  - Orders written while the connection is down stay on this device and are filed when it
- *    comes back. Changing orders after saying "ready" takes the ready back first, so a phase can
+ *    comes back. They are kept in storage too (drafts.ts) until the server acknowledges them, so
+ *    leaving the room or closing the tab first does not lose them: reopening puts them back and
+ *    files them. Changing orders after saying "ready" takes the ready back first, so a phase can
  *    never resolve on orders the player is still changing.
  */
 import type { OrderVerdict as ServerVerdict, PowerName, StateView } from "@cabal/protocol";
@@ -19,6 +21,7 @@ import type { ComposeContext, Piece } from "../game/compose.js";
 import { type PhaseKind, parseUnit, phaseKind } from "../game/notation.js";
 import { tidyLegal } from "../game/saved.js";
 import { type Board, loadBoard } from "../map/boardData.js";
+import { clearDraft, readDraft, writeDraft } from "./drafts.js";
 import { type Everyone, NOBODY, legalForEveryone } from "./sketch.js";
 import { settledBook } from "./settle.js";
 
@@ -72,6 +75,8 @@ export interface Desk {
 export type DeskLoad = { status: "loading" } | { status: "error"; error: Error; retry: () => void } | { status: "ready"; desk: Desk };
 
 interface Props {
+  /** The game's code: drafts are kept per game and seat. */
+  gameId: string;
   power: PowerName | null;
   phase: string;
   state: StateView | null;
@@ -113,7 +118,7 @@ export function sameOrders(a: Record<string, string>, b: Record<string, string>)
 }
 
 export function useDesk(props: Props): DeskLoad {
-  const { power, phase, state, rulebook, serverOrders, serverPhase, ready, canOrder, connection, file, unready } = props;
+  const { gameId, power, phase, state, rulebook, serverOrders, serverPhase, ready, canOrder, connection, file, unready } = props;
   const [board, setBoard] = useState<Board | null>(null);
   const [engine, setEngine] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -268,6 +273,39 @@ export function useDesk(props: Props): DeskLoad {
 
   const latest = useRef(book);
   latest.current = book;
+
+  // ---- orders kept on this device until the server has them (drafts.ts)
+
+  /** The game, seat and phase whose draft has been looked for. */
+  const draftFor = useRef<string | null>(null);
+  const draftKey = power ? `${gameId}|${power}|${phase}` : null;
+
+  // On opening the room, and at each new phase: orders this device wrote and never got on file
+  // are put back, and filed as soon as the connection allows. This comes after the effect that
+  // takes the server's copy, so that when both run in one pass the orders put back are what stay.
+  useEffect(() => {
+    if (!power || !draftKey || draftFor.current === draftKey) return;
+    draftFor.current = draftKey;
+    const draft = readDraft(gameId, power, phase);
+    if (!draft) return;
+    const server = serverPhase === phase ? bookOf(power, serverOrders, kind) : {};
+    if (sameOrders(draft.book, server)) {
+      clearDraft(gameId, power);
+      return;
+    }
+    latest.current = draft.book;
+    setBook(draft.book);
+    setEdits((n) => n + 1);
+  }, [gameId, power, phase, draftKey, serverPhase, serverOrders, kind]);
+
+  // Every change not yet acknowledged is written down; once the server has it all, the draft goes.
+  useEffect(() => {
+    if (!power || draftFor.current !== draftKey || bookPhase !== phase) return;
+    // Orders were just put back from the draft: this pass still holds the book before them.
+    if (latest.current !== book) return;
+    if (sync !== "filed" || filed.current !== edits) writeDraft({ gameId, power, phase, book, savedAt: Date.now() });
+    else clearDraft(gameId, power);
+  }, [gameId, power, phase, draftKey, bookPhase, book, sync, edits]);
   const change = useCallback((next: (b: OrderBook) => OrderBook) => {
     if (!power) return;
     const current = latest.current;

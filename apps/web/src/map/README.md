@@ -17,9 +17,13 @@ this page is the map of what to reach for.
 
 ## `<Board>`
 
+`loadBoard()` gives the board to draw: the standard variant's provinces (names, terrain, supply
+centres, named coasts, from the engine's map document) on the geometry in `board.json`, joined by
+`composeBoard` in `map/variant.ts`, which refuses a geometry that does not fit its variant.
+
 ```tsx
 <Board
-  board={board}              // geometry from loadBoard()
+  board={board}              // from loadBoard()
   state={state}              // the position to draw (while a resolution plays: the one it began from)
   orders={drawn}             // DrawnOrder[]: { power, text, ok? }
   resolution={resolution}    // optional: a resolved phase to play, see below
@@ -54,6 +58,12 @@ A highlight names provinces. Before a retreat phase a province can hold two unit
 took it and the one dislodged from it; every result of that phase is the dislodged unit's, so
 the board rings that one (where it stood, if it was disbanded). `trackAt(plan, province)` in
 `motion/choreography.ts` makes that choice.
+
+Province codes are laid out by `placeLabels` in `map/view.ts`, clear of every piece position and
+of each other, inside the province they name. On a far-out overview (a phone's whole board) the
+codes are at a floor of 7 pixels and cannot all fit: the lesser ones are left for zooming in, but a
+supply centre's code is always drawn, set beside a province too small for it with a hairline
+leader to its centre.
 
 Order marks are laid out by `map/marks.ts` with the geometry in `map/geometry.ts`: moves are
 bowed strokes with a barbed head, supports dashed with a round knot on the middle of the move

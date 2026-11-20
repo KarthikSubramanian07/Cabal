@@ -5,33 +5,10 @@
  */
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { clockFace, clockWords, urgency } from "./clock.js";
+import { createSecondHand } from "./secondHand.js";
 
-type Listener = () => void;
-
-/** One shared second hand for every clock on the page: a single timer, however many listen. */
-const listeners = new Set<Listener>();
-let timer: number | null = null;
-let now = Date.now();
-
-function subscribe(listener: Listener): () => void {
-  listeners.add(listener);
-  if (timer === null) {
-    now = Date.now();
-    timer = window.setInterval(() => {
-      now = Date.now();
-      for (const l of listeners) l();
-    }, 1000);
-  }
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0 && timer !== null) {
-      window.clearInterval(timer);
-      timer = null;
-    }
-  };
-}
-
-const read = () => now;
+/** One shared second hand for every clock on the page (secondHand.ts). */
+const hand = createSecondHand();
 const never = () => () => undefined;
 
 /**
@@ -39,7 +16,7 @@ const never = () => () => undefined;
  * clock (`offsetMs` from the welcome and state frames), so two players read the same time.
  */
 export function useServerNow(offsetMs: number, on = true): number {
-  const local = useSyncExternalStore(on ? subscribe : never, read, read);
+  const local = useSyncExternalStore(on ? hand.subscribe : never, hand.read, hand.read);
   return local + offsetMs;
 }
 

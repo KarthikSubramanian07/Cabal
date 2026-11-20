@@ -1,8 +1,12 @@
 /**
- * Receipts in plain words. The engine explains every order with a short code and a terse
- * reason written for logs (`illegal (AllowanceUsed)`, `bounced with PAR`). Players get a
- * sentence instead. Every code and reason the engine can produce is covered here; anything
- * new falls back to readable words, never to a raw enum name.
+ * How an order went, in plain words: the one place for that copy. The sidebar's receipts and the
+ * Why panel (explain/explain.ts) both take their stamps, sentences, notes and labels from here,
+ * so a failed order reads the same wherever it is opened.
+ *
+ * The engine explains every order with a short code and a terse reason written for logs
+ * (`illegal (AllowanceUsed)`, `bounced with PAR`). Players get a sentence instead. Every code and
+ * reason the engine can produce is covered here; anything new falls back to readable words,
+ * never to a raw enum name.
  */
 import type { OrderResult } from "../engine.js";
 import { type PhaseKind, parseOrder, parseUnit, phaseKind, provinceOf } from "./notation.js";
@@ -16,7 +20,76 @@ export interface Receipt {
   detail: string;
 }
 
-type Names = Record<string, { name: string } | undefined>;
+/** The board's provinces by code, for putting place names in a sentence. */
+export type Names = Record<string, { name: string } | undefined>;
+
+/**
+ * The stamp for each engine code (crates/cabal-engine/src/text.rs `outcome_code`). A head-to-head
+ * is a bounce whether it was lost or tied, so it is stamped as one; the sentence says which.
+ */
+export const VERDICTS: Record<string, string> = {
+  ok: "Succeeded",
+  bounce: "Bounced",
+  repelled: "Repelled",
+  head_to_head: "Bounced",
+  own_unit: "Stopped",
+  no_path: "No convoy",
+  cut: "Support cut",
+  void: "Wasted",
+  support_void: "Support wasted",
+  convoy_void: "Convoy wasted",
+  dislodged: "Dislodged",
+  paradox: "Paradox",
+  illegal: "Not legal",
+  disband: "Disbanded",
+};
+
+/** The stamp for an order that ended with `code`. A wasted support or convoy says which it was. */
+export function verdictFor(code: string, order?: string): string {
+  if (code === "void" && order) {
+    const type = parseOrder(order)?.type;
+    if (type === "support-move" || type === "support-hold") return VERDICTS["support_void"]!;
+    if (type === "convoy") return VERDICTS["convoy_void"]!;
+  }
+  return VERDICTS[code] ?? "Failed";
+}
+
+/** What a circle of orders that depend on each other means, by the rule that settled it. */
+const CYCLE_NOTES: Record<string, string> = {
+  convoy_paradox:
+    "These orders depend on each other in a circle: a convoy paradox. By the Szykman rule the convoys in the circle fail, so the army stays where it is and everything else is judged without it.",
+  circular_movement: "These moves form a circle, each into the next one's province. They all succeed together.",
+  unresolved: "These orders depend on each other in a circle that no rule settles, so every order in it fails.",
+};
+
+export function cycleNote(kind: string): string {
+  return CYCLE_NOTES[kind] ?? "These orders depend on each other in a circle, settled by a backup rule.";
+}
+
+/** How the Why panel labels each side of a contest. */
+export const SIDES = {
+  move: "This move",
+  convoyed: "Crossing by convoy",
+  held: "Held by",
+  headOn: "Coming the other way",
+  rival: "Also moving in",
+} as const;
+
+const COASTS: Record<string, string> = { NC: "north coast", SC: "south coast", EC: "east coast", WC: "west coast" };
+
+/**
+ * Put place names in the engine's sentence: `bounced in BUR` reads `bounced in Burgundy`.
+ * Units keep their notation (`A MUN`), which players read faster than a name.
+ */
+export function namePlaces(sentence: string, names?: Names): string {
+  if (!names) return sentence;
+  return sentence.replace(/\b([AF] )?([A-Z]{3})(?:\/([NSEW]C))?\b/g, (whole, unit: string | undefined, code: string, coast?: string) => {
+    if (unit) return whole;
+    const name = names[code]?.name;
+    if (!name) return whole;
+    return coast ? `${name} (${COASTS[coast] ?? coast})` : name;
+  });
+}
 
 /** Why a movement order was not accepted (engine `Illegal`). */
 const ILLEGAL_MOVE: Record<string, string> = {
@@ -145,20 +218,20 @@ function bounceDetail(result: OrderResult, rivals: string[], who: string, all: r
 export function receiptFor(result: OrderResult, phase: string, names?: Names, all?: readonly OrderResult[]): Receipt {
   const kind = phaseKind(phase);
   const reason = result.reason.trim();
-  if (result.ok) return { tone: "ok", verdict: "Succeeded", detail: "" };
+  if (result.ok) return { tone: "ok", verdict: verdictFor("ok"), detail: "" };
 
   let m: RegExpExecArray | null;
 
   // Illegal orders, in each phase's own wording.
   if ((m = /^illegal retreat \((\w+)\)/.exec(reason))) {
-    return { tone: "fail", verdict: "Not legal", detail: `${illegal("R", m[1]!)} The unit was disbanded.` };
+    return { tone: "fail", verdict: verdictFor("illegal"), detail: `${illegal("R", m[1]!)} The unit was disbanded.` };
   }
   if ((m = /^illegal \((\w+)\)(?:, holds)?(?:, dislodged by (\w+))?/.exec(reason))) {
-    if (kind === "A") return { tone: "fail", verdict: "Not legal", detail: illegal("A", m[1]!) };
+    if (kind === "A") return { tone: "fail", verdict: verdictFor("illegal"), detail: illegal("A", m[1]!) };
     const after = m[2]
       ? ` The unit held instead and was dislodged by the attack from ${place(names, m[2])}.`
       : " The unit held instead.";
-    return { tone: "fail", verdict: "Not legal", detail: illegal("M", m[1]!) + after };
+    return { tone: "fail", verdict: verdictFor("illegal"), detail: illegal("M", m[1]!) + after };
   }
 
   if ((m = /^bounced with\s*(.*)$/.exec(reason))) {
@@ -166,7 +239,7 @@ export function receiptFor(result: OrderResult, phase: string, names?: Names, al
     if (kind === "R") {
       return {
         tone: "fail",
-        verdict: "Bounced",
+        verdict: verdictFor("bounce"),
         detail: who
           ? `Another retreat from ${who} was headed for the same province, so the unit was disbanded.`
           : "Another retreat was headed for the same province, so the unit was disbanded.",
@@ -174,7 +247,7 @@ export function receiptFor(result: OrderResult, phase: string, names?: Names, al
     }
     return {
       tone: "fail",
-      verdict: "Bounced",
+      verdict: verdictFor("bounce"),
       detail: who
         ? bounceDetail(result, (m[1] ?? "").split(",").map((c) => c.trim()).filter(Boolean), who, all)
         : "Bounced: it did not have the strength to get in.",
@@ -187,7 +260,7 @@ export function receiptFor(result: OrderResult, phase: string, names?: Names, al
     const where = place(names, m[1]!);
     return {
       tone: "fail",
-      verdict: "Repelled",
+      verdict: verdictFor("repelled"),
       detail: tried
         ? `The unit in ${where} failed to move out, and the attack was not strong enough to dislodge it.`
         : `The unit in ${where} stayed put, and the attack was not strong enough to dislodge it.`,
@@ -196,62 +269,62 @@ export function receiptFor(result: OrderResult, phase: string, names?: Names, al
   if ((m = /^lost head-to-head with (\w+)/.exec(reason))) {
     return {
       tone: "fail",
-      verdict: "Bounced",
+      verdict: verdictFor("head_to_head"),
       detail: `Met the unit from ${place(names, m[1]!)} head on and did not have the strength to win.`,
     };
   }
   if (reason === "no convoy path") {
-    return { tone: "fail", verdict: "No convoy", detail: "No unbroken chain of fleets carried the army across." };
+    return { tone: "fail", verdict: verdictFor("no_path"), detail: "No unbroken chain of fleets carried the army across." };
   }
   if (reason === "cannot dislodge own unit") {
-    return { tone: "fail", verdict: "Stopped", detail: "A power cannot dislodge its own unit." };
+    return { tone: "fail", verdict: verdictFor("own_unit"), detail: "A power cannot dislodge its own unit." };
   }
   if ((m = /^supporter dislodged by (\w+)/.exec(reason))) {
     return {
       tone: "fail",
-      verdict: "Dislodged",
+      verdict: verdictFor("dislodged"),
       detail: `Dislodged by the attack from ${place(names, m[1]!)}, so its support counted for nothing.`,
     };
   }
   if ((m = /^convoy dislodged by (\w+)/.exec(reason))) {
     return {
       tone: "fail",
-      verdict: "Dislodged",
+      verdict: verdictFor("dislodged"),
       detail: `Dislodged by the attack from ${place(names, m[1]!)}, which broke the convoy.`,
     };
   }
   if ((m = /^dislodged by (\w+)/.exec(reason))) {
-    return { tone: "fail", verdict: "Dislodged", detail: `Dislodged by the attack from ${place(names, m[1]!)}.` };
+    return { tone: "fail", verdict: verdictFor("dislodged"), detail: `Dislodged by the attack from ${place(names, m[1]!)}.` };
   }
   if ((m = /^support cut by (\w+)/.exec(reason))) {
-    return { tone: "fail", verdict: "Support cut", detail: `Cut by the attack from ${place(names, m[1]!)}.` };
+    return { tone: "fail", verdict: verdictFor("cut"), detail: `Cut by the attack from ${place(names, m[1]!)}.` };
   }
   if (reason.startsWith("support void")) {
     return {
       tone: "fail",
-      verdict: "Support wasted",
+      verdict: verdictFor("support_void"),
       detail: "The unit it backed was not ordered to do that, so the support went nowhere.",
     };
   }
   if (reason.startsWith("convoy void")) {
     return {
       tone: "fail",
-      verdict: "Convoy wasted",
+      verdict: verdictFor("convoy_void"),
       detail: "The army was not ordered to make that crossing, so the convoy went unused.",
     };
   }
   if (reason.startsWith("convoy fails") || result.code === "paradox") {
     return {
       tone: "fail",
-      verdict: "Paradox",
+      verdict: verdictFor("paradox"),
       detail: "A convoy paradox: the orders contradict each other, so by the Szykman rule the convoy fails.",
     };
   }
   if (reason === "disbanded" || result.code === "disband") {
-    return { tone: "neutral", verdict: "Disbanded", detail: "The unit was disbanded." };
+    return { tone: "neutral", verdict: verdictFor("disband"), detail: "The unit was disbanded." };
   }
 
   // Something the engine learned to say after this file was written: show its words, tidied.
   const cleaned = reason.replace(/\((\w+)\)/g, (_, code: string) => `(${wordsFromCode(code)})`);
-  return { tone: "fail", verdict: "Failed", detail: sentence(cleaned || wordsFromCode(result.code)) };
+  return { tone: "fail", verdict: verdictFor(result.code, result.order), detail: sentence(cleaned || wordsFromCode(result.code)) };
 }

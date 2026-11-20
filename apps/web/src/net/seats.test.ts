@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readDraft, writeDraft } from "../room/drafts.js";
 import { forgetSeat, forgetSeatsOf, listSeats, readName, readSeat, saveName, saveSeat } from "./seats.js";
 
 class MemoryStorage implements Storage {
@@ -73,6 +74,17 @@ describe("seats kept on this device", () => {
     expect(listSeats().map((s) => s.gameId)).toEqual(["ABCDEF", "K7Q2XZ"]);
     forgetSeat("ABCDEF");
     expect(listSeats().map((s) => s.gameId)).toEqual(["K7Q2XZ"]);
+  });
+
+  it("forgets the orders a seat left unsent along with the seat", () => {
+    saveSeat({ gameId: "K7Q2XZ", power: "FRANCE", token: TOKEN, name: "Ada", userId: "pl_ada", savedAt: 1 });
+    const draft = { gameId: "K7Q2XZ", power: "FRANCE", phase: "S1901M", book: { "A PAR": "A PAR - BUR" }, savedAt: Date.now() };
+    writeDraft(draft);
+    writeDraft({ ...draft, gameId: "ABCDEF" });
+    forgetSeatsOf({ id: "pl_ada", handle: "ada_l" });
+    expect(readDraft("K7Q2XZ", "FRANCE", "S1901M")).toBeNull();
+    // Another game's draft is not this seat's to forget.
+    expect(readDraft("ABCDEF", "FRANCE", "S1901M")).not.toBeNull();
   });
 
   it("remembers the name the player sat down under", () => {
