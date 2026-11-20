@@ -13,6 +13,7 @@ import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, us
 import { PageLoading } from "../app/PageLoading.jsx";
 import { shortcutsEnabled } from "../app/prefs.js";
 import { OrderEntry, type WriteResult } from "../components/OrderEntry.jsx";
+import { OrderPicker, type PickerState, placePicker } from "../components/OrderPicker.jsx";
 import { OrderList, PhaseStepper, Results, whyKey } from "../components/Sidebar.jsx";
 import { explainPhase, explainerFor } from "../game/explain/explain.js";
 import { type ComposeContext, type Draft, type Mode, type Step, canGoByConvoy, click, disbandSelected, holdSelected, setMode, typedOrder, viaAlternative } from "../game/compose.js";
@@ -46,17 +47,6 @@ import { sketchCount, sketchGhosts, sketchMarks, sketchPowers } from "./sketch.j
 import { WhatIfPanel } from "./WhatIfPanel.jsx";
 
 type Tab = "orders" | "press" | "table";
-
-interface Picker {
-  x: number;
-  y: number;
-  title: string;
-  power: string;
-  key: string;
-  options: string[];
-  openedAt: number;
-  openedBy: { x: number; y: number } | null;
-}
 
 const IDLE: Draft = { step: "idle" };
 
@@ -142,7 +132,7 @@ function Floor({
   const [tab, setTab] = useState<Tab>(over ? "table" : me ? "orders" : "press");
   const [sheet, setSheet] = useState(false);
   const [draft, setDraft] = useState<Draft>(IDLE);
-  const [picker, setPicker] = useState<Picker | null>(null);
+  const [picker, setPicker] = useState<PickerState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [viewing, setViewing] = useState<number | null>(null);
   const [replaying, setReplaying] = useState(false);
@@ -153,8 +143,12 @@ function Floor({
   const [readied, setReadied] = useState(() => readiedThisVisit.has(view.gameId));
   const boardWrap = useRef<HTMLDivElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
-  const pickerRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<HTMLInputElement>(null);
+  const choicesRef = useRef<HTMLElement>(null);
+  /** Set when a keyboard choice (or Escape) removed the focused button, so focus moves on. */
+  const moveFocus = useRef(false);
+  /** Set by a tap on the map, which must not pull focus (and the page) down to the choices. */
+  const byPointer = useRef(false);
 
   const announce = useCallback((text: string) => {
     setAnnouncement("");
@@ -298,16 +292,14 @@ function Floor({
         setMessage(null);
         announce(describeOrder(effect.text));
       } else if (effect.kind === "choose") {
-        const rect = boardWrap.current?.getBoundingClientRect();
-        const frame = boardWrap.current?.querySelector(".board-frame")?.getBoundingClientRect();
-        const half = 100;
-        const tall = 34 + effect.options.length * 44;
-        const x = client && rect ? client.x - rect.left : rect ? rect.width / 2 : 40;
-        const y = client && rect ? client.y - rect.top : rect ? rect.height / 3 : 40;
-        const maxY = frame && rect ? frame.bottom - rect.top - tall - 12 : y;
+        const at = placePicker(
+          boardWrap.current?.getBoundingClientRect(),
+          boardWrap.current?.querySelector(".board-frame")?.getBoundingClientRect(),
+          effect.options.length,
+          client,
+        );
         setPicker({
-          x: rect ? Math.min(Math.max(x, half), rect.width - half) : x,
-          y: Math.max(0, Math.min(y, maxY)),
+          ...at,
           title: effect.title,
           power: effect.power,
           key: effect.key,
@@ -330,6 +322,7 @@ function Floor({
     (code: string, client: { x: number; y: number }) => {
       if (!playing) return;
       setPicker(null);
+      byPointer.current = true;
       apply(click(ctx, draft, code), client);
     },
     [ctx, draft, apply, playing],
@@ -337,6 +330,8 @@ function Floor({
 
   const mode = useCallback((m: Mode) => apply(setMode(ctx, draft, m)), [ctx, draft, apply]);
   const cancel = useCallback(() => {
+    // If the focused control (a picker option, Cancel) is about to vanish, move focus on.
+    if (document.activeElement?.closest(".picker, .choices, [data-vanishes]")) moveFocus.current = true;
     setDraft(IDLE);
     setPicker(null);
     setMessage(null);
@@ -430,6 +425,29 @@ function Floor({
     },
     [me, active, desk, ctx, sketching, sketchFor, writeOrder],
   );
+
+  // Keyboard path: after a choice, a shortcut or a cancel, focus the first new choice instead of
+  // leaving focus on a button that no longer exists (it would fall to the page and start over).
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
+    // The coast picker takes focus itself.
+    if (picker) return;
+    // An order given on the map leaves focus where it was: moving it to the choices under the
+    // map would scroll the page and slide the board out from under the finger.
+    const pointed = byPointer.current;
+    byPointer.current = false;
+    const lost = !pointed && (!document.activeElement || document.activeElement === document.body);
+    if (!moveFocus.current && !lost) return;
+    moveFocus.current = false;
+    const panel = choicesRef.current;
+    const first = panel?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+    (first ?? panel)?.focus();
+    first?.scrollIntoView({ block: "nearest" });
+  }, [draft, picker, viewing]);
 
   // ---- keyboard, as in the sandbox
 
@@ -675,28 +693,15 @@ function Floor({
               onProvince={onProvince}
             />
             {picker ? (
-              <div className="picker" ref={pickerRef} style={{ left: picker.x, top: picker.y }} role="menu" aria-labelledby="picker-title">
-                <div className="picker-title" id="picker-title" role="presentation">
-                  {picker.title}
-                </div>
-                {picker.options.map((o) => (
-                  <button
-                    key={o}
-                    type="button"
-                    role="menuitem"
-                    onClick={(e) => {
-                      const from = picker.openedBy;
-                      const sameSpot = from !== null && Math.hypot(e.clientX - from.x, e.clientY - from.y) < 16;
-                      if (sameSpot && e.timeStamp - picker.openedAt < 700) return;
-                      writeOrder(picker.power, picker.key, o);
-                      setPicker(null);
-                      announce(describeOrder(o));
-                    }}
-                  >
-                    {o}
-                  </button>
-                ))}
-              </div>
+              <OrderPicker
+                picker={picker}
+                onChoose={(o) => {
+                  writeOrder(picker.power, picker.key, o);
+                  setPicker(null);
+                  moveFocus.current = true;
+                  announce(describeOrder(o));
+                }}
+              />
             ) : null}
             <div className="toolbar" role="group" aria-label="Order tools">
               {kind === "M" && playing && due > 0 ? (
@@ -731,7 +736,7 @@ function Floor({
                 </button>
               ) : null}
               {draft.step !== "idle" || picker ? (
-                <button type="button" className="tool" onClick={cancel}>
+                <button type="button" className="tool" onClick={cancel} data-vanishes>
                   Cancel <kbd>Esc</kbd>
                 </button>
               ) : null}
@@ -741,7 +746,7 @@ function Floor({
             </div>
           </div>
           {choices.length ? (
-            <section className="choices" tabIndex={-1} aria-labelledby="choices-title">
+            <section className="choices" ref={choicesRef} tabIndex={-1} aria-labelledby="choices-title">
               <h2 id="choices-title">{choicePrompt(kind, draft, draft.step === "idle" ? active! : draft.power)}</h2>
               <div className="choice-list">
                 {choices.map((c) => (
@@ -751,6 +756,7 @@ function Floor({
                     className="tool choice"
                     onClick={() => {
                       setPicker(null);
+                      moveFocus.current = true;
                       apply(click(ctx, draft, c.code));
                     }}
                   >
@@ -759,7 +765,10 @@ function Floor({
                 ))}
               </div>
             </section>
-          ) : null}
+          ) : (
+            <section className="choices" ref={choicesRef} tabIndex={-1} aria-label="Choices" hidden />
+          )}
+
         </div>
 
         <aside className="sidebar live-side" data-open={sheet} aria-label="The game">
