@@ -1115,6 +1115,23 @@ export type MetricSample = z.infer<typeof MetricSample>;
 export const MetricsBeacon = z.object({ samples: z.array(MetricSample).min(1).max(10) });
 export type MetricsBeacon = z.infer<typeof MetricsBeacon>;
 
+/**
+ * `POST /api/errors`: a page that broke tells the server, anonymously, so a failure players meet
+ * shows up in the Worker's logs and not only in their console. It names the kind of failure, its
+ * message, the page by route name (never its address, which can hold a game code or a handle) and
+ * the top frame of the stack with the origin cut off. Nothing names the player or the device.
+ */
+export const ClientErrorReport = z.object({
+  /** `crash`: the page's error boundary caught it; `error` and `rejection`: nothing did; `chunk`: code failed to load. */
+  kind: z.enum(["crash", "error", "rejection", "chunk"]),
+  message: z.string().min(1).max(300),
+  /** The route's name (`game`, `ledger`), or `none` for an address no route matches. */
+  route: z.string().regex(/^[a-z]{1,24}$/),
+  /** Where it was thrown: the stack's top frame as `file:line:column`, without the origin. */
+  where: z.string().max(200).optional(),
+});
+export type ClientErrorReport = z.infer<typeof ClientErrorReport>;
+
 /** `POST /api/metrics/datc` (admin): the totals `cabal datc` printed for a commit. */
 export const DatcReport = z.object({
   passed: z.number().int().min(0),
