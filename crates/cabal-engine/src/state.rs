@@ -56,14 +56,13 @@ impl Phase {
             b'W' => Season::Winter,
             _ => return None,
         };
-        let digits = &s[1..b.len() - 1];
+        // Checked as bytes: a wider character must never be sliced through, and
         // `u16::from_str` alone would also take a sign.
-        if !digits.bytes().all(|d| d.is_ascii_digit())
-            || (digits.len() == 5 && digits.starts_with('0'))
-        {
+        let digits = &b[1..b.len() - 1];
+        if !digits.iter().all(u8::is_ascii_digit) || (digits.len() == 5 && digits[0] == b'0') {
             return None;
         }
-        let year: u16 = digits.parse().ok()?;
+        let year: u16 = std::str::from_utf8(digits).ok()?.parse().ok()?;
         let kind = match b[b.len() - 1] {
             b'M' => PhaseKind::Movement,
             b'R' => PhaseKind::Retreat,
@@ -284,6 +283,16 @@ mod tests {
         );
         assert_eq!(Phase::parse("S0950M").map(|p| p.year), Some(950));
         // A year is four digits, nothing else: `u16::from_str` alone would take a sign.
+        // Found by the fuzzer: a name with a character wider than a byte is refused, not a panic.
+        for text in [
+            "S\u{3f2}190M",
+            "S19\u{3f2}1M",
+            "S190\u{3f2}M",
+            "\u{3f2}19011M",
+            "S1901\u{3f2}",
+        ] {
+            assert_eq!(Phase::parse(text), None, "{text}");
+        }
         for text in [
             "S+950M", "S-950M", "S 950M", "S95_0M", "S950M", "S01901M", "S65536M", "S190111M",
         ] {
