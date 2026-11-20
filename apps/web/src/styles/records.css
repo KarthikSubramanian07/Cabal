@@ -528,6 +528,21 @@
 
 /* ---------------------------------------------------------------- a replay */
 
+/* A replay has no seat to centre on, so its board opens on the whole map. On a phone or a tablet
+   the frame takes the map's own shape rather than the screen's, with no empty desk above and
+   below it; the standing and the phase bar follow straight on. */
+@media (max-width: 1000px) {
+  .replay-page .stage {
+    height: auto;
+    min-height: 0;
+  }
+
+  .replay-page .board-frame {
+    flex: none;
+    aspect-ratio: var(--board-aspect, 1);
+  }
+}
+
 .replay-head {
   padding: 16px 18px 12px;
   border-bottom: 1px solid var(--rule);
