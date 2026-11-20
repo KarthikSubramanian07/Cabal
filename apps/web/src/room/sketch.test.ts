@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { Game, ready } from "@cabal/engine";
 import { beforeAll, describe, expect, it } from "vitest";
 import { predict } from "../game/explain/whatIf.js";
-import { legalForEveryone, sketchCount, sketchGhosts, sketchMarks, sketchPowers, sketchSyncLine } from "./sketch.js";
+import { legalForEveryone, sameOrders, sketchCount, sketchGhosts, sketchMarks, sketchPowers, sketchSyncLine } from "./sketch.js";
 
 beforeAll(async () => {
   await ready(readFileSync(fileURLToPath(new URL("../../../../packages/engine/pkg/cabal_engine_bg.wasm", import.meta.url))));
@@ -58,5 +58,18 @@ describe("sketchSyncLine", () => {
   it("counts the real orders the server refused", () => {
     expect(sketchSyncLine(null, 1)).toBe("One of your real orders was refused. Leave what if to see why.");
     expect(sketchSyncLine(null, 3)).toBe("3 of your real orders were refused. Leave what if to see why.");
+  });
+});
+
+describe("sameOrders", () => {
+  const opened = { "A PAR": "A PAR - BUR", "F BRE": "F BRE - MAO" };
+  it("is true for the same orders in any order of keys", () => {
+    expect(sameOrders(opened, { "F BRE": "F BRE - MAO", "A PAR": "A PAR - BUR" })).toBe(true);
+    expect(sameOrders({}, {})).toBe(true);
+  });
+  it("notices an order changed, added or taken back on another device", () => {
+    expect(sameOrders(opened, { "A PAR": "A PAR - PIC", "F BRE": "F BRE - MAO" })).toBe(false);
+    expect(sameOrders(opened, { ...opened, "A MAR": "A MAR H" })).toBe(false);
+    expect(sameOrders(opened, { "A PAR": "A PAR - BUR" })).toBe(false);
   });
 });

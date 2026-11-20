@@ -45,7 +45,7 @@ import { DispatchBoard, useDispatches } from "../toast/DispatchBoard.jsx";
 import { useNarrow } from "../app/useNarrow.js";
 import { filedLine } from "./settle.js";
 import { useDesk } from "./useDesk.js";
-import { sketchCount, sketchGhosts, sketchMarks, sketchPowers, sketchSyncLine } from "./sketch.js";
+import { sameOrders, sketchCount, sketchGhosts, sketchMarks, sketchPowers, sketchSyncLine } from "./sketch.js";
 import { WhatIfPanel } from "./WhatIfPanel.jsx";
 
 type Tab = "orders" | "press" | "table";
@@ -154,6 +154,8 @@ function Floor({
   const byPointer = useRef(false);
   /** The toolbar's What if button: where focus returns when a sketch closes under it. */
   const whatIfTool = useRef<HTMLButtonElement>(null);
+  /** The seat's real orders when the sketch opened, to notice a change made on another device. */
+  const openedFrom = useRef<Readonly<Record<string, string>>>({});
 
   const announce = useCallback((text: string) => {
     setAnnouncement("");
@@ -575,6 +577,7 @@ function Floor({
       announce("What if closed. Your orders are as they were; nothing was sent.");
     } else if (me) {
       cancel();
+      openedFrom.current = desk.book;
       whatIf.start({ [me]: desk.book });
       announce("What if: sketch your orders and guess at everyone else's to see how the phase would resolve. Nothing is sent.");
     }
@@ -583,11 +586,17 @@ function Floor({
   const adoptSketch = () => {
     if (!me) return;
     const mine = whatIf.orders[me] ?? {};
+    // Another device holding this seat changed the real orders while the sketch was open.
+    const changedElsewhere = !sameOrders(openedFrom.current, desk.book);
     desk.clearOrders();
     for (const [key, text] of Object.entries(mine)) desk.setOrder(key, text);
     whatIf.stop();
     setGuessing(null);
-    announce("Your sketched orders are now your orders, and are being filed.");
+    announce(
+      changedElsewhere
+        ? "Your sketched orders are now your orders, and are being filed. They replace changes made on another device while you sketched."
+        : "Your sketched orders are now your orders, and are being filed.",
+    );
   };
   const isReady = Boolean(seat?.ready);
   const inDisorder = seat?.kind === "civil_disorder";

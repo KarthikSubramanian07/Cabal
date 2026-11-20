@@ -75,3 +75,13 @@ export function sketchSyncLine(error: string | null, refused: number): string | 
   if (refused > 0) return `${refused === 1 ? "One of your real orders was" : `${refused} of your real orders were`} refused. Leave what if to see why.`;
   return null;
 }
+
+/**
+ * Whether two sets of one power's orders say the same thing. Using a sketch replaces the seat's
+ * orders with the copy it opened from plus what was sketched since, so a change made meanwhile on
+ * another device holding the seat is worth telling the player about.
+ */
+export function sameOrders(a: Readonly<Record<string, string>>, b: Readonly<Record<string, string>>): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((k) => b[k] === a[k]);
+}
