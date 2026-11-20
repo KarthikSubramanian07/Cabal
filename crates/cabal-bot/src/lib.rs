@@ -43,7 +43,7 @@ use cabal_engine::order::{
     AdjustCommand, AdjustOrder, AnyOrder, Command, Order, RetreatCommand, RetreatOrder, normalise,
 };
 use cabal_engine::rulebook::Rulebook;
-use cabal_engine::state::{GameState, PhaseKind, Season};
+use cabal_engine::state::{Dislodged, GameState, PhaseKind, Season};
 use serde::{Deserialize, Serialize};
 
 use board::{Board, position_fits, tables};
@@ -238,27 +238,26 @@ pub fn decide(
             orders.into_iter().map(AnyOrder::Movement).collect()
         }
         PhaseKind::Retreat => {
-            let dislodged: Vec<usize> = state
-                .dislodged
-                .iter()
-                .map(|d| d.unit.province().0 as usize)
-                .collect();
-            let sane = dislodged.iter().all(|&x| x < map.provinces().len())
-                && state
-                    .dislodged
-                    .iter()
-                    .all(|d| (d.attacker_from.0 as usize) < map.provinces().len());
-            let picked = if sane {
-                let v = values::compute(&b, power);
-                retreat::decide(&b, &v, state, power, &mut rng, level.noise())
+            // a made-up entry (a province, power or attacker the map does not have)
+            // is ignored; every real dislodged unit is still answered
+            let cleaned;
+            let state = if state.dislodged.iter().all(|d| dislodged_fits(map, d)) {
+                state
             } else {
-                Vec::new()
+                cleaned = GameState {
+                    dislodged: state
+                        .dislodged
+                        .iter()
+                        .filter(|d| dislodged_fits(map, d))
+                        .copied()
+                        .collect(),
+                    ..state.clone()
+                };
+                &cleaned
             };
-            let orders = if sane {
-                checked_retreats(map, state, power, picked)
-            } else {
-                Vec::new()
-            };
+            let v = values::compute(&b, power);
+            let picked = retreat::decide(&b, &v, state, power, &mut rng, level.noise());
+            let orders = checked_retreats(map, state, power, picked);
             for o in &orders {
                 if let RetreatCommand::Retreat { dest, .. } = o.command {
                     intent.targets.push(dest);
@@ -331,6 +330,14 @@ fn checked_movement(b: &Board, me: Power, picked: Vec<Order>) -> (Vec<Order>, u3
         }
     }
     (orders, rejected)
+}
+
+/// Does this retreat-list entry name a province, power and attacker the map has?
+fn dislodged_fits(map: &Map, d: &Dislodged) -> bool {
+    let n = map.provinces().len();
+    (d.unit.province().0 as usize) < n
+        && (d.unit.power.0 as usize) < map.powers().len()
+        && (d.attacker_from.0 as usize) < n
 }
 
 /// One legal retreat order per dislodged unit; two of our own never share a destination.
