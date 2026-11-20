@@ -3,7 +3,7 @@
  * way the app keeps them (localStorage, never a URL), and the sidebar reached on either screen.
  */
 import AxeBuilder from "@axe-core/playwright";
-import { type APIRequestContext, type Browser, type Page, type TestInfo, expect } from "@playwright/test";
+import { type APIRequestContext, type Browser, type BrowserContext, type Page, type TestInfo, expect } from "@playwright/test";
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
@@ -46,7 +46,13 @@ export async function chooseHandle(page: Page, handle: string) {
 }
 
 /** A person on their own device (this project's kind of device), holding `seat` or watching without one. */
-export async function sitDown(browser: Browser, info: TestInfo, seat: Seat | null, gameId: string): Promise<Page> {
+export async function sitDown(
+  browser: Browser,
+  info: TestInfo,
+  seat: Seat | null,
+  gameId: string,
+  prepare?: (context: BrowserContext) => Promise<void>,
+): Promise<Page> {
   const use = info.project.use;
   const context = await browser.newContext({
     ...(use.viewport ? { viewport: use.viewport } : {}),
@@ -60,6 +66,7 @@ export async function sitDown(browser: Browser, info: TestInfo, seat: Seat | nul
   if (seat) {
     await context.addInitScript((s) => localStorage.setItem(`cabal.seat.${s.gameId}`, JSON.stringify({ ...s, savedAt: Date.now() })), seat);
   }
+  await prepare?.(context);
   const page = await context.newPage();
   await page.goto(`/g/${gameId}`);
   await expect(page.locator("svg.board text.label").first()).toBeVisible({ timeout: 30_000 });

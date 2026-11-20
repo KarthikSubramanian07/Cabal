@@ -28,7 +28,7 @@ import { SeatingPlan } from "../lobby/SeatingPlan.jsx";
 import { describeTerms, phaseLabel, powerLabel } from "../lobby/terms.js";
 import type { Room } from "../lobby/useRoom.js";
 import { api } from "../net/api.js";
-import { clockFace, clockWords, urgency } from "./clock.js";
+import { ClockCrier, PhaseClock, SheetClock } from "./Countdown.jsx";
 import { DrawVote } from "./DrawVote.jsx";
 import { GameOver } from "./GameOver.jsx";
 import { mergeRecords, missingPhases, recordsFromReplay } from "./history.js";
@@ -53,17 +53,6 @@ interface Picker {
 }
 
 const IDLE: Draft = { step: "idle" };
-
-/** A clock that redraws every second while it is on screen. */
-function useSecond(on: boolean): number {
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    if (!on) return;
-    const t = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(t);
-  }, [on]);
-  return now;
-}
 
 /** The browser's own idea of whether it is online. */
 function useOnline(): boolean {
@@ -160,8 +149,6 @@ function Floor({
   const title = useRef<HTMLHeadingElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<HTMLInputElement>(null);
-  const now = useSecond(running);
-  const serverNow = now + view.clockOffsetMs;
 
   const announce = useCallback((text: string) => {
     setAnnouncement("");
@@ -451,8 +438,8 @@ function Floor({
 
   // ---- the clock and the seats
 
-  const msLeft = view.deadlineAt ? view.deadlineAt - serverNow : null;
-  const urgent = msLeft !== null ? urgency(msLeft) : "calm";
+  // The clock itself ticks in its own components (Countdown.tsx): nothing here redraws each second.
+  const deadlineAt = running && view.deadlineAt ? view.deadlineAt : null;
   const { ready: readyCount, acting } = readiness(view.seats);
   const centres = useMemo(() => {
     const out: Record<string, number> = {};
@@ -461,16 +448,6 @@ function Floor({
   }, [view.state]);
   const finalScores = over && view.finished?.result !== "abandoned" ? view.finished?.scores : undefined;
   const names = useMemo(() => Object.fromEntries(view.seats.map((s) => [s.power, s.name])) as Partial<Record<PowerName, string | null>>, [view.seats]);
-
-  // Say the clock once a minute in the last five, for people who cannot glance at it.
-  const lastSaid = useRef<number | null>(null);
-  useEffect(() => {
-    if (msLeft === null || msLeft > 5 * 60_000 || msLeft <= 0) return;
-    const minute = Math.ceil(msLeft / 60_000);
-    if (lastSaid.current === minute) return;
-    lastSaid.current = minute;
-    if (minute === 5 || minute === 1) announce(clockWords(msLeft));
-  }, [msLeft, announce]);
 
   // ---- the order desk's figures
 
@@ -507,14 +484,14 @@ function Floor({
         : filedLine({ kind, allowance: desk.allowance, given: givenCount, due });
 
   const sheetNote = (() => {
-    const parts: string[] = [];
+    const parts: ReactNode[] = [];
     if (record) parts.push("Results");
-    else if (running && msLeft !== null) parts.push(view.status === "paused" ? "Paused" : `${clockFace(msLeft)} left`);
+    else if (deadlineAt !== null) parts.push(view.status === "paused" ? "Paused" : <SheetClock key="clock" deadlineAt={deadlineAt} offsetMs={view.clockOffsetMs} />);
     else if (over) parts.push(view.finished?.result === "solo" ? `${powerLabel(view.finished.winners[0] ?? "")} won` : view.finished?.result === "draw" ? "Drawn" : "Abandoned");
     if (!record && me && canOrder && due > 0) parts.push(`${Math.min(givenCount, due)} of ${due} ${kind === "A" ? (desk.allowance > 0 ? "builds" : "disbands") : "orders"}`);
     if (!record && isReady) parts.push("ready");
     if (unread > 0) parts.push(`${unread} unread`);
-    return parts.join(", ");
+    return parts.flatMap((part, i) => (i === 0 ? [part] : [", ", part]));
   })();
 
   const hint: ReactNode = (() => {
@@ -694,12 +671,7 @@ function Floor({
               </h2>
               <div className="phase-meta">
                 <span>{over ? (view.finished?.result === "solo" ? `${powerLabel(view.finished.winners[0] ?? "")} won outright` : view.finished?.result === "draw" ? "Drawn" : "Abandoned") : live.kind}</span>
-                {running ? (
-                  <span className={`clock ${urgent}${view.grace ? " grace" : ""}`} aria-label={msLeft !== null ? `Time left: ${clockWords(msLeft)}` : "No deadline"}>
-                    {view.status === "paused" ? "Paused" : msLeft !== null ? clockFace(msLeft) : "No clock"}
-                    {view.grace ? <span className="grace-tag">Grace</span> : null}
-                  </span>
-                ) : null}
+                {running ? <PhaseClock deadlineAt={deadlineAt} offsetMs={view.clockOffsetMs} paused={view.status === "paused"} grace={Boolean(view.grace)} /> : null}
               </div>
               {view.status === "paused" ? <p className="fine">The game is paused{view.pauseReason ? `: ${pauseWords(view.pauseReason)}` : "."}</p> : null}
               {running ? (
@@ -902,6 +874,7 @@ function Floor({
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {announcement}
       </div>
+      <ClockCrier deadlineAt={view.status === "active" ? deadlineAt : null} offsetMs={view.clockOffsetMs} announce={announce} />
     </>
   );
 }
