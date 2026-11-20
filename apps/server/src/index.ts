@@ -249,7 +249,8 @@ async function route(request: Request, env: Env): Promise<Response> {
 
 /** The route as a label, never the raw path: game codes are not secret, but logs should group. */
 function routeLabel(request: Request): string {
-  const path = new URL(request.url).pathname.replace(/\/[A-Z0-9]{6}(?=\/|$)/, "/:id");
+  // A record's handle names a person, as a code names a table: both become placeholders.
+  const path = new URL(request.url).pathname.replace(/^\/api\/players\/(?!recover$)[^/]+/, "/api/players/:handle").replace(/\/[A-Z0-9]{6}(?=\/|$)/, "/:id");
   return `${request.method} ${path.slice(0, 64)}`;
 }
 

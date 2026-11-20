@@ -141,6 +141,24 @@ export const HANDLE_PROBLEMS: Record<HandleProblem, string> = {
 
 const TITLES = ["Envoy", "Courier", "Consul", "Legate", "Attache", "Emissary", "Herald", "Chancellor", "Vizier", "Marshal", "Plenipo", "Archduke", "Cipher", "Ensign"];
 
+/** The shape of a picked handle (`pickHandle`), in any case: a title, a dash and four digits. */
+const PICKED = new RegExp(`\\b(?:${TITLES.join("|")})-[0-9]{4}\\b`, "gi");
+
+/**
+ * Text as it may be logged or sent in an error report, with handles masked as `<handle>` wherever
+ * they can be told from other words, the way game codes are masked: in a record's address
+ * (`/u/<handle>`, `/players/<handle>`, so `/api/players/<handle>/ratings` too), after the word
+ * `handle` with a `:`, `=` or quotes, and in the shape of a handle picked for a guest
+ * (`Envoy-4821`), which most players keep. A chosen handle quoted on its own is a word like any
+ * other and cannot be told apart, so the pages mask the handles they know before they report.
+ */
+export function maskHandles(text: string): string {
+  return text
+    .replace(/(\/(?:u|players)\/)(?!<handle>)[^\s/?#"'`)\]:;,&]+/g, "$1<handle>")
+    .replace(/\b(handle\s*(?:[:=]\s*|(?=["'`])))(["'`]?)[A-Za-z][A-Za-z0-9_-]{2,19}\2/gi, "$1$2<handle>$2")
+    .replace(PICKED, "<handle>");
+}
+
 /** A handle for a player who did not choose one: `Envoy-4821`. Free to change once. */
 export function pickHandle(random: () => number = Math.random): string {
   const title = TITLES[Math.floor(random() * TITLES.length)]!;
