@@ -42,6 +42,7 @@ import {
   type PhaseSummary,
   type PledgeView,
   type PowerName,
+  type PressQuote,
   type PressView,
   type Receipt,
   type ReplayExtension,
@@ -90,6 +91,9 @@ import { ledgerTally } from "./ratings.js";
 import { checkPledge, judgeOrders } from "./validate.js";
 
 type Status = "lobby" | "active" | "paused" | "finished" | "abandoned";
+
+/** How much of a quoted message travels with the reply that quotes it. */
+const QUOTE_CHARS = 280;
 
 /** Abuse limits. A room is single threaded, so every unbounded input is a way to stall a game. */
 export const LIMITS = {
@@ -348,7 +352,8 @@ CREATE TABLE IF NOT EXISTS press (
   recipient TEXT NOT NULL,
   body TEXT NOT NULL,
   sent_at INTEGER NOT NULL,
-  pledge_id TEXT
+  pledge_id TEXT,
+  quote_id TEXT
 );
 CREATE TABLE IF NOT EXISTS pledges (
   id TEXT PRIMARY KEY,
@@ -576,6 +581,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!has("seats", "player_id")) this.sql.exec("ALTER TABLE seats ADD COLUMN player_id TEXT");
     if (!has("pledges", "pledger_player")) this.sql.exec("ALTER TABLE pledges ADD COLUMN pledger_player TEXT");
     if (!has("pledges", "audience_player")) this.sql.exec("ALTER TABLE pledges ADD COLUMN audience_player TEXT");
+    if (!has("press", "quote_id")) this.sql.exec("ALTER TABLE press ADD COLUMN quote_id TEXT");
     this.sql.exec("CREATE INDEX IF NOT EXISTS events_snapshot ON events(snapshot, audience) WHERE snapshot IS NOT NULL");
     // AI seats no longer hold bearer tokens: the Durable Object binding is the credential.
     this.sql.exec("DROP TABLE IF EXISTS agent_tokens");
@@ -1532,7 +1538,7 @@ export class GameRoom extends DurableObject<Env> {
         if (((ws.deserializeAttachment() as Attachment | null)?.power ?? null) !== power) {
           return this.send(ws, { t: "error", id, p: { code: "spectator", message: "spectators cannot act" } });
         }
-        const error = this.press(power, msg.p.to, msg.p.body, msg.p.pledge, { ws, id });
+        const error = this.press(power, msg.p.to, msg.p.body, msg.p.pledge, { ws, id }, msg.p.quote);
         if (error) this.send(ws, { t: "error", id, p: error });
         return;
       }
@@ -1972,7 +1978,7 @@ export class GameRoom extends DurableObject<Env> {
     const before = options.before ?? null;
     const thread = options.thread ?? null;
     const rows = this.sql
-      .exec<{ id: string; phase: string; sender: string; recipient: string; body: string; sent_at: number; pledge_id: string | null }>(
+      .exec<{ id: string; phase: string; sender: string; recipient: string; body: string; sent_at: number; pledge_id: string | null; quote_id: string | null }>(
         `SELECT rowid AS rid, * FROM press
          WHERE (recipient = 'ALL' OR sender = ? OR recipient = ?)
            AND (? IS NULL OR phase = ?)
@@ -2005,6 +2011,7 @@ export class GameRoom extends DurableObject<Env> {
         body: r.body,
         sentAt: r.sent_at,
         pledge: r.pledge_id ? this.pledgeView(r.pledge_id, power) : null,
+        quote: r.quote_id ? this.quoteView(r.quote_id) : null,
       }));
     return { press, more };
   }
@@ -2059,6 +2066,18 @@ export class GameRoom extends DurableObject<Env> {
     this.pending.push({ payload: JSON.stringify({ t: "press.unread", p: { unread: this.unread(power) } } satisfies ServerMessage), audience: power });
   }
 
+  /**
+   * The message a dispatch quotes, in its own words. Whoever can read the dispatch could already
+   * read the quoted message: a quote is only ever taken from the same thread (see `press`).
+   */
+  private quoteView(id: string): PressQuote | null {
+    const row = this.sql.exec<{ id: string; phase: string; sender: string; body: string }>("SELECT id, phase, sender, body FROM press WHERE id = ?", id).toArray()[0];
+    if (!row) return null;
+    const chars = [...row.body];
+    const excerpt = chars.length <= QUOTE_CHARS ? row.body : `${chars.slice(0, QUOTE_CHARS - 1).join("").trimEnd()}…`;
+    return { id: row.id, from: row.sender as PowerName, phase: row.phase, excerpt };
+  }
+
   private pledgeView(id: string, viewer: PowerName | null): PledgeView | null {
     const row = this.sql
       .exec<{ id: string; pledger: string; audience: string; phase: string; sealed: number; commitment: string; nonce: string; orders_json: string; receipt: string | null }>(
@@ -2106,6 +2125,7 @@ export class GameRoom extends DurableObject<Env> {
     body: string,
     pledge: { orders: string[]; sealed: boolean; nonce?: string | undefined; commitment?: string | undefined } | undefined,
     origin?: { ws: WebSocket; id: string | undefined },
+    quote?: string,
   ): { code: string; message: string } | null {
     const settings = this.meta!.settings;
     const kind = this.phaseKind();
@@ -2133,6 +2153,17 @@ export class GameRoom extends DurableObject<Env> {
       if (whispers >= settings.whisperBudget) {
         return { code: "whisper_budget", message: `at most ${settings.whisperBudget} private messages per phase` };
       }
+    }
+    // A quote comes from the thread the reply goes to: the table quotes the table, a private thread
+    // only itself. Private words can never be carried to anyone who did not already read them.
+    if (quote !== undefined) {
+      const quoted = this.sql.exec<{ sender: string; recipient: string }>("SELECT sender, recipient FROM press WHERE id = ?", quote).toArray()[0];
+      const sameThread =
+        quoted !== undefined &&
+        (to === "ALL"
+          ? quoted.recipient === "ALL"
+          : quoted.recipient !== "ALL" && ((quoted.sender === from && quoted.recipient === to) || (quoted.sender === to && quoted.recipient === from)));
+      if (!sameThread) return { code: "bad_quote", message: "only a message from the same thread can be quoted" };
     }
     let canonical: string[] | null = null;
     let seal: { nonce: string; commitment: string } | null = null;
@@ -2177,7 +2208,7 @@ export class GameRoom extends DurableObject<Env> {
       const latest = this.sql.exec<{ n: number | null }>("SELECT MAX(sent_at) AS n FROM press").one().n ?? 0;
       const sentAt = Math.max(Date.now(), latest + 1);
       this.sql.exec(
-        "INSERT INTO press (id, phase, sender, recipient, body, sent_at, pledge_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO press (id, phase, sender, recipient, body, sent_at, pledge_id, quote_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         pressId,
         phase,
         from,
@@ -2185,7 +2216,9 @@ export class GameRoom extends DurableObject<Env> {
         body,
         sentAt,
         pledgeId,
+        quote ?? null,
       );
+      const quoted = quote !== undefined ? this.quoteView(quote) : null;
       const view = (viewer: PowerName | null): PressView => ({
         id: pressId,
         phase,
@@ -2194,6 +2227,7 @@ export class GameRoom extends DurableObject<Env> {
         body,
         sentAt,
         pledge: pledgeId ? this.pledgeView(pledgeId, viewer) : null,
+        quote: quoted,
       });
       if (to === "ALL") {
         // A sealed pledge reads differently for its pledger, so each socket gets its own view.

@@ -4,7 +4,7 @@
  * unprompted), votes the game to a draw, and then finds the finished game on their record and
  * plays it back.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { chooseHandle, primary, scan, tab, uniqueHandle } from "./room.js";
 
 test.describe("the front door, live", () => {
@@ -51,7 +51,7 @@ test.describe("the front door, live", () => {
     // The only person at the table votes for a draw, and the game is over.
     await tab(page, "Table");
     // The seat's player is a link to their record.
-    await expect(page.getByRole("list", { name: "Seats" }).getByRole("link", { name: handle })).toHaveAttribute("href", `/u/${handle}`);
+    await expect(page.getByRole("list", { name: "Seats", exact: true }).getByRole("link", { name: handle })).toHaveAttribute("href", `/u/${handle}`);
     await page.getByRole("button", { name: "Vote for a draw" }).click();
     // The game is over: the main button leads to the end, from the last results if they are on show.
     await expect(primary(page)).toHaveText(/^(See the final scores|Back to the final position)$/, { timeout: 20_000 });
