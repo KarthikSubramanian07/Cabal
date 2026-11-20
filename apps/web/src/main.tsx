@@ -31,11 +31,47 @@ function start(): void {
 // the browser has drawn anything, and the first paint would wait for React. Give the browser
 // one frame to draw what it has, then take over; what React draws first is the same screen.
 // Frames are not promised (a background tab, a throttled embed), so a timer starts it anyway.
+//
+// Where the browser reports largest paints, wait for the first one too. It is reported a frame
+// or so after the paint, and a loading card React replaced in between was never counted: the
+// browser took React's copy, drawn later, as the page's largest paint instead.
 let started = false;
 function startOnce(): void {
   if (started) return;
   started = true;
   start();
 }
-requestAnimationFrame(() => setTimeout(startOnce, 0));
-setTimeout(startOnce, 150);
+
+// Fetch hints that can wait (a table's room and map, at low priority) are written into the shell
+// inert (vite.config.ts) and switched on with the takeover, so on a slow line the first paint
+// has the line to itself. What the page imports does not wait for them: they only start early.
+function hintTheRest(): void {
+  const later = document.getElementById("after-paint");
+  if (later instanceof HTMLTemplateElement) document.head.append(later.content.cloneNode(true));
+}
+
+function afterFirstPaint(go: () => void): void {
+  let done = false;
+  const once = () => {
+    if (done) return;
+    done = true;
+    go();
+  };
+  if (typeof PerformanceObserver !== "undefined" && PerformanceObserver.supportedEntryTypes?.includes("largest-contentful-paint")) {
+    const observer = new PerformanceObserver(() => {
+      observer.disconnect();
+      setTimeout(once, 0);
+    });
+    observer.observe({ type: "largest-contentful-paint", buffered: true });
+    // A page whose first frame holds no text or image reports none: go a little after it anyway.
+    requestAnimationFrame(() => setTimeout(once, 250));
+  } else {
+    requestAnimationFrame(() => setTimeout(once, 0));
+  }
+  setTimeout(once, 1000);
+}
+
+afterFirstPaint(() => {
+  startOnce();
+  hintTheRest();
+});

@@ -3,7 +3,7 @@
  * last thing on a long chain: the page, then the summary, then the socket, then the room's code
  * and a second copy of the stylesheet, all while a megabyte of engine competed for the line.
  */
-import { expect, test } from "@playwright/test";
+import { type Browser, expect, test } from "@playwright/test";
 import { liveTable, sitDown } from "./room.js";
 
 test("a table draws its board from the map, before the engine is fetched, with one stylesheet", async ({ browser, request }, info) => {
@@ -56,33 +56,53 @@ test("the socket is dialled while the summary is still on its way", async ({ bro
   await page.context().close();
 });
 
-test("a slow phone's largest paint is the shell's loading card, not React's copy of it", async ({ browser, request }, info) => {
-  test.skip(info.project.name !== "phone", "the slow phone");
-  const { host } = await liveTable(request);
-  // Lighthouse's phone: a 412-pixel screen, a slowed line and a four-times slower processor, so
-  // React takes over after Inter Tight has arrived and paints the card again in it.
+type Paint = { t: number; size: number; el: string };
+
+/** The first paint and every largest paint of a spectator's load of a table on Lighthouse's phone. */
+async function paints(browser: Browser, gameId: string, slow: boolean): Promise<{ first: number; largest: Paint[] }> {
   const context = await browser.newContext({ viewport: { width: 412, height: 823 }, deviceScaleFactor: 1.75, isMobile: true, hasTouch: true, serviceWorkers: "block" });
   await context.addInitScript(() => {
-    const w = window as unknown as { lcp: { t: number; size: number; el: string }[] };
-    w.lcp = [];
+    const w = window as unknown as { paints: Paint[] };
+    w.paints = [];
     new PerformanceObserver((list) => {
       for (const e of list.getEntries() as (PerformanceEntry & { size: number; element: Element | null })[]) {
-        w.lcp.push({ t: Math.round(e.startTime), size: e.size, el: e.element?.className ?? "" });
+        w.paints.push({ t: Math.round(e.startTime), size: e.size, el: e.element?.className ?? "" });
       }
     }).observe({ type: "largest-contentful-paint", buffered: true });
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) if (e.name === "first-contentful-paint") w.paints.push({ t: Math.round(e.startTime), size: 0, el: "first paint" });
+    }).observe({ type: "paint", buffered: true });
   });
   const page = await context.newPage();
-  const cdp = await context.newCDPSession(page);
-  await cdp.send("Network.enable");
-  await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
-  await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 150, downloadThroughput: (1638.4 * 1024) / 8, uploadThroughput: (750 * 1024) / 8 });
-  await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
-  // A spectator, as Lighthouse sees the page.
-  await page.goto(`/g/${host.gameId}`, { waitUntil: "commit" });
+  if (slow) {
+    // A slowed line and a four-times slower processor: React takes over after Inter Tight arrives.
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Network.enable");
+    await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
+    await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 150, downloadThroughput: (1638.4 * 1024) / 8, uploadThroughput: (750 * 1024) / 8 });
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+  }
+  await page.goto(`/g/${gameId}`, { waitUntil: "commit" });
   await expect(page.locator("svg.board text.label").first()).toBeVisible({ timeout: 60_000 });
-  await page.waitForTimeout(1000);
-  const entries = await page.evaluate(() => (window as unknown as { lcp: { t: number; size: number; el: string }[] }).lcp);
-  // One largest paint: the card the shell drew at once. React's copy measures the same.
-  expect(entries.map((e) => e.el)).toEqual(["loading-note"]);
+  await page.waitForTimeout(800);
+  const all = await page.evaluate(() => (window as unknown as { paints: Paint[] }).paints);
   await context.close();
+  return { first: all.find((p) => p.el === "first paint")!.t, largest: all.filter((p) => p.el !== "first paint") };
+}
+
+test("a table's largest paint is the shell's loading card in the first frame, not React's copy of it", async ({ browser, request }, info) => {
+  test.skip(info.project.name !== "phone", "the phone Lighthouse measures");
+  const { host } = await liveTable(request);
+  // On a slow phone React paints its copy after Inter Tight has arrived: the copy must not
+  // measure larger and count as a new, later largest paint.
+  const slow = await paints(browser, host.gameId, true);
+  expect(slow.largest.map((p) => p.el)).toEqual(["loading-note"]);
+  expect(slow.largest[0]!.t).toBe(slow.first);
+  // On a fast one React used to replace the card before its paint was counted, and the browser
+  // took React's copy, a few frames later, as the largest paint. Three loads, every one in the first frame.
+  for (let i = 0; i < 3; i++) {
+    const fast = await paints(browser, host.gameId, false);
+    expect(fast.largest.map((p) => p.el)).toEqual(["loading-note"]);
+    expect(fast.largest[0]!.t).toBe(fast.first);
+  }
 });

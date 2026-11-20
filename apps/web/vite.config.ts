@@ -31,6 +31,7 @@ const api = {
  * drops the rest (src/agent/hints.ts). A table (`game`) is told about its page, the room and the
  * map, but not the engine: the board is drawn from the map alone, and the megabyte of
  * WebAssembly is fetched once it is (room/useDesk.ts), so it never competes with the first paint.
+ * The room and the map are hinted only once the first paint is on screen (`#after-paint`).
  */
 function firstLoad(): Plugin {
   return {
@@ -76,18 +77,22 @@ function firstLoad(): Plugin {
         hint(find(/board-[\w-]+\.js$/), ["game"], true);
         const wasm = find(/cabal_engine_bg-[\w-]+\.wasm$/);
 
+        const linkFor = ({ file, routes, late }: { file: string; routes: Set<string>; late: boolean }): HtmlTagDescriptor => ({
+          tag: "link",
+          attrs: {
+            rel: "modulepreload",
+            crossorigin: true,
+            href: `/${file}`,
+            "data-for": [...routes].join(" "),
+            ...(late ? { fetchpriority: "low" } : {}),
+          },
+        });
+        const all = [...hints.values()];
         const tags: HtmlTagDescriptor[] = [
-          ...[...hints.values()].map(({ file, routes, late }) => ({
-            tag: "link",
-            attrs: {
-              rel: "modulepreload",
-              crossorigin: true,
-              href: `/${file}`,
-              "data-for": [...routes].join(" "),
-              ...(late ? { fetchpriority: "low" } : {}),
-            },
-            injectTo: "head" as const,
-          })),
+          ...all.filter((h) => !h.late).map((h) => ({ ...linkFor(h), injectTo: "head" as const })),
+          // The hints that can wait are kept inert until the first paint (src/main.tsx adds them
+          // then): every byte asked for before it competes with the paint on a slow line.
+          { tag: "template", attrs: { id: "after-paint" }, children: all.filter((h) => h.late).map(linkFor), injectTo: "head" },
           {
             tag: "link",
             attrs: { rel: "preload", as: "fetch", type: "application/wasm", crossorigin: "anonymous", href: `/${wasm}`, "data-for": "sandbox replay" },
