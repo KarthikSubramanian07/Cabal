@@ -6,6 +6,7 @@
  * as the router moves between pages).
  */
 import { type RouteMatch, matchRoute } from "./routes.js";
+import { isGameCode } from "../net/code.js";
 
 export const SITE = "https://playcabal.pages.dev";
 export const SHARE_IMAGE = `${SITE}/og.png`;
@@ -26,9 +27,14 @@ export interface PageMeta {
   image?: { url: string; alt: string };
 }
 
-/** A table's own share card: its board and its supply centres as they stand (agent/share-card.ts). */
-export function tableCard(code: string): { url: string; alt: string } {
+/**
+ * A table's own share card: its board and its supply centres as they stand (agent/share-card.ts).
+ * A code that cannot exist has no card (its page is a 404, and so would the card be): such a page
+ * keeps the site's own card.
+ */
+export function tableCard(code: string): { url: string; alt: string } | undefined {
   const c = code.toUpperCase();
+  if (!isGameCode(c)) return undefined;
   return {
     url: `${SITE}/share/g/${encodeURIComponent(c)}.png`,
     alt: `The board of Diplomacy table ${spaced(c)} as it stands, each supply centre in its owner's colour, beside a tally of centres held by each of the seven powers.`,
@@ -36,6 +42,9 @@ export function tableCard(code: string): { url: string; alt: string } {
 }
 
 const BRAND = "Cabal";
+
+/** The `image` key only when there is an image, so an absent card falls back to the site's. */
+const withImage = (image: { url: string; alt: string } | undefined) => (image ? { image } : {});
 
 /** Six-character codes read better split in two: K7Q 2XZ. */
 function spaced(code: string): string {
@@ -103,7 +112,7 @@ export function metaForRoute(route: RouteMatch | null, path: string): PageMeta {
         // A table is a private room for its players; its code is shared on purpose, not published.
         index: false,
         type: "article",
-        image: tableCard(p["code"] ?? ""),
+        ...withImage(tableCard(p["code"] ?? "")),
       };
     }
     case "status":
@@ -123,7 +132,7 @@ export function metaForRoute(route: RouteMatch | null, path: string): PageMeta {
         canonical,
         index: false,
         type: "article",
-        image: tableCard(p["code"] ?? ""),
+        ...withImage(tableCard(p["code"] ?? "")),
       };
     }
   }

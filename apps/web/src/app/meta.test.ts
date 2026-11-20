@@ -63,6 +63,13 @@ describe("writeHead", () => {
     expect(ledger).toContain(`<meta property="og:image" content="${SHARE_IMAGE}" />`);
   });
 
+  it("never points a code that cannot exist at a card that would be a 404", () => {
+    for (const path of ["/g/abc", "/g/K7Q2X0", "/replay/zzzz"]) {
+      expect(metaFor(path).image, path).toBeUndefined();
+      expect(writeHead(readFileSync(new URL("../../index.html", import.meta.url), "utf8"), metaFor(path))).not.toContain("/share/g/");
+    }
+  });
+
   it("describes the site's card in the same words as the shell does", () => {
     const html = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
     expect(html).toContain(`<meta property="og:image:alt" content="${SHARE_IMAGE_ALT}" />`);
