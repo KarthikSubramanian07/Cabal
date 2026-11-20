@@ -249,7 +249,8 @@ impl Game {
         );
         let before = self.state.clone();
         let result = resolve_adjustment(self.map, &self.state.position, self.rulebook, orders);
-        let year = self.state.phase.year + 1;
+        // Saturating: a saved game may start at any year a phase name can carry.
+        let year = self.state.phase.year.saturating_add(1);
         self.state = GameState::from_position(
             Phase::new(year, Season::Spring, PhaseKind::Movement),
             result.position.clone(),
@@ -288,8 +289,11 @@ impl Game {
                     self.state.phase =
                         Phase::new(phase.year, Season::Winter, PhaseKind::Adjustment);
                 } else {
-                    self.state.phase =
-                        Phase::new(phase.year + 1, Season::Spring, PhaseKind::Movement);
+                    self.state.phase = Phase::new(
+                        phase.year.saturating_add(1),
+                        Season::Spring,
+                        PhaseKind::Movement,
+                    );
                 }
             }
         }

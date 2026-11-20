@@ -114,7 +114,10 @@ fn load_every_way(doc: &Value) {
     let rulebook = Rulebook::default();
     let _ = Game::verify_saved(&saved, rulebook);
     if let Ok(game) = Game::from_saved(&saved, rulebook) {
-        let _ = game.to_saved(&saved.id);
+        // what the engine wrote, it must be able to read back (the fuzzer holds the same line)
+        let exported = game.to_saved(&saved.id);
+        let again = Game::from_saved(&exported, rulebook).expect("own export replays");
+        assert_eq!(again.state, game.state);
     }
     if let Ok(mut game) = Game::resume(&saved, rulebook) {
         let exported = game.to_saved(&saved.id);
@@ -159,4 +162,28 @@ fn mutated_saved_games_never_panic() {
             load_every_way(&doc);
         }
     }
+}
+
+/// Found by `fuzz/fuzz_targets/saved.rs`: a state named `S0950M` loaded as the year 950, the
+/// export wrote it back as `S950M`, and that did not parse. Every phase name the engine writes
+/// must read back as the same phase.
+#[test]
+fn an_export_from_an_early_year_reads_back() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/untrusted/year_0950.json");
+    let saved: SavedGame = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    let rulebook = Rulebook::default();
+    let game = Game::from_saved(&saved, rulebook).expect("the document loads");
+    let exported = game.to_saved(&saved.id);
+    assert!(
+        exported.phases.iter().all(|p| p.state.name.len() == 6),
+        "{:?}",
+        exported
+            .phases
+            .iter()
+            .map(|p| &p.state.name)
+            .collect::<Vec<_>>()
+    );
+    let again = Game::from_saved(&exported, rulebook).expect("own export replays");
+    assert_eq!(again.state, game.state);
+    load_every_way(&serde_json::to_value(&saved).unwrap());
 }
