@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { OrderResult } from "../engine.js";
 import { VERDICTS, cycleNote, namePlaces, receiptFor, verdictFor, wordsFromCode } from "./receipts.js";
@@ -218,6 +219,13 @@ describe("the one place for outcome copy", () => {
     expect(namePlaces("F LON moved to STP/NC.", more)).toBe("F LON moved to St Petersburg (north coast).");
     expect(namePlaces("A PAR moved to XYZ.", more)).toBe("A PAR moved to XYZ.");
     expect(namePlaces("A PAR moved to BUR.")).toBe("A PAR moved to BUR.");
+  });
+
+  it("is the only place: the Why panel's module writes no sentences of its own", () => {
+    for (const file of ["./explain/explain.ts", "./explain/whatIf.ts"]) {
+      const source = readFileSync(new URL(file, import.meta.url), "utf8").replace(/^\s*(\/\/|\*|\/\*\*).*$/gm, "");
+      expect(source.match(/["'`][A-Z][a-z]+ [a-z]+[^"'`]*["'`]/g) ?? [], file).toEqual([]);
+    }
   });
 });
 
