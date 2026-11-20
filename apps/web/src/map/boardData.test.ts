@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
-import board from "./board.json";
-import { type Board, LABEL_OUTLINE_TOLERANCE, insideOutline, insideRings, outlineOf, pathRings } from "./boardData.js";
-import { boardSizes, placeLabels } from "./view.js";
+import standard from "../../../../crates/cabal-engine/data/maps/standard.json";
+import geometry from "./board.json";
+import { LABEL_OUTLINE_TOLERANCE, insideOutline, insideRings, outlineOf, pathRings } from "./boardData.js";
+import { type BoardGeometry, composeBoard } from "./variant.js";
+import { LABEL_CAP, boardSizes, leaderFor, placeLabels } from "./view.js";
 
-const data = board as unknown as Board;
+const data = composeBoard(standard, geometry as unknown as BoardGeometry);
 
 describe("pathRings", () => {
   it("reads absolute starts, relative lines and several rings", () => {
@@ -71,6 +73,8 @@ describe("label layout on the real board", () => {
         unit: p.unit,
         label: p.label,
         worth,
+        keep: Boolean(p.sc),
+        anchor: p.sc,
         inside: (pt: [number, number]) => insideOutline(rough, pt[0], pt[1]),
         reallyInside: (pt: [number, number]) => insideRings(exact, pt),
       };
@@ -84,10 +88,40 @@ describe("label layout on the real board", () => {
     sizes.set(`${r}/${size}`, [r, size]);
   }
   for (const [r, size] of sizes.values()) {
-    it(`writes every code inside the province it names (r ${r}, size ${size})`, () => {
+    it(`writes every code inside the province it names, or a centre's right beside it (r ${r}, size ${size})`, () => {
       const at = placeLabels(spots, r, size);
-      const outside = spots.filter((s) => at[s.code] && !s.reallyInside(at[s.code]!)).map((s) => s.code);
-      expect(outside).toEqual([]);
+      const outside = spots.filter((s) => at[s.code] && !s.reallyInside(at[s.code]!));
+      if (size <= LABEL_CAP) {
+        expect(outside.map((s) => s.code)).toEqual([]);
+        return;
+      }
+      // A far-out overview sets a crowded centre's code beside its province, close to the centre.
+      expect(outside.filter((s) => !s.keep).map((s) => s.code)).toEqual([]);
+      for (const s of outside) {
+        const leader = leaderFor(at[s.code]!, s.anchor!, size);
+        const length = leader ? Math.hypot(leader[1][0] - leader[0][0], leader[1][1] - leader[0][1]) : 0;
+        expect(length, s.code).toBeLessThan(size * 2.5);
+      }
+    });
+
+    it(`names every supply centre (r ${r}, size ${size})`, () => {
+      const at = placeLabels(spots, r, size);
+      expect(spots.filter((s) => s.keep && !at[s.code]).map((s) => s.code)).toEqual([]);
+    });
+
+    it(`writes no code's letters over another's (r ${r}, size ${size})`, () => {
+      const at = placeLabels(spots, r, size);
+      const codes = Object.keys(at);
+      const clashes: string[] = [];
+      for (const [i, a] of codes.entries()) {
+        for (const b of codes.slice(i + 1)) {
+          const [ax, ay] = at[a]!;
+          const [bx, by] = at[b]!;
+          // The letters themselves (three mono capitals), as e2e/layout.spec.ts measures them.
+          if (Math.abs(ax - bx) < size * 1.86 && Math.abs(ay - by) < size * 0.72) clashes.push(`${a} on ${b}`);
+        }
+      }
+      expect(clashes).toEqual([]);
     });
 
     it(`covers no piece position with a code (r ${r}, size ${size})`, () => {
@@ -106,14 +140,16 @@ describe("label layout on the real board", () => {
     });
   }
 
-  it("draws every code up to the cap, and on a far-out overview many supply centres' and none that would clash", () => {
+  it("draws every code up to the cap, and on a far-out overview every supply centre's and leaves out only lesser ones", () => {
     const { r, size } = boardSizes(1);
     expect(Object.keys(placeLabels(spots, r, size))).toHaveLength(spots.length);
     const far = boardSizes(0.26);
     expect(far.size).toBeGreaterThan(16);
     const at = placeLabels(spots, far.r, far.size);
     const centres = spots.filter((s) => s.worth === 0);
-    expect(centres.filter((s) => at[s.code]).length).toBeGreaterThanOrEqual(centres.length * 0.4);
+    // Central Europe included: the Low Countries, Berlin, Vienna, Venice and Rome.
+    expect(centres.filter((s) => !at[s.code]).map((s) => s.code)).toEqual([]);
+    for (const code of ["HOL", "BEL", "BER", "KIE", "VIE", "VEN", "ROM", "LON"]) expect(at[code], code).toBeDefined();
     expect(Object.keys(at).length).toBeLessThan(spots.length);
   });
 });
