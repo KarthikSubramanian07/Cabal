@@ -3,9 +3,10 @@
  * writes, and may attach a Seal: a pledge over some of their own orders this phase, sealed on this
  * device (see seals.ts) or left open for the reader to see at once.
  */
-import { type GameSettings, type GameStatus, type OrderResultView, type PledgeInput, type PowerName, type PressView, type Recipient, excerpt } from "@cabal/protocol";
+import type { GameSettings, GameStatus, OrderResultView, PledgeInput, PowerName, PressView, Recipient } from "@cabal/protocol";
 import { CabalError } from "@cabal/protocol/client";
 import { type CSSProperties, type FormEvent, type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { QuoteButton, QuotedDispatch, QuotingSlip } from "../lobby/Quote.jsx";
 import { phaseLabel, powerLabel } from "../lobby/terms.js";
 import { SealCard } from "./SealCard.jsx";
 import { makeSeal } from "./seals.js";
@@ -24,12 +25,6 @@ const ERRORS: Record<string, string> = {
   spectator: "Only players at this table can write.",
   bad_quote: "Only a message from this thread can be quoted here.",
 };
-
-/** How much of a message the composer shows while quoting it; the server keeps its own excerpt. */
-const QUOTE_PREVIEW = 160;
-
-/** Cut as the server cuts the excerpt itself, by characters as a reader counts them. */
-const preview = (body: string): string => excerpt(body, QUOTE_PREVIEW);
 
 function when(sentAt: number): string {
   return new Date(sentAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -149,24 +144,9 @@ export function PressPanel(props: PressPanelProps) {
                     </span>
                     {names[m.from] ? <span className="dispatch-name">{names[m.from]}</span> : null}
                     <time dateTime={new Date(m.sentAt).toISOString()}>{when(m.sentAt)}</time>
-                    {canQuote ? (
-                      // Described by the sender rather than named after them: the thread is a live log, and a
-                      // longer name would be read out with every message that arrives.
-                      <button type="button" className="dispatch-act" aria-pressed={quoting?.id === m.id} aria-describedby={`${fromId}-${m.id}`} onClick={() => setQuoting(quoting?.id === m.id ? null : m)}>
-                        Quote
-                      </button>
-                    ) : null}
+                    {canQuote ? <QuoteButton sender={`${fromId}-${m.id}`} pressed={quoting?.id === m.id} onToggle={() => setQuoting(quoting?.id === m.id ? null : m)} /> : null}
                   </p>
-                  {m.quote ? (
-                    <blockquote className="dispatch-quote" style={{ "--power": `var(--p-${m.quote.from.toLowerCase()})` } as CSSProperties}>
-                      <p className="quote-from">
-                        <span className="sr-only">Quoting </span>
-                        {powerLabel(m.quote.from)}
-                        {m.quote.phase !== m.phase ? `, ${m.quote.phase === "LOBBY" ? "before the game" : phaseLabel(m.quote.phase)}` : ""}
-                      </p>
-                      <p className="quote-text">{m.quote.excerpt}</p>
-                    </blockquote>
-                  ) : null}
+                  {m.quote ? <QuotedDispatch quote={m.quote} phase={m.phase} /> : null}
                   <p className="dispatch-body">{m.body}</p>
                   {m.pledge ? <SealCard pledge={m.pledge} results={resultsFor(m.pledge.phase)} mine={m.from === me} /> : null}
                 </li>
@@ -303,15 +283,7 @@ function Composer({
   return (
     <form className="talk-compose press-compose" onSubmit={submit} noValidate>
       <label htmlFor={`compose-${to}`}>{label}</label>
-      {quoting ? (
-        <div className="quote-slip" id={quoteId} style={{ "--power": `var(--p-${quoting.from.toLowerCase()})` } as CSSProperties}>
-          <p className="quote-from">Quoting {quoting.from === me ? "yourself" : powerLabel(quoting.from)}</p>
-          <p className="quote-text">{preview(quoting.body)}</p>
-          <button type="button" className="dispatch-act" onClick={onUnquote}>
-            Remove the quote
-          </button>
-        </div>
-      ) : null}
+      {quoting ? <QuotingSlip id={quoteId} quoting={quoting} me={me} onUnquote={onUnquote} /> : null}
       <textarea
         ref={area}
         id={`compose-${to}`}
