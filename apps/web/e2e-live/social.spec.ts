@@ -17,7 +17,7 @@ test.describe("the social layer, live", () => {
     // Ada writes to Bea while Bea is busy with her orders.
     await tab(bea, "Orders");
     await tab(ada, "Press");
-    await ada.getByRole("button", { name: Guest }).click();
+    await ada.getByRole("group", { name: "Threads" }).getByRole("button", { name: Guest }).click();
     await ada.getByLabel(`Message ${Guest}`).fill("Keep out of the Channel this year and I keep out of Belgium.");
     await ada.getByLabel(`Message ${Guest}`).press("Enter");
 
