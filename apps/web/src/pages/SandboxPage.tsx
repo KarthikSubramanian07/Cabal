@@ -4,6 +4,7 @@ import { PageLoading } from "../app/PageLoading.jsx";
 import { StatusPage } from "../app/StatusPage.jsx";
 import { shortcutsEnabled } from "../app/prefs.js";
 import { OrderEntry, type WriteResult } from "../components/OrderEntry.jsx";
+import { OrderPicker, type PickerState, placePicker } from "../components/OrderPicker.jsx";
 import { OrderList, PhaseHeader, PhaseStepper, PowerTable, Results, whyKey } from "../components/Sidebar.jsx";
 import { explainPhase, explainerFor } from "../game/explain/explain.js";
 import { useWhatIf } from "../game/explain/whatIf.js";
@@ -51,17 +52,7 @@ import { resolutionLength } from "../motion/choreography.js";
 import { prefersReducedMotion } from "../motion/useReducedMotion.js";
 import { type Speed, READ_MS, advance, dwell, playFrom } from "../game/replay.js";
 
-interface Picker {
-  x: number;
-  y: number;
-  title: string;
-  power: string;
-  key: string;
-  options: string[];
-  /** When and where it was opened, to ignore the click a touch sends after the tap that opened it. */
-  openedAt: number;
-  openedBy: { x: number; y: number } | null;
-}
+type Picker = PickerState;
 
 const IDLE: Draft = { step: "idle" };
 
@@ -205,18 +196,16 @@ function Table({ sb }: { sb: Sandbox }) {
         else if (!/ C A /.test(effect.text)) setRoute(null);
         announce(describeOrder(effect.text));
       } else if (effect.kind === "choose") {
-        const rect = boardWrap.current?.getBoundingClientRect();
-        const frame = boardWrap.current?.querySelector(".board-frame")?.getBoundingClientRect();
         // Without a pointer (the keyboard choices), open it in the middle of the board. Either way
         // keep it on screen and over the map, so it never hides the order tools under the map.
-        const half = 100;
-        const tall = 34 + effect.options.length * 44;
-        const x = client && rect ? client.x - rect.left : rect ? rect.width / 2 : 40;
-        const y = client && rect ? client.y - rect.top : rect ? rect.height / 3 : 40;
-        const maxY = frame && rect ? frame.bottom - rect.top - tall - 12 : y;
+        const at = placePicker(
+          boardWrap.current?.getBoundingClientRect(),
+          boardWrap.current?.querySelector(".board-frame")?.getBoundingClientRect(),
+          effect.options.length,
+          client,
+        );
         setPicker({
-          x: rect ? Math.min(Math.max(x, half), rect.width - half) : x,
-          y: Math.max(0, Math.min(y, maxY)),
+          ...at,
           title: effect.title,
           power: effect.power,
           key: effect.key,
@@ -771,59 +760,19 @@ function Table({ sb }: { sb: Sandbox }) {
             </div>
           ) : null}
           {picker ? (
-            <div
-              className="picker"
-              ref={pickerRef}
-              style={{ left: picker.x, top: picker.y }}
-              role="menu"
-              aria-labelledby="picker-title"
-              onKeyDown={(e) => {
-                // Menu keys: arrows and Home/End move between options; Escape cancels (window handler).
-                const items = [...e.currentTarget.querySelectorAll<HTMLButtonElement>("[role='menuitem']")];
-                const at = items.indexOf(document.activeElement as HTMLButtonElement);
-                const next =
-                  e.key === "ArrowDown"
-                    ? (at + 1) % items.length
-                    : e.key === "ArrowUp"
-                      ? (at - 1 + items.length) % items.length
-                      : e.key === "Home"
-                        ? 0
-                        : e.key === "End"
-                          ? items.length - 1
-                          : -1;
-                if (next < 0) return;
-                e.preventDefault();
-                e.stopPropagation();
-                items[next]?.focus();
+            <OrderPicker
+              picker={picker}
+              menuRef={pickerRef}
+              onChoose={(o) => {
+                writeOrder(picker.power, picker.key, o);
+                deck.play("quill");
+                setActive(picker.power);
+                setPicker(null);
+                if (o.endsWith(" VIA")) setRoute({ power: picker.power, unit: picker.key });
+                moveFocus.current = true;
+                announce(describeOrder(o));
               }}
-            >
-              <div className="picker-title" id="picker-title" role="presentation">
-                {picker.title}
-              </div>
-              {picker.options.map((o) => (
-                <button
-                  key={o}
-                  type="button"
-                  role="menuitem"
-                  onClick={(e) => {
-                    // A touch is followed by a synthetic click at the same spot. If the menu opened
-                    // under the finger, that click must not choose for the player.
-                    const from = picker.openedBy;
-                    const sameSpot = from !== null && Math.hypot(e.clientX - from.x, e.clientY - from.y) < 16;
-                    if (sameSpot && e.timeStamp - picker.openedAt < 700) return;
-                    writeOrder(picker.power, picker.key, o);
-                    deck.play("quill");
-                    setActive(picker.power);
-                    setPicker(null);
-                    if (o.endsWith(" VIA")) setRoute({ power: picker.power, unit: picker.key });
-                    moveFocus.current = true;
-                    announce(describeOrder(o));
-                  }}
-                >
-                  {o}
-                </button>
-              ))}
-            </div>
+            />
           ) : null}
 
           <div className="toolbar" role="group" aria-label="Order tools">
