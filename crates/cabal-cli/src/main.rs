@@ -382,15 +382,15 @@ fn datc(args: &[String]) -> ExitCode {
     } else {
         print!("{}", datc_harness::render("DATC v3.0", &datc, sections));
         print!("{}", datc_harness::render("Cabal cases", &cabal, sections));
+        // "Skipped" means the same here as in the JSON and the exit status: cases adjudicated
+        // with no assertion evaluated. Orders a case gives no expectation for are counted apart.
         println!(
-            "total: {} passed, {} failed, {} skipped",
+            "total: {} passed, {} failed, {} skipped; {} orders without an expectation",
             datc.passed() + cabal.passed(),
             failed,
+            skipped,
             datc.skipped() + cabal.skipped()
         );
-        if skipped > 0 {
-            println!("{skipped} cases adjudicated with no assertion evaluated");
-        }
     }
     if failed == 0 && skipped == 0 {
         ExitCode::SUCCESS

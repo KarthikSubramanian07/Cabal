@@ -32,11 +32,12 @@ fn report_adjudicates_every_case_and_prints_totals() {
         "{text}"
     );
     let total = text.lines().last().unwrap();
+    // The line's "skipped" is the cases the exit status and the JSON count, not orders.
     assert!(
-        total.starts_with("total: 178 passed, 0 failed, "),
+        total.starts_with("total: 178 passed, 0 failed, 0 skipped; "),
         "{total}"
     );
-    assert!(total.ends_with(" skipped"), "{total}");
+    assert!(total.ends_with(" orders without an expectation"), "{total}");
 }
 
 #[test]
