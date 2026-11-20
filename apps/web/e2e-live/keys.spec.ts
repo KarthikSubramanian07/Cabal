@@ -44,4 +44,44 @@ test.describe("the room by keyboard, live", () => {
     await scan(page, "room with the board as text open");
     await page.context().close();
   });
+
+  test("closing a sketch by Discard or by using it hands focus back to What if, not the page", async ({ browser, request }, info) => {
+    test.skip(info.project.name !== "desktop", "a keyboard walk");
+    const { host } = await liveTable(request);
+    const page = await sitDown(browser, info, host, host.gameId);
+    const whatIf = page.locator(".toolbar").getByRole("button", { name: "What if" });
+    await expect(whatIf).toBeVisible({ timeout: 30_000 });
+    const panel = page.getByRole("region", { name: "What if" });
+
+    /** Open a sketch and write one order in it, by keyboard alone. */
+    const sketchOne = async () => {
+      await whatIf.focus();
+      await page.keyboard.press("Enter");
+      await expect(whatIf).toHaveAttribute("aria-pressed", "true");
+      await page.locator(".choices button:not(:disabled)").first().focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator(".choices button.choice:focus")).toHaveCount(1);
+      await page.keyboard.press("Enter");
+      await expect(panel.getByRole("button", { name: "Use my sketched orders" })).toBeEnabled();
+    };
+    const focusedTag = () => page.evaluate(() => document.activeElement?.tagName ?? "none");
+
+    await tab(page, "Orders");
+    await sketchOne();
+    await panel.getByRole("button", { name: "Discard" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(panel).toHaveCount(0);
+    expect(await focusedTag()).not.toBe("BODY");
+    await expect(whatIf).toBeFocused();
+    await expect(whatIf).toHaveAttribute("aria-pressed", "false");
+
+    await sketchOne();
+    await panel.getByRole("button", { name: "Use my sketched orders" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(panel).toHaveCount(0);
+    expect(await focusedTag()).not.toBe("BODY");
+    await expect(whatIf).toBeFocused();
+    await expect(page.locator(".orders .row.given code")).toHaveCount(1);
+    await page.context().close();
+  });
 });

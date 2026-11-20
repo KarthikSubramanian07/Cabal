@@ -152,6 +152,8 @@ function Floor({
   const moveFocus = useRef(false);
   /** Set by a tap on the map, which must not pull focus (and the page) down to the choices. */
   const byPointer = useRef(false);
+  /** The toolbar's What if button: where focus returns when a sketch closes under it. */
+  const whatIfTool = useRef<HTMLButtonElement>(null);
 
   const announce = useCallback((text: string) => {
     setAnnouncement("");
@@ -452,6 +454,18 @@ function Floor({
     first?.scrollIntoView({ block: "nearest" });
   }, [draft, picker, viewing]);
 
+  // A sketch closed from inside its own panel (Discard, Use my sketched orders) takes the focused
+  // button with it: focus goes back to the What if button that opened it, or to the choices,
+  // rather than falling to the page.
+  const wasSketching = useRef(whatIf.on);
+  useEffect(() => {
+    const closed = wasSketching.current && !whatIf.on;
+    wasSketching.current = whatIf.on;
+    if (!closed) return;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    (whatIfTool.current ?? choicesRef.current)?.focus();
+  }, [whatIf.on]);
+
   // ---- keyboard, as in the sandbox
 
   const play = useCallback(() => {
@@ -732,7 +746,7 @@ function Floor({
                 </button>
               ) : null}
               {playing && rulesReady && me && draft.step === "idle" && !picker ? (
-                <button type="button" className="tool what-if" aria-pressed={whatIf.on} onClick={toggleWhatIf}>
+                <button type="button" ref={whatIfTool} className="tool what-if" aria-pressed={whatIf.on} onClick={toggleWhatIf}>
                   What if
                 </button>
               ) : null}
