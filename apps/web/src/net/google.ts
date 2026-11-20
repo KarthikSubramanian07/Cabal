@@ -67,13 +67,29 @@ export function loadGoogleIdentity(): Promise<GoogleIdentity> {
   return script;
 }
 
+/** Who hears the next answer from Google: the button drawn last. */
+let answer: ((credential: string) => void) | null = null;
+/** The client ID Google Identity Services was started with, once it has been. */
+let startedWith: string | null = null;
+
 /**
- * Draw Google's button into `parent`. Google keeps one callback per page, so the latest button
- * drawn is the one whose `onCredential` hears the answer.
+ * Draw Google's button into `parent`. Google Identity Services is started once per page:
+ * starting it again cancels a sign-in already under way (FedCM aborts its request), so every
+ * later button only takes over who hears the answer. The latest button drawn is that one.
  */
 export async function drawGoogleButton(parent: HTMLElement, id: string, onCredential: (credential: string) => void, text: "continue_with" | "signin_with" = "continue_with") {
   const gsi = await loadGoogleIdentity();
-  gsi.initialize({ client_id: id, callback: (r) => onCredential(r.credential), ux_mode: "popup", use_fedcm_for_button: true, itp_support: true, context: "use" });
+  answer = onCredential;
+  if (startedWith !== id) {
+    gsi.initialize({ client_id: id, callback: (r) => answer?.(r.credential), ux_mode: "popup", use_fedcm_for_button: true, itp_support: true, context: "use" });
+    startedWith = id;
+  }
   parent.replaceChildren();
   gsi.renderButton(parent, { type: "standard", theme: "outline", size: "large", text, shape: "rectangular", logo_alignment: "left", width: Math.min(320, Math.max(200, Math.floor(parent.clientWidth || 280))) });
+}
+
+/** For tests: forget that Google Identity Services was started. */
+export function forgetGoogleStart(): void {
+  answer = null;
+  startedWith = null;
 }
