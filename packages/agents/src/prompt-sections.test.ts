@@ -19,7 +19,7 @@ import {
   validateOrders,
   yearOf,
 } from "./player.js";
-import { CROWDED_UNIT, type PromptInput, legalMenu, systemPrompt, userPrompt } from "./prompt.js";
+import { COVERING_NOTE, CROWDED_UNIT, type PromptInput, legalMenu, systemPrompt, userPrompt } from "./prompt.js";
 
 beforeAll(async () => {
   const wasm = fileURLToPath(new URL("../../engine/pkg/cabal_engine_bg.wasm", import.meta.url));
@@ -236,5 +236,14 @@ describe("diary consolidation", () => {
     const text = userPrompt({ ...crowded(), phase: "F1901R" });
     expect(text).not.toContain("# Your plan for this year");
     expect(text).not.toContain("Also fill");
+  });
+});
+
+describe("covering an absent player's seat", () => {
+  it("tells the model to give orders only, last, after the task's invitation to send press", () => {
+    const text = userPrompt({ ...crowded(), covering: true });
+    expect(text).toContain(COVERING_NOTE);
+    expect(text.indexOf(COVERING_NOTE)).toBeGreaterThan(text.indexOf("You may send a last"));
+    expect(userPrompt(crowded())).not.toContain("You are covering this seat");
   });
 });

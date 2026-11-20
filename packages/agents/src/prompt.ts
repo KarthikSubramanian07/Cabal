@@ -49,6 +49,11 @@ export interface PromptInput {
   planning?: boolean;
   /** A finished year whose diary entries this turn should sum up (they are folded into one line). */
   summarise?: number | null;
+  /**
+   * True when this seat belongs to a person who has missed their turns and the model is covering it
+   * until they return. The turn gives orders only: the room sends none of its press or pledges.
+   */
+  covering?: boolean;
 }
 
 export const SYSTEM_PROMPT = `You are playing Cabal, a game of Diplomacy with receipts.
@@ -253,7 +258,17 @@ function planningTask(input: PromptInput): string {
 }
 
 function task(input: PromptInput): string {
-  return baseTask(input) + planningTask(input);
+  return baseTask(input) + planningTask(input) + coveringTask(input);
+}
+
+/** Said last, so it overrides the invitations to send press in the task above. */
+export const COVERING_NOTE = `You are covering this seat for its player, who has missed their turns and may come back at any
+moment. Give orders only: leave \`messages\` empty and \`pledge\` null. Nothing you write would be sent,
+because it would be read as the player's own words and any pledge would count on their record. The
+press above is only what was said to the whole table.`;
+
+function coveringTask(input: PromptInput): string {
+  return input.covering ? `\n\n${COVERING_NOTE}` : "";
 }
 
 function baseTask(input: PromptInput): string {
