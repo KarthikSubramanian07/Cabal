@@ -244,6 +244,8 @@ async function deleteAccount(request: Request, env: Env, store: PlayerStore, pla
 
 /** Report a player to the maintainers: signed in, never about oneself, once a day per player. */
 async function report(request: Request, env: Env, store: PlayerStore, handle: string, now: number): Promise<Response> {
+  // Per address first: a bad or forged bearer still costs a database read to turn away.
+  if (await limited(env.PROFILE_LIMITER, request, "report")) return tooMany();
   const resolved = await resolvePlayer(request, env);
   if (resolved === "none" || resolved === "invalid") return json({ error: "sign in to report a player", code: "signed_out" }, 401);
   const reporter = resolved.player;

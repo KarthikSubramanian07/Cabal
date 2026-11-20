@@ -3,7 +3,7 @@ import { SELF } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlayerSession, ReportsResponse } from "@cabal/protocol";
 import { MULTI_ACCOUNT_REVIEW, noteAccountOrigin, originKeyOf } from "../src/moderation.js";
-import { call, freshHandle, newPlayer, serverEnv } from "./helpers.js";
+import { call, freshHandle, newPlayer, nextIp, serverEnv } from "./helpers.js";
 
 const db = () => serverEnv.DB!;
 const ADMIN = "test-admin-token";
@@ -20,6 +20,21 @@ async function reviewList(): Promise<ReportsResponse> {
 afterEach(() => vi.restoreAllMocks());
 
 describe("reporting a player", () => {
+  it("turns away a flood from one address before reading any bearer it carries", async () => {
+    const ip = nextIp();
+    const statuses: number[] = [];
+    for (let i = 0; i < 24; i++) {
+      const res = await SELF.fetch("http://cabal/api/players/someone/report", {
+        method: "POST",
+        headers: { "cf-connecting-ip": ip, authorization: `Bearer cps_${"x".repeat(43)}` },
+        body: JSON.stringify({ reason: "abuse" }),
+      });
+      statuses.push(res.status);
+    }
+    expect(statuses.filter((s) => s === 401)).toHaveLength(20);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(4);
+  });
+
   it("takes a signed-in player's report about someone else, once a day, for the maintainers only", async () => {
     const [ann, bob] = await Promise.all([newPlayer(), newPlayer()]);
     expect((await report(null, bob.player.handle, { reason: "abuse" })).status).toBe(401);
