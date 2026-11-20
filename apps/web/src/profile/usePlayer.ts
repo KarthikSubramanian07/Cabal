@@ -3,7 +3,7 @@
  * made the first time a person plays (see IdentityProvider), not when they arrive: browsing the
  * front door, the sandbox or a profile never creates one.
  */
-import type { MeResponse, RecoveryCodeResponse } from "@cabal/protocol";
+import type { DeleteMeResponse, MeResponse, RecoveryCodeResponse } from "@cabal/protocol";
 import { useCallback, useSyncExternalStore } from "react";
 import { isApiFailure } from "../net/failure.js";
 import { loadApi, localRefusal } from "../net/lazy.js";
@@ -115,5 +115,26 @@ export function useAccount() {
     forgetPlayer();
   }, []);
 
-  return { player, create, recover, me, rename, issueRecoveryCode, signOut };
+  /**
+   * Delete the account for good: the server forgets it and turns its seats into ghosts. This device
+   * then lets go of everything the account left here: its push subscription (the server's copy is
+   * already gone), its seats and its secret. The device is cleared by the caller, with `forget`,
+   * once the player has read what happened: until then the card stays open.
+   */
+  const deleteAccount = useCallback(async (handle: string): Promise<{ result: DeleteMeResponse; forget: () => void }> => {
+    const current = readPlayer();
+    if (!current) throw localRefusal(401, "not signed in");
+    let result: DeleteMeResponse;
+    try {
+      const { api } = await loadApi();
+      result = await api.deleteAccount(current.secret, handle);
+    } catch (error) {
+      return signedOutIfRefused(error);
+    }
+    await turnOffPush(async () => undefined).catch(() => undefined);
+    forgetSeatsOf(current);
+    return { result, forget: () => (readPlayer()?.id === current.id ? forgetPlayer() : undefined) };
+  }, []);
+
+  return { player, create, recover, me, rename, issueRecoveryCode, signOut, deleteAccount };
 }

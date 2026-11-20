@@ -166,6 +166,67 @@ test.describe("the player's account", () => {
     expect(server.calls).toContain("POST /api/me/logout");
   });
 
+  test("deleting the account asks for the handle typed out, then lets go of the device", async ({ page }) => {
+    const server = await fakeServer(page);
+    accountRoutes(server);
+    const asked: unknown[] = [];
+    server.on("DELETE", /^\/api\/me$/, (request) => {
+      asked.push(request.postDataJSON());
+      return { body: { deleted: true, games: 2, unreached: 0 } };
+    });
+    await signedIn(page);
+    await page.addInitScript(() => {
+      localStorage.setItem("cabal.seat.Z2BSVX", JSON.stringify({ gameId: "Z2BSVX", power: "ENGLAND", token: "Z2BSVX.secret-seat-token", savedAt: 1, name: "ada_l", userId: "pl_test_ada" }));
+    });
+    await page.goto("/games");
+    await openMenu(page);
+    await page.getByRole("button", { name: "Sign out" }).click();
+    const card = page.getByRole("dialog", { name: "Your account" });
+    const section = card.getByRole("region", { name: "Delete the account" });
+    await section.getByRole("button", { name: "Delete this account" }).click();
+    // The safe choice has focus, and the destructive one waits for the handle.
+    await expect(section.getByRole("button", { name: "Keep my account" })).toBeFocused();
+    const confirm = section.getByRole("button", { name: "Delete for good" });
+    await expect(confirm).toBeDisabled();
+    await section.getByLabel("Type ada_l to confirm").fill("ada");
+    await expect(confirm).toBeDisabled();
+    await section.getByRole("button", { name: "Keep my account" }).click();
+    await expect(confirm).toHaveCount(0);
+    expect(asked).toEqual([]);
+
+    await section.getByRole("button", { name: "Delete this account" }).click();
+    await section.getByLabel("Type ada_l to confirm").fill("ADA-L");
+    const { violations } = await new AxeBuilder({ page }).withTags(TAGS).analyze();
+    expect(violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => v.id)).toEqual([]);
+    await confirm.click();
+    await expect(card.getByRole("status")).toContainText("The account is deleted.");
+    await expect(card.getByRole("status")).toContainText("seats in 2 games are now a ghost's");
+    expect(asked).toEqual([{ handle: "ADA-L" }]);
+    // The seats go at once; the secret goes when the card closes.
+    expect(await page.evaluate(() => localStorage.getItem("cabal.seat.Z2BSVX"))).toBeNull();
+    expect(await page.evaluate(() => localStorage.getItem("cabal.player"))).not.toBeNull();
+    await card.getByRole("button", { name: "Close", exact: true }).last().click();
+    await expect(card).toBeHidden();
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("cabal.player"))).toBeNull();
+    await expect(page.locator(".player-button")).toHaveAccessibleName("Your account");
+  });
+
+  test("a refused deletion says why and keeps the account", async ({ page }) => {
+    const server = await fakeServer(page);
+    accountRoutes(server);
+    server.on("DELETE", /^\/api\/me$/, () => ({ status: 400, body: { error: "type the account's handle to delete it", code: "handle_mismatch" } }));
+    await signedIn(page);
+    await page.goto("/games");
+    await openMenu(page);
+    await page.getByRole("button", { name: "Sign out" }).click();
+    const section = page.getByRole("dialog", { name: "Your account" }).getByRole("region", { name: "Delete the account" });
+    await section.getByRole("button", { name: "Delete this account" }).click();
+    await section.getByLabel("Type ada_l to confirm").fill("ada_l");
+    await section.getByRole("button", { name: "Delete for good" }).click();
+    await expect(section.getByRole("alert")).toContainText("That is not the account's handle.");
+    expect(await page.evaluate(() => localStorage.getItem("cabal.player"))).not.toBeNull();
+  });
+
   test("restoring another account warns first when the one on the device has no recovery code", async ({ page }) => {
     const server = await fakeServer(page);
     accountRoutes(server);
