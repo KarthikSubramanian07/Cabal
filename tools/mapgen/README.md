@@ -38,17 +38,34 @@ The engine's border table stays the source of truth for the rules. The map only 
 
 ## Output format
 
+board.json is geometry only: where things are drawn, never what they are. The web client takes
+each province's name, terrain, supply centre and named coasts from the variant document,
+`crates/cabal-engine/data/maps/standard.json`, and joins the two in `apps/web/src/map/variant.ts`
+(`composeBoard`). It refuses geometry that misses a province, centre or coast the variant has, or
+draws one it does not, so a change to the variant that the map does not follow fails its tests.
+
 ```jsonc
 {
+  "variant": "standard",       // the map document this geometry draws
   "width": 1200, "height": 1169.4,
   "coast": "M.. l..",          // every shoreline, for a heavier stroke
   "seaLines": "M.. l..",       // boundaries between sea zones
   "impassable": ["M..z"],      // Ireland, Iceland, the Mediterranean islands, board edges
   "lakes": ["M..z"],           // Sea of Marmara, Caspian
   "provinces": {
-    "PAR": { "name": "Paris", "kind": "land", "d": "M..z",
-             "unit": [x, y], "label": [x, y], "sc": [x, y] },
-    "STP": { "kind": "coast", "coasts": { "NC": [x, y], "SC": [x, y] } }
+    "PAR": { "d": "M..z", "unit": [x, y], "label": [x, y], "sc": [x, y] },
+    "STP": { "d": "M..z", "unit": [x, y], "label": [x, y], "sc": [x, y],
+             "coasts": { "NC": [x, y], "SC": [x, y] } }
   }
 }
 ```
+
+Switzerland is a province of the variant with no borders, so the client draws it as impassable.
+
+## Another variant
+
+A variant needs its own geometry: the outlines and anchors of its provinces. The client already
+reads everything else from the variant document. What is not built yet is a mapgen run per variant
+(provinces.py holds the standard map's assignment tables, seeds and centres) and a way for a game
+to say which variant it is played on; until then every table is standard, and `composeBoard`
+names what is missing if it is handed a variant without geometry (the engine's `duel` map, say).
