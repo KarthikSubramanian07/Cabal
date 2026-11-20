@@ -35,7 +35,7 @@ import {
   type TrustLeaderboardResponse,
 } from "@cabal/protocol";
 import type { GameIndex, ListFinished, ListLive, SeatClaim } from "./game-index.js";
-import { ALIAS_HOLD_MS, HANDLE_PROBLEMS, RENAME_COOLDOWN_MS, handleKey, handleProblem, pickHandle } from "./handles.js";
+import { ALIAS_HOLD_MS, DELETED_HANDLE_HOLD_MS, HANDLE_PROBLEMS, RENAME_COOLDOWN_MS, handleKey, handleProblem, pickHandle } from "./handles.js";
 import {
   LADDER,
   RATING_RULES,
@@ -100,9 +100,10 @@ export interface PlayerStore {
    * switches go; their seats in the index stay as anonymous ghosts so other players' records and
    * every finished game still add up; their id goes from other players' rating breakdowns. In the
    * `unplayed` games (lobbies whose room has already reopened their seat) their rows go outright,
-   * because the room keeps no stint of theirs there. Idempotent.
+   * because the room keeps no stint of theirs there. Their handles are held for
+   * `DELETED_HANDLE_HOLD_MS` before anyone else may take them. Idempotent.
    */
-  deletePlayer(playerId: string, unplayed?: readonly string[]): Promise<void>;
+  deletePlayer(playerId: string, unplayed?: readonly string[], now?: number): Promise<void>;
 }
 
 interface PlayerRow {
@@ -497,6 +498,13 @@ export class D1Index implements GameIndex, PlayerStore {
     ]);
   }
 
+  async currentHandles(playerIds: readonly string[]): Promise<Map<string, string>> {
+    const ids = [...new Set(playerIds)];
+    if (ids.length === 0) return new Map();
+    const rows = (await this.db.prepare(`SELECT id, handle FROM players WHERE id IN (${placeholders(ids.length)})`).bind(...ids).all<{ id: string; handle: string }>()).results;
+    return new Map(rows.map((r) => [r.id, r.handle]));
+  }
+
   async schemaVersion(): Promise<number> {
     const row = await this.db.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").first<{ name: string }>();
     return row ? Number.parseInt(row.name, 10) || 0 : 0;
@@ -570,9 +578,10 @@ export class D1Index implements GameIndex, PlayerStore {
           this.db
             .prepare(
               `INSERT INTO players (id, handle, handle_key, created_at, last_seen_at)
-               SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM handle_aliases WHERE handle_key = ? AND until > ?)`,
+               SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM handle_aliases WHERE handle_key = ? AND until > ?)
+               AND NOT EXISTS (SELECT 1 FROM handle_holds WHERE handle_key = ? AND until > ?)`,
             )
-            .bind(id, handle.trim(), key, now, now, key, now),
+            .bind(id, handle.trim(), key, now, now, key, now, key, now),
           this.db
             .prepare("INSERT INTO player_sessions (secret_hash, player_id, created_at, last_used_at) SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM players WHERE id = ?)")
             .bind(hashToken(secret), id, now, now, id),
@@ -660,9 +669,10 @@ export class D1Index implements GameIndex, PlayerStore {
         this.db
           .prepare(
             `UPDATE players SET handle = ?, handle_key = ?, handle_changed_at = ?
-             WHERE id = ? AND NOT EXISTS (SELECT 1 FROM handle_aliases WHERE handle_key = ? AND until > ? AND player_id <> ?)`,
+             WHERE id = ? AND NOT EXISTS (SELECT 1 FROM handle_aliases WHERE handle_key = ? AND until > ? AND player_id <> ?)
+             AND NOT EXISTS (SELECT 1 FROM handle_holds WHERE handle_key = ? AND until > ?)`,
           )
-          .bind(handle.trim(), key, now, playerId, key, now, playerId),
+          .bind(handle.trim(), key, now, playerId, key, now, playerId, key, now),
         // The old handle stays this player's for a while; the new one is no longer an alias of anyone.
         this.db
           .prepare(
@@ -919,7 +929,7 @@ export class D1Index implements GameIndex, PlayerStore {
     return rows.map((r) => r.game_id);
   }
 
-  async deletePlayer(playerId: string, unplayed: readonly string[] = []): Promise<void> {
+  async deletePlayer(playerId: string, unplayed: readonly string[] = [], now = Date.now()): Promise<void> {
     // The seats they held at the end of each recorded game, whose name the game's record still shows.
     const held = (
       await this.db
@@ -961,6 +971,15 @@ export class D1Index implements GameIndex, PlayerStore {
       this.db.prepare("DELETE FROM player_stats WHERE player_id = ?").bind(playerId),
       this.db.prepare("DELETE FROM push_subscriptions WHERE player_id = ?").bind(playerId),
       this.db.prepare("DELETE FROM notification_preferences WHERE player_id = ?").bind(playerId),
+      // Its handles are held a while first, so a room that missed the deletion cannot link a newcomer.
+      this.db.prepare("DELETE FROM handle_holds WHERE until <= ?").bind(now),
+      this.db
+        .prepare(
+          `INSERT INTO handle_holds (handle_key, until)
+           SELECT handle_key, ? FROM (SELECT handle_key FROM players WHERE id = ? UNION SELECT handle_key FROM handle_aliases WHERE player_id = ?) WHERE true
+           ON CONFLICT(handle_key) DO UPDATE SET until = MAX(until, excluded.until)`,
+        )
+        .bind(now + DELETED_HANDLE_HOLD_MS, playerId, playerId),
       this.db.prepare("DELETE FROM handle_aliases WHERE player_id = ?").bind(playerId),
       this.db.prepare("DELETE FROM player_sessions WHERE player_id = ?").bind(playerId),
       ...forgetInModeration(this.db, playerId),

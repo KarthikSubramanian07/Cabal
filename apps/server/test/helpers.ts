@@ -136,6 +136,8 @@ export interface RoomInternals {
     claudeOff: string | null;
   };
   env: ServerEnv;
+  /** What the index last said about the room's accounts; null makes the room ask again. */
+  accounts: { at: number; handles: Map<string, string> } | null;
   armedAt: number | null;
   outboxAt: number | null;
   sql: { exec<T = Record<string, unknown>>(query: string, ...bindings: unknown[]): { toArray(): T[]; one(): T } };

@@ -11,6 +11,7 @@
 import { ClientErrorReport } from "@cabal/protocol";
 import type { Env } from "./env.js";
 import { json, limited, readJson, tooMany, withCors } from "./http.js";
+import { maskHandles } from "./handles.js";
 import { log } from "./log.js";
 import { beaconOriginAllowed, continentOf } from "./metrics.js";
 
@@ -19,14 +20,15 @@ const SIX_LETTER_POWERS = new Set(["FRANCE", "RUSSIA", "TURKEY"]);
 
 /**
  * A message as it is logged: one line, with anything that looks like a URL cut to its path's first
- * segment, long runs of letters and digits (a token, an id) masked, and game codes masked: a code is
- * a table's address, and the privacy page promises a report never says which table broke. Messages
- * come from code, but an exception can quote what it was handed.
+ * segment, long runs of letters and digits (a token, an id) masked, and game codes and handles
+ * masked (`maskHandles`): a code is a table's address and a handle is a person, and the privacy page
+ * promises a report never says which table broke or whose page it was. Messages come from code,
+ * but an exception can quote what it was handed.
  */
 export function scrubMessage(message: string): string {
-  return message
-    .replace(/\s+/g, " ")
-    .replace(/\bhttps?:\/\/[^\s/]+(\/[^\s/?#]*)?[^\s]*/g, (_, first: string | undefined) => `<url>${first ?? ""}`)
+  return maskHandles(
+    message.replace(/\s+/g, " ").replace(/\bhttps?:\/\/[^\s/]+(\/[^\s/?#]*)?[^\s]*/g, (_, first: string | undefined) => `<url>${first ?? ""}`),
+  )
     .replace(/\b(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{16,}\b/g, "<id>")
     .replace(/\b[A-HJ-NP-Za-hj-np-z2-9]{6}\b/g, (word) => (/[2-9]/.test(word) || (word === word.toUpperCase() && !SIX_LETTER_POWERS.has(word)) ? "<code>" : word))
     .trim()

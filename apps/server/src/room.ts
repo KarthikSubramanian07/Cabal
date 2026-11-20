@@ -84,7 +84,7 @@ import {
   timedFirst,
 } from "./engine.js";
 import { gameIndex } from "./game-index.js";
-import { REQUEST_ID_HEADER, log, newRequestId, requestIdFrom, withLogContext } from "./log.js";
+import { REQUEST_ID_HEADER, describeError, log, newRequestId, requestIdFrom, withLogContext } from "./log.js";
 import { type Notice, deliver, notices, pushEnabled, reminderMinutes } from "./notify.js";
 import { hashToken, mintToken, parseToken, randomId, sameHash } from "./tokens.js";
 import { ledgerTally } from "./ratings.js";
@@ -101,6 +101,12 @@ export interface ForsakeAnswer {
   seats: PowerName[];
   unplayed: boolean;
 }
+
+/**
+ * How long a room trusts the index's word on which of its accounts still exist (`checkAccounts`).
+ * Must stay well under `DELETED_HANDLE_HOLD_MS`, the time a deleted account's handle is held.
+ */
+export const ACCOUNTS_FRESH_MS = 30_000;
 
 /** How much of a quoted message travels with the reply that quotes it. */
 const QUOTE_CHARS = 280;
@@ -519,6 +525,12 @@ export class GameRoom extends DurableObject<Env> {
   private alarmNotBefore: number | null = null;
   /** True while the index is being asked for a place under the Claude budget. */
   private admitting = false;
+  /**
+   * What the index last said about the accounts seated here: each one's handle now, by id, and
+   * when it was asked. In memory only, so a room that wakes asks again before it shows anyone.
+   */
+  private accounts: { at: number; handles: Map<string, string> } | null = null;
+  private checkingAccounts: Promise<void> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -765,6 +777,8 @@ export class GameRoom extends DurableObject<Env> {
     // The alarm that woke us is spent, whatever it was set to.
     this.armedAt = null;
     if (!this.meta || !this.game) return;
+    // A listing or record written below names only accounts that still exist.
+    await this.checkAccounts();
     const now = Date.now();
     try {
       if (this.outboxAt !== null && now >= this.outboxAt) await this.flushOutbox();
@@ -811,6 +825,8 @@ export class GameRoom extends DurableObject<Env> {
   private async handle(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
     try {
+      // Whoever this room names must still be who the name links to: see `checkAccounts`.
+      if (this.meta && path !== "/forsake") await this.checkAccounts();
       if (request.method === "POST" && path === "/create") return await this.create(request);
       if (request.method === "POST" && path === "/join") return await this.join(request);
       if (request.method === "POST" && path === "/start") return await this.start(request);
@@ -1035,12 +1051,18 @@ export class GameRoom extends DurableObject<Env> {
     if (!this.meta) return bad("no such game", 404);
     const { playerId } = (await request.json()) as { playerId?: string };
     if (!playerId) return bad("no player named", 400);
+    return json(this.forget(playerId) satisfies ForsakeAnswer);
+  }
+
+  /** Everything `/forsake` does, for one player id; also run when the room finds an account gone. */
+  private forget(playerId: string): ForsakeAnswer {
+    const meta = this.meta!;
     const held = this.seats().filter((s) => s.player_id === playerId);
     const stints = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM stints WHERE player_id = ?", playerId).one().n;
     // `unplayed`: the game had not begun, so the room keeps no stint of theirs and the index should
     // drop its rows for them here rather than keep an anonymous holder of a seat that opened again.
-    if (held.length === 0 && stints === 0) return json({ gameId: this.meta.id, seats: [], unplayed: this.meta.status === "lobby" } satisfies ForsakeAnswer);
-    const status = this.meta.status;
+    if (held.length === 0 && stints === 0) return { gameId: meta.id, seats: [], unplayed: meta.status === "lobby" };
+    const status = meta.status;
     this.atomic(() => {
       for (const seat of held) {
         if (status === "lobby") {
@@ -1112,7 +1134,75 @@ export class GameRoom extends DurableObject<Env> {
     if (held.length > 0) this.touchListing();
     if (status === "active" && held.length > 0) this.advance();
     this.log("player_departed", { seats: held.map((s) => s.power), status });
-    return json({ gameId: this.meta.id, seats: held.map((s) => s.power), unplayed: status === "lobby" } satisfies ForsakeAnswer);
+    return { gameId: meta.id, seats: held.map((s) => s.power), unplayed: status === "lobby" };
+  }
+
+  /**
+   * Make sure every account this room names still exists, and learn the handle each goes by now.
+   *
+   * A seat links to its holder's record by handle, and a handle can change hands: an account is
+   * deleted while this room could not be told (`/forsake` failed, or the index never learned of
+   * the seat), or a player renames and the old handle is freed after its hold. Asked by account id,
+   * the index says which accounts are gone, and the room forgets those exactly as `/forsake` would,
+   * so a stale seat shows a ghost rather than a link to whoever took the name next. The answer is
+   * trusted for `ACCOUNTS_FRESH_MS`; a deleted account's handle is held longer than that
+   * (`DELETED_HANDLE_HOLD_MS`), so nobody new can hold it while a room still trusts an old answer.
+   * A failure is logged and asked again next time; it never stops the room serving.
+   */
+  private checkAccounts(): Promise<void> {
+    if (this.accounts && Date.now() - this.accounts.at < ACCOUNTS_FRESH_MS) return Promise.resolve();
+    this.checkingAccounts ??= this.askIndexForAccounts().finally(() => {
+      this.checkingAccounts = null;
+    });
+    return this.checkingAccounts;
+  }
+
+  private async askIndexForAccounts(): Promise<void> {
+    const index = gameIndex(this.env);
+    if (!this.meta || !index) return;
+    const ids = this.sql
+      .exec<{ id: string }>(
+        `SELECT player_id AS id FROM seats WHERE player_id IS NOT NULL
+         UNION SELECT player_id FROM stints WHERE player_id IS NOT NULL
+         UNION SELECT pledger_player FROM pledges WHERE pledger_player IS NOT NULL
+         UNION SELECT audience_player FROM pledges WHERE audience_player IS NOT NULL`,
+      )
+      .toArray()
+      .map((r) => r.id);
+    const at = Date.now();
+    let handles: Map<string, string> | null;
+    try {
+      handles = ids.length === 0 ? new Map() : await index.currentHandles(ids);
+    } catch (error) {
+      this.log("accounts_check_failed", describeError(error), "error");
+      return;
+    }
+    if (handles === null) {
+      // This store keeps no players: nobody can be known to be gone, and the stored names stand.
+      this.accounts = { at, handles: new Map() };
+      return;
+    }
+    // A seat taken while the index was being asked is not in `ids`, and so is not taken for gone.
+    const gone = ids.filter((id) => !handles.has(id));
+    if (gone.length > 0 && this.meta) {
+      try {
+        for (const id of gone) this.forget(id);
+      } catch (error) {
+        // Not trusted, so the next request tries again.
+        this.log("departed_player_failed", describeError(error), "error");
+        return;
+      } finally {
+        this.settle();
+      }
+      this.log("departed_player_found", { players: gone.length });
+    }
+    this.accounts = { at, handles };
+  }
+
+  /** The handle a seated account goes by now: what the index last said, else the name it sat under. */
+  private handleOf(seat: Pick<SeatRow, "player_id" | "name">): string | null {
+    if (seat.player_id === null) return null;
+    return this.accounts?.handles.get(seat.player_id) ?? seat.name;
   }
 
   /** True when this player holds or has held any seat in this game. */
@@ -1430,7 +1520,7 @@ export class GameRoom extends DurableObject<Env> {
         missed: s.missed,
         autopilot,
         brain: s.kind === "ai" || autopilot ? aiBrain : null,
-        handle: s.player_id !== null ? s.name : null,
+        handle: this.handleOf(s),
         present: s.kind === "ai" || present.has(s.power),
         submitted: submitted.has(s.power),
         canAct: running && s.eliminated === 0 && s.kind !== "open" && this.actable(s.power),
@@ -1577,6 +1667,8 @@ export class GameRoom extends DurableObject<Env> {
   override webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     // Each frame is its own unit of work in the logs.
     return this.traced(requestIdFrom(null, "ws"), async () => {
+      // Not awaited: a frame never waits on the index. A seat found gone is forgotten moments later.
+      if (this.meta) this.ctx.waitUntil(this.checkAccounts());
       try {
         await this.onFrame(ws, raw);
       } finally {

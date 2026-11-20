@@ -70,9 +70,10 @@ test.describe("search and sharing", () => {
     expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([1200, 630]);
   });
 
-  test("robots.txt keeps crawlers off the API and points at the sitemap, which lists the public pages", async ({ request }) => {
+  test("robots.txt lets crawlers read what pages draw from and points at the sitemap, which lists the public pages", async ({ request }) => {
     const robots = await (await request.get("/robots.txt")).text();
-    expect(robots).toContain("Disallow: /api/");
+    // A record or a replay reads the API as it draws; each answer is noindex instead (gateway.ts).
+    expect(robots).not.toMatch(/^Disallow:/m);
     expect(robots).toContain("Sitemap: https://playcabal.pages.dev/sitemap.xml");
     const sitemap = await (await request.get("/sitemap.xml")).text();
     const urls = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);

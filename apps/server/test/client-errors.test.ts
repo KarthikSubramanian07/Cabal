@@ -62,6 +62,19 @@ describe("client error reports", () => {
     expect(scrubMessage("x".repeat(400))).toHaveLength(300);
   });
 
+  it("masks the handles a message quotes, as it masks codes", async () => {
+    expect(scrubMessage("no record at /u/Talleyrand")).toBe("no record at /u/<handle>");
+    expect(scrubMessage("GET /api/players/Talleyrand/ratings: 503")).toBe("GET /api/players/<handle>/ratings: 503");
+    expect(scrubMessage('rename refused for handle "Talleyrand"')).toBe('rename refused for handle "<handle>"');
+    expect(scrubMessage("Envoy-4821 holds K7Q2XZ")).toBe("<handle> holds <code>");
+    const lines = await errorLines(() =>
+      report({ kind: "error", message: "Courier-1234 could not open /u/Talleyrand", route: "profile", where: "/u/Talleyrand:1:2" }, { origin: "http://cabal" }),
+    );
+    const line = lines.find((l) => l["event"] === "client_error");
+    expect(line).toMatchObject({ message: "<handle> could not open /u/<handle>", where: "/u/<handle>:1:2" });
+    expect(JSON.stringify(line)).not.toMatch(/Talleyrand|Courier-1234/);
+  });
+
   it("refuses a report from another site's page, a malformed one, and a flood from one address", async () => {
     const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
     expect((await report({ kind: "error", message: "boom", route: "home" }, { origin: "https://evil.example" })).status).toBe(403);

@@ -1,6 +1,7 @@
 User-agent: *
 Allow: /
-# The game server's API: live state, never a page.
-Disallow: /api/
+# /api/ is the game server's API. Pages read it as they draw (a record, a replay), so a crawler
+# that renders them must be let through; every answer carries X-Robots-Tag: noindex, so none is
+# ever kept as a page of its own.
 
 Sitemap: https://playcabal.pages.dev/sitemap.xml

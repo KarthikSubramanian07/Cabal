@@ -1,4 +1,4 @@
-import { type PageMeta, metaFor, writeHead } from "../app/meta.js";
+import { type PageMeta, metaFor, replayIndexable, writeHead } from "../app/meta.js";
 import { type RouteMatch, matchRoute } from "../app/routes.js";
 import { isGameCode } from "../net/code.js";
 import { hintsFor } from "./hints.js";
@@ -69,13 +69,24 @@ async function withPageHead(res: Response, path: string, meta: PageMeta = metaFo
 }
 
 /**
+ * Read from the game server as the visitor who asked: the server limits reads per client address,
+ * so a page's lookup counts against that visitor (or crawler), not one bucket every page would share.
+ */
+function askServer(server: NonNullable<AssetEnv["SERVER"]>, url: URL, path: string, request: Request): Promise<Response> {
+  const headers = new Headers({ Accept: "application/json" });
+  const address = request.headers.get("cf-connecting-ip");
+  if (address) headers.set("cf-connecting-ip", address);
+  return server.fetch(new Request(new URL(path, url).toString(), { headers }));
+}
+
+/**
  * What the game server says about a player's handle: the handle as its owner writes it, null
  * when nobody has it, undefined when the server could not say (then the page is served as usual).
  */
-async function knownHandle(env: AssetEnv, url: URL, handle: string): Promise<string | null | undefined> {
+async function knownHandle(env: AssetEnv, url: URL, handle: string, request: Request): Promise<string | null | undefined> {
   if (!env.SERVER) return undefined;
   try {
-    const res = await env.SERVER.fetch(new Request(new URL(`/api/players/${encodeURIComponent(handle)}`, url).toString(), { headers: { Accept: "application/json" } }));
+    const res = await askServer(env.SERVER, url, `/api/players/${encodeURIComponent(handle)}`, request);
     if (res.status === 404) return null;
     if (!res.ok) return undefined;
     const body = (await res.json()) as { player?: { handle?: unknown } };
@@ -86,18 +97,42 @@ async function knownHandle(env: AssetEnv, url: URL, handle: string): Promise<str
 }
 
 /**
+ * Whether a replay is one a search index may keep: its game was played in public and has ended.
+ * Null when the server knows no such game, undefined when it could not say (then it stays unindexed).
+ */
+async function publicReplay(env: AssetEnv, url: URL, code: string, request: Request): Promise<boolean | null | undefined> {
+  if (!env.SERVER) return undefined;
+  try {
+    const res = await askServer(env.SERVER, url, `/api/games/${encodeURIComponent(code)}`, request);
+    if (res.status === 404) return null;
+    if (!res.ok) return undefined;
+    return replayIndexable((await res.json()) as Parameters<typeof replayIndexable>[0]);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * An app page's head and status. A record names its player as they write their handle, so every
  * spelling of it shares one canonical address; a handle nobody has, and a table or replay code
- * that cannot exist, are a 404 that no search index keeps.
+ * that cannot exist, are a 404 that no search index keeps. A table is a room for the people sent
+ * its code and is never indexed (nor asked about: its page must not wait on the server). A
+ * replay is indexed once its game has ended, when the game was public: it is listed in the games
+ * room already, and reads as a page of its own.
  */
-async function appPage(env: AssetEnv, url: URL, path: string, route: RouteMatch): Promise<{ meta: PageMeta; status: number }> {
+async function appPage(env: AssetEnv, url: URL, path: string, route: RouteMatch, request: Request): Promise<{ meta: PageMeta; status: number }> {
   const meta = metaFor(path);
   const missing = { meta: { ...meta, index: false }, status: 404 };
   if (route.name === "game" || route.name === "replay") {
-    return isGameCode((route.params["code"] ?? "").toUpperCase()) ? { meta, status: 200 } : missing;
+    const code = (route.params["code"] ?? "").toUpperCase();
+    if (!isGameCode(code)) return missing;
+    if (route.name === "game") return { meta, status: 200 };
+    const listed = await publicReplay(env, url, code, request);
+    if (listed === null) return missing;
+    return { meta: { ...meta, index: listed === true }, status: 200 };
   }
   if (route.name === "profile") {
-    const handle = await knownHandle(env, url, route.params["handle"] ?? "");
+    const handle = await knownHandle(env, url, route.params["handle"] ?? "", request);
     if (handle === null) return missing;
     if (handle) return { meta: metaFor(`/u/${encodeURIComponent(handle)}`), status: 200 };
   }
@@ -202,6 +237,8 @@ async function proxyApi(request: Request, env: AssetEnv): Promise<Response> {
   for (const name of API_HEADERS) out.headers.set(name, SECURITY_HEADERS[name]!);
   // Same origin now: the server's permissive CORS grant is not needed and should not leak out.
   out.headers.delete("Access-Control-Allow-Origin");
+  // A crawler may read the API to draw a page (robots.txt lets it), but never keeps an answer as a page.
+  out.headers.set("X-Robots-Tag", "noindex");
   return out;
 }
 
@@ -294,9 +331,9 @@ async function route(request: Request, env: AssetEnv): Promise<Response> {
       const shell = await fetchAsset(env, url, "/index.html", request);
       if (shell.status !== 200) return notFound(env, url, request, false);
       const route = matchRoute(path)!;
-      const { meta, status } = await appPage(env, url, path, route);
+      const { meta, status } = await appPage(env, url, path, route, request);
       const res = withNegotiationHeaders(await withPageHead(shell, path, meta, status, route.name));
-      // Tables and replays are for the people sent the code: keep them out of search indexes.
+      // Tables, and replays of games that were not public, are for the people sent the code.
       if (!meta.index) res.headers.set("X-Robots-Tag", "noindex");
       return res;
     }
