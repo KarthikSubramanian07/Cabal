@@ -1,0 +1,470 @@
+{
+ "id": "year_0950",
+ "map": "standard",
+ "rules": [
+  "2023"
+ ],
+ "phases": [
+  {
+   "name": "S1901M",
+   "state": {
+    "name": "S0950M",
+    "units": {
+     "AUSTRIA": [
+      "A VIE"
+     ],
+     "ENGLAND": [],
+     "FRANCE": [
+      "A BUR",
+      "A RUH"
+     ],
+     "GERMANY": [
+      "A MUN"
+     ],
+     "ITALY": [],
+     "RUSSIA": [
+      "A BUD",
+      "A GAL"
+     ],
+     "TURKEY": []
+    },
+    "centers": {
+     "AUSTRIA": [],
+     "ENGLAND": [],
+     "FRANCE": [],
+     "GERMANY": [],
+     "ITALY": [],
+     "RUSSIA": [],
+     "TURKEY": []
+    },
+    "homes": {
+     "AUSTRIA": [
+      "BUD",
+      "TRI",
+      "VIE"
+     ],
+     "ENGLAND": [
+      "EDI",
+      "LON",
+      "LVP"
+     ],
+     "FRANCE": [
+      "BRE",
+      "MAR",
+      "PAR"
+     ],
+     "GERMANY": [
+      "BER",
+      "KIE",
+      "MUN"
+     ],
+     "ITALY": [
+      "NAP",
+      "ROM",
+      "VEN"
+     ],
+     "RUSSIA": [
+      "MOS",
+      "SEV",
+      "STP",
+      "WAR"
+     ],
+     "TURKEY": [
+      "ANK",
+      "CON",
+      "SMY"
+     ]
+    },
+    "retreats": {},
+    "builds": {}
+   },
+   "orders": {
+    "AUSTRIA": [
+     "A VIE - TYR"
+    ],
+    "ENGLAND": [],
+    "FRANCE": [
+     "A BUR - MUN",
+     "A RUH S A BUR - MUN"
+    ],
+    "GERMANY": [
+     "A MUN - TYR"
+    ],
+    "ITALY": [],
+    "RUSSIA": [
+     "A BUD S A GAL - VIE",
+     "A GAL - VIE"
+    ],
+    "TURKEY": []
+   },
+   "results": {
+    "A BUD": [],
+    "A BUR": [],
+    "A GAL": [],
+    "A MUN": [
+     "bounce",
+     "dislodged"
+    ],
+    "A RUH": [],
+    "A VIE": [
+     "bounce",
+     "dislodged"
+    ]
+   },
+   "messages": []
+  },
+  {
+   "name": "S1902R",
+   "state": {
+    "name": "S1901R",
+    "units": {
+     "AUSTRIA": [
+      "*A VIE"
+     ],
+     "ENGLAND": [],
+     "FRANCE": [
+      "A MUN",
+      "A RUH"
+     ],
+     "GERMANY": [
+      "*A MUN"
+     ],
+     "ITALY": [],
+     "RUSSIA": [
+      "A BUD",
+      "A VIE"
+     ],
+     "TURKEY": []
+    },
+    "centers": {
+     "AUSTRIA": [],
+     "ENGLAND": [],
+     "FRANCE": [],
+     "GERMANY": [],
+     "ITALY": [],
+     "RUSSIA": [],
+     "TURKEY": []
+    },
+    "homes": {
+     "AUSTRIA": [
+      "BUD",
+      "TRI",
+      "VIE"
+     ],
+     "ENGLAND": [
+      "EDI",
+      "LON",
+      "LVP"
+     ],
+     "FRANCE": [
+      "BRE",
+      "MAR",
+      "PAR"
+     ],
+     "GERMANY": [
+      "BER",
+      "KIE",
+      "MUN"
+     ],
+     "ITALY": [
+      "NAP",
+      "ROM",
+      "VEN"
+     ],
+     "RUSSIA": [
+      "MOS",
+      "SEV",
+      "STP",
+      "WAR"
+     ],
+     "TURKEY": [
+      "ANK",
+      "CON",
+      "SMY"
+     ]
+    },
+    "retreats": {
+     "AUSTRIA": {
+      "A VIE": [
+       "BOH",
+       "TRI"
+      ]
+     },
+     "ENGLAND": {},
+     "FRANCE": {},
+     "GERMANY": {
+      "A MUN": [
+       "BER",
+       "BOH",
+       "KIE",
+       "SIL"
+      ]
+     },
+     "ITALY": {},
+     "RUSSIA": {},
+     "TURKEY": {}
+    },
+    "builds": {},
+    "cabal": {
+     "dislodged": [
+      {
+       "unit": "A MUN",
+       "attacker_from": "BUR",
+       "by_convoy": false
+      },
+      {
+       "unit": "A VIE",
+       "attacker_from": "GAL",
+       "by_convoy": false
+      }
+     ],
+     "standoffs": [
+      "TYR"
+     ]
+    }
+   },
+   "orders": {
+    "AUSTRIA": [
+     "A VIE R BOH"
+    ],
+    "ENGLAND": [],
+    "FRANCE": [],
+    "GERMANY": [
+     "A MUN R BOH"
+    ],
+    "ITALY": [],
+    "RUSSIA": [],
+    "TURKEY": []
+   },
+   "results": {
+    "A MUN": [
+     "bounce",
+     "disband"
+    ],
+    "A VIE": [
+     "bounce",
+     "disband"
+    ]
+   },
+   "messages": []
+  },
+  {
+   "name": "F1901M",
+   "state": {
+    "name": "F1901M",
+    "units": {
+     "AUSTRIA": [],
+     "ENGLAND": [],
+     "FRANCE": [
+      "A MUN",
+      "A RUH"
+     ],
+     "GERMANY": [],
+     "ITALY": [],
+     "RUSSIA": [
+      "A BUD",
+      "A VIE"
+     ],
+     "TURKEY": []
+    },
+    "centers": {
+     "AUSTRIA": [],
+     "ENGLAND": [],
+     "FRANCE": [],
+     "GERMANY": [],
+     "ITALY": [],
+     "RUSSIA": [],
+     "TURKEY": []
+    },
+    "homes": {
+     "AUSTRIA": [
+      "BUD",
+      "TRI",
+      "VIE"
+     ],
+     "ENGLAND": [
+      "EDI",
+      "LON",
+      "LVP"
+     ],
+     "FRANCE": [
+      "BRE",
+      "MAR",
+      "PAR"
+     ],
+     "GERMANY": [
+      "BER",
+      "KIE",
+      "MUN"
+     ],
+     "ITALY": [
+      "NAP",
+      "ROM",
+      "VEN"
+     ],
+     "RUSSIA": [
+      "MOS",
+      "SEV",
+      "STP",
+      "WAR"
+     ],
+     "TURKEY": [
+      "ANK",
+      "CON",
+      "SMY"
+     ]
+    },
+    "retreats": {},
+    "builds": {}
+   },
+   "orders": {
+    "AUSTRIA": [],
+    "ENGLAND": [],
+    "FRANCE": [
+     "A MUN - TYR",
+     "A RUH H"
+    ],
+    "GERMANY": [],
+    "ITALY": [],
+    "RUSSIA": [
+     "A BUD H",
+     "A VIE - TYR"
+    ],
+    "TURKEY": []
+   },
+   "results": {
+    "A BUD": [],
+    "A MUN": [
+     "bounce"
+    ],
+    "A RUH": [],
+    "A VIE": [
+     "bounce"
+    ]
+   },
+   "messages": []
+  },
+  {
+   "name": "W1901A",
+   "state": {
+    "name": "W1901A",
+    "units": {
+     "AUSTRIA": [],
+     "ENGLAND": [],
+     "FRANCE": [
+      "A MUN",
+      "A RUH"
+     ],
+     "GERMANY": [],
+     "ITALY": [],
+     "RUSSIA": [
+      "A BUD",
+      "A VIE"
+     ],
+     "TURKEY": []
+    },
+    "centers": {
+     "AUSTRIA": [],
+     "ENGLAND": [],
+     "FRANCE": [
+      "MUN"
+     ],
+     "GERMANY": [],
+     "ITALY": [],
+     "RUSSIA": [
+      "BUD",
+      "VIE"
+     ],
+     "TURKEY": []
+    },
+    "homes": {
+     "AUSTRIA": [
+      "BUD",
+      "TRI",
+      "VIE"
+     ],
+     "ENGLAND": [
+      "EDI",
+      "LON",
+      "LVP"
+     ],
+     "FRANCE": [
+      "BRE",
+      "MAR",
+      "PAR"
+     ],
+     "GERMANY": [
+      "BER",
+      "KIE",
+      "MUN"
+     ],
+     "ITALY": [
+      "NAP",
+      "ROM",
+      "VEN"
+     ],
+     "RUSSIA": [
+      "MOS",
+      "SEV",
+      "STP",
+      "WAR"
+     ],
+     "TURKEY": [
+      "ANK",
+      "CON",
+      "SMY"
+     ]
+    },
+    "retreats": {},
+    "builds": {
+     "AUSTRIA": {
+      "count": 0,
+      "homes": []
+     },
+     "ENGLAND": {
+      "count": 0,
+      "homes": []
+     },
+     "FRANCE": {
+      "count": -1,
+      "homes": []
+     },
+     "GERMANY": {
+      "count": 0,
+      "homes": []
+     },
+     "ITALY": {
+      "count": 0,
+      "homes": []
+     },
+     "RUSSIA": {
+      "count": 0,
+      "homes": []
+     },
+     "TURKEY": {
+      "count": 0,
+      "homes": []
+     }
+    }
+   },
+   "orders": {},
+   "results": {},
+   "messages": []
+  }
+ ],
+ "cabal": {
+  "engine": "0.1.0",
+  "rulebook": {
+   "edition": "e2023",
+   "convoy_intent": "same_power_fleet",
+   "disband_distance": "owned_centers",
+   "convoy_fallback": false,
+   "build_anywhere": false,
+   "fog_of_war": false,
+   "victory_centers": 18
+  },
+  "outcome": {
+   "result": "active"
+  }
+ }
+}
