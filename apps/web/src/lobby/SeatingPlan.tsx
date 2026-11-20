@@ -48,7 +48,11 @@ export function SeatingPlan({
         );
         const body = (
           <>
-            <span className="place-power">{powerLabel(seat.power)}</span>
+            {/* The marks sit beside the power's name and wrap under it, never over it. */}
+            <span className="place-head">
+              <span className="place-power">{powerLabel(seat.power)}</span>
+              {seat.host || seat.power === me ? <span className="place-marks">{marks}</span> : null}
+            </span>
             {/* A signed-in player's name leads to their record (not inside a seat button, which is one control). */}
             {seat.handle && !(picking && seat.kind === "open") ? (
               <Link className="place-who" href={`/u/${encodeURIComponent(seat.handle)}`}>
@@ -63,7 +67,6 @@ export function SeatingPlan({
               </span>
             ) : null}
             {status ? <span className={`place-state${seat.present || seat.kind === "ai" ? " here" : ""}`}>{status}</span> : null}
-            <span className="place-marks">{marks}</span>
           </>
         );
         const classes = `place ${seat.kind}${seat.power === me ? " mine" : ""}${seat.eliminated ? " out" : ""}`;

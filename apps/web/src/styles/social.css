@@ -276,14 +276,14 @@
 }
 
 /* In the room's narrow sidebar the Host and You marks take their own line over the power's name. */
-.live-side .place-marks {
-  position: static;
-  order: -1;
-  margin-bottom: 2px;
+.live-side .place-head {
+  flex-direction: column-reverse;
+  align-items: flex-start;
+  gap: 2px;
 }
 
-.live-side .place-marks:empty {
-  display: none;
+.live-side .place-marks {
+  margin-left: 0;
 }
 
 /* ---- the seat strip: each player's name, and the whole cell as the way to their record */

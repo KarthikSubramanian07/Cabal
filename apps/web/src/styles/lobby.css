@@ -703,12 +703,19 @@ dialog.how.create {
   opacity: 0.6;
 }
 
-.place-marks {
-  position: absolute;
-  top: 10px;
-  right: 10px;
+.place-head {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+}
+
+.place-marks {
+  display: flex;
+  flex-wrap: wrap;
   gap: 4px;
+  margin-left: auto;
 }
 
 .mark {
