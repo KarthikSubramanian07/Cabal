@@ -9,6 +9,7 @@
  * dialog and the quick game are fetched when someone presses a button.
  */
 import { type CSSProperties, type RefObject, Suspense, lazy, useEffect, useRef, useState } from "react";
+import { ADJUDICATION_CASES, CABAL_CASES, DATC_CASES } from "../app/adjudication.js";
 import { Link, navigate } from "../app/router.jsx";
 import { failureText } from "../net/failure.js";
 import { useIdentity } from "../profile/Identity.jsx";
@@ -298,7 +299,8 @@ export default function LandingPage() {
           </h2>
           <div>
             <p>
-              Cabal&apos;s adjudicator passes all 171 cases of the Diplomacy Adjudicator Test Cases. It is written in Rust and runs in your browser as WebAssembly, and every result comes
+              Cabal&apos;s adjudicator passes all {ADJUDICATION_CASES} of its test cases: every one of the {DATC_CASES} Diplomacy Adjudicator Test Cases, and
+              {CABAL_CASES} rulings of its own that the DATC cannot express. It is written in Rust and runs in your browser as WebAssembly, and every result comes
               with its reason: why a move bounced, which support was cut, how a convoy was disrupted. The engine, the server and this site are open source under the MIT licence.
             </p>
             <p className="proof-links">

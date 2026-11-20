@@ -8,6 +8,7 @@ import { Wordmark } from "../brand/Wordmark.jsx";
 import { InstallButton } from "../pwa/InstallButton.jsx";
 import { UpdatePrompt } from "../pwa/UpdatePrompt.jsx";
 import { ProfileMenu } from "../profile/ProfileMenu.jsx";
+import { ENGINE_CLAIM } from "./adjudication.js";
 import { HowToPlay } from "./HowToPlay.jsx";
 import { useShortcuts } from "./prefs.js";
 import { Link, usePathname } from "./router.jsx";
@@ -99,7 +100,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
       <footer className="footer">
         {route?.name === "sandbox" ? <span>Sandbox: every power is yours to order.</span> : <span>Diplomacy with receipts.</span>}
-        <span>Adjudicated in your browser by a Rust engine that passes all 171 DATC cases.</span>
+        <span>{ENGINE_CLAIM}</span>
         <span>Board drawn from Natural Earth.</span>
         <span className="footer-links">
           <a href="/about">About</a>
