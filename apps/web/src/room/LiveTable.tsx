@@ -19,7 +19,7 @@ import { explainPhase, explainerFor } from "../game/explain/explain.js";
 import { type ComposeContext, type Draft, type Mode, type Step, canGoByConvoy, click, disbandSelected, holdSelected, setMode, typedOrder, viaAlternative } from "../game/compose.js";
 import { useWhatIf } from "../game/explain/whatIf.js";
 import type { State } from "../engine.js";
-import { choicePrompt, choicesFor, describeOrder, phaseLine } from "../game/describe.js";
+import { choicePrompt, choicesFor, describeBoard, describeOrder, phaseLine } from "../game/describe.js";
 import { continueLabel, describePhase, parseOrder, parseUnit, provinceOf, titleCase } from "../game/notation.js";
 import type { PhaseRecord } from "../game/saved.js";
 import { type Speed, advance, dwell, playFrom } from "../game/replay.js";
@@ -644,6 +644,7 @@ function Floor({
   const last = viewing !== null && viewing + 1 >= history.length;
   const rejected = Object.values(desk.verdicts).filter((v) => !v.ok);
   const offline = !online || (room.everOpen && room.connection !== "open" && room.connection !== "closed");
+  const boardText = useMemo(() => describeBoard(mapState, places), [mapState, places]);
 
   return (
     <>
@@ -769,6 +770,18 @@ function Floor({
             <section className="choices" ref={choicesRef} tabIndex={-1} aria-label="Choices" hidden />
           )}
 
+          <details className="board-text">
+            <summary>Board as text</summary>
+            {boardText.map((p) => (
+              <section key={p.power}>
+                <h3>{p.power}</h3>
+                <p>Units: {p.units.length ? p.units.join("; ") : "none"}.</p>
+                <p>
+                  Supply centres ({p.centers.length}): {p.centers.length ? p.centers.join(", ") : "none"}.
+                </p>
+              </section>
+            ))}
+          </details>
         </div>
 
         <aside className="sidebar live-side" data-open={sheet} aria-label="The game">
