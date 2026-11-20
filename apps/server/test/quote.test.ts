@@ -1,10 +1,12 @@
 /**
  * Quoting in press: a dispatch may quote an earlier message of its own thread by id, and the room
- * attaches the original's words itself, so a quote can never put words in anybody's mouth.
+ * attaches the original's words itself, so a quote can never put words in anybody's mouth. A quote
+ * is copied into the room's events log with the reply; account deletion treats it as it treats the
+ * press it quotes.
  */
 import { describe, expect, it } from "vitest";
 import { QUOTE_CHARS, graphemes } from "@cabal/protocol";
-import { Client, create, join, start } from "./helpers.js";
+import { Client, call, create, createAs, join, joinAs, newPlayer, sql, start } from "./helpers.js";
 
 /** A started game with three people seated and connected (the rest played by the bot). */
 async function three() {
@@ -99,5 +101,63 @@ describe("quoting a message", () => {
     // A cut that lands inside the last emoji keeps it whole or leaves it out, never half of it.
     const edge = await quoted(`${"a".repeat(QUOTE_CHARS - 2)}${family}${family} and the rest`, "4");
     expect(edge).toBe(`${"a".repeat(QUOTE_CHARS - 2)}${family}…`);
+  });
+
+  it("treats a deleted player's quoted words as their press: the power's, never their name or handle", async () => {
+    const [ann, bob] = await Promise.all([newPlayer(), newPlayer()]);
+    const table = await createAs(ann.secret, { aiFill: true, pacing: "live" });
+    const seat = (await (await joinAs(bob.secret, table.gameId)).json()) as { token: string; power: string };
+    const a = await Client.connect(table.gameId, table.token);
+    const b = await Client.connect(table.gameId, seat.token);
+    await Promise.all([a.next("welcome"), b.next("welcome")]);
+    const say = async (from: Client, id: string, p: Record<string, unknown>) => {
+      from.send({ t: "press.send", id, p });
+      return (await from.next("press", (m) => m.id === id)).p;
+    };
+
+    // Quoted at the table before the start, in a private thread and at the table during the game.
+    const lobby = await say(a, "l1", { to: "ALL", body: "Before we begin: I keep my word." });
+    await say(b, "l2", { to: "ALL", body: "We shall see.", quote: lobby.id });
+    expect((await start({ gameId: table.gameId, power: table.power, token: table.token, name: ann.player.handle })).status).toBe(200);
+    await b.next("state");
+    const whisper = await say(a, "w1", { to: seat.power, body: "Between us: Munich is yours." });
+    await say(b, "w2", { to: table.power, body: "Then hold Bohemia.", quote: whisper.id });
+    const open = await say(a, "t1", { to: "ALL", body: "Peace in the Balkans." });
+    await say(b, "t2", { to: "ALL", body: "Noted.", quote: open.id });
+
+    const res = await call("/api/me", ann.secret, { method: "DELETE", body: JSON.stringify({ handle: ann.player.handle }) });
+    expect(res.status, await res.clone().text()).toBe(200);
+    await a.untilClosed();
+
+    // The words stay, as the press itself stays: the quoting replies still carry them, under the
+    // power, and the seat that said them is a ghost's.
+    const again = await Client.connect(table.gameId, seat.token);
+    const welcome = await again.next("welcome");
+    expect(welcome.p.seats.find((x) => x.power === table.power)).toMatchObject({ name: "Ghost", handle: null });
+    const quotes = welcome.p.press.filter((m) => m.quote).map((m) => m.quote);
+    expect(quotes).toEqual([
+      { id: lobby.id, from: table.power, phase: "LOBBY", excerpt: "Before we begin: I keep my word." },
+      { id: whisper.id, from: table.power, phase: whisper.phase, excerpt: "Between us: Munich is yours." },
+      { id: open.id, from: table.power, phase: open.phase, excerpt: "Peace in the Balkans." },
+    ]);
+    expect(welcome.p.press.find((m) => m.id === open.id)?.body).toBe("Peace in the Balkans.");
+
+    // Nowhere the room keeps or hands out press, quotes included, names who they were: not the
+    // events log a reconnecting socket replays, not that replay, not the press history.
+    const leaks = (text: string) => text.includes(ann.player.handle) || text.includes(ann.player.id);
+    const log = await sql<{ payload_json: string }>(table.gameId, "SELECT payload_json FROM events");
+    expect(log.some((e) => e.payload_json.includes('"quote":{'))).toBe(true);
+    expect(log.filter((e) => leaks(e.payload_json))).toEqual([]);
+    again.send({ t: "sync", id: "s1", p: { since: 0 } });
+    await again.next("synced", (m) => m.id === "s1");
+    const replayed = again.frames.filter((m) => m.t === "press");
+    expect(replayed.length).toBeGreaterThanOrEqual(6);
+    expect(again.frames.filter((m) => leaks(JSON.stringify(m)))).toEqual([]);
+    const history = await call(`/api/games/${table.gameId}/press?with=${table.power}`, null, { headers: { authorization: `Bearer ${seat.token}` } });
+    expect(history.status).toBe(200);
+    const page = await history.text();
+    expect(page).toContain("Between us: Munich is yours.");
+    expect(leaks(page)).toBe(false);
+    for (const c of [b, again]) c.close();
   });
 });
