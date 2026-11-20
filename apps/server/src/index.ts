@@ -16,6 +16,7 @@
  *   GET  /api/push/key                the VAPID public key a browser subscribes with (null when push is off)
  *   POST /api/metrics                 anonymous timings from a browser; GET (admin) the phase 1 metrics
  *   POST /api/metrics/datc            admin: record the DATC totals for a commit
+ *   POST /api/errors                  a page that broke reports it, anonymously (one log line)
  *
  * Players, profiles, the leaderboard and the trust ledger are served by players.ts. A signed-in
  * player sends their player secret as the bearer on create and join; they then sit under their
@@ -42,6 +43,7 @@ import { D1_SCHEMA_REQUIRED, copyRegistryOnce, gameIndex, indexBackend, registry
 import { REQUEST_ID_HEADER, currentRequestId, describeError, log, requestIdFrom, withLogContext } from "./log.js";
 import { gameCode, isPlayerSecret } from "./tokens.js";
 import { CORS, json, limited, readJson, tooMany, withCors } from "./http.js";
+import { clientErrorsRoute } from "./client-errors.js";
 import { metricsRoute } from "./metrics.js";
 import { reportsRoute } from "./moderation.js";
 import { vapidKeys } from "./notify.js";
@@ -139,6 +141,9 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   const metrics = await metricsRoute(request, env, url);
   if (metrics) return metrics;
+
+  const errors = await clientErrorsRoute(request, env, url, buildId(env));
+  if (errors) return errors;
 
   const reports = await reportsRoute(request, env, url);
 

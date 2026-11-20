@@ -76,7 +76,7 @@ export function fullGameEvent(db: D1Database, record: GameRecord): D1PreparedSta
  * request that sent none), the origin the request was made to (the web app forwards `/api` with its
  * own URL), or a local development server. Any other page cannot make its visitors send one.
  */
-function beaconOriginAllowed(request: Request, url: URL): boolean {
+export function beaconOriginAllowed(request: Request, url: URL): boolean {
   const origin = request.headers.get("origin");
   if (origin === null || origin === url.origin) return true;
   try {
