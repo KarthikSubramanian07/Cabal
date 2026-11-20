@@ -15,6 +15,7 @@ import { spacedCode } from "../net/code.js";
 import { useIdentity } from "../profile/Identity.jsx";
 import { PlayerSeal } from "../profile/ProfileMenu.jsx";
 import { RatingChart } from "../profile/RatingChart.jsx";
+import { ReportPlayer } from "../profile/ReportPlayer.jsx";
 import { readPlayer } from "../net/player.js";
 import { friendlyGames, percent, ratingPath, reliabilityLine, resultWord, signed, tableState, trustLine, withOwnCodes } from "../profile/record.js";
 
@@ -339,6 +340,7 @@ export default function ProfilePage({ handle }: { handle: string }) {
       </div>
       {load.own ? <OwnTables games={load.own} /> : null}
       <Recent profile={p} mine={mine} />
+      {player && !mine ? <ReportPlayer key={p.player.id} handle={p.player.handle} /> : null}
     </main>
   );
 }
