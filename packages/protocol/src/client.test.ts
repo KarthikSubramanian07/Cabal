@@ -96,7 +96,7 @@ const welcome = (seq: number, power: "FRANCE" | null, id?: string): ServerMessag
 const status = (seq: number): ServerMessage => ({ t: "status", seq, p: { status: "active", reason: `frame ${seq}` } });
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function harness(options: { token?: string; heartbeatMs?: number } = { token: "ABCDEF.FRANCE.secret" }) {
+function harness(options: { token?: string; heartbeatMs?: number; onReply?: (sent: string, ms: number) => void } = { token: "ABCDEF.FRANCE.secret" }) {
   const time = clock();
   const sockets: FakeSocket[] = [];
   let failing = 0;
@@ -112,6 +112,7 @@ function harness(options: { token?: string; heartbeatMs?: number } = { token: "A
     },
     ...(options.token ? { token: options.token } : {}),
     heartbeatMs: options.heartbeatMs ?? 0,
+    ...(options.onReply ? { onReply: options.onReply } : {}),
     pongTimeoutMs: 1_000,
     backoff: { minMs: 100, maxMs: 1_600, factor: 2, jitter: 0 },
     now: time.now,
@@ -215,6 +216,34 @@ describe("CabalSocket", () => {
     ws.drop();
     await expect(cut).rejects.toMatchObject({ code: "disconnected" });
     await expect(h.socket.setOrders("S1901M", [])).rejects.toMatchObject({ code: "not_connected" });
+  });
+
+  it("times each answered request from send to reply, and nothing that failed", async () => {
+    const timed: [string, number][] = [];
+    const h = harness({ token: "ABCDEF.FRANCE.secret", onReply: (sent, ms) => void timed.push([sent, ms]) });
+    void h.socket.start();
+    const ws = await h.bind(1);
+    const ack = h.socket.setOrders("S1901M", ["A PAR H"]);
+    h.time.advance(42);
+    ws.push({ t: "orders.ack", id: ws.frames().at(-1)!.id!, p: { phase: "S1901M", accepted: ["A PAR H"], rejected: [], verdicts: [] } });
+    await ack;
+    const refused = h.socket.press("ALL", "hello");
+    h.time.advance(5);
+    ws.push({ t: "error", id: ws.frames().at(-1)!.id!, p: { code: "no_press", message: "gunboat: no press" } });
+    await expect(refused).rejects.toMatchObject({ code: "no_press" });
+    const unanswered = h.socket.setOrders("S1901M", []);
+    h.time.advance(15_000);
+    await expect(unanswered).rejects.toMatchObject({ code: "timeout" });
+    expect(timed).toEqual([["orders.set", 42]]);
+  });
+
+  it("delivers the reply even when the timing listener throws", async () => {
+    const h = harness({ token: "ABCDEF.FRANCE.secret", onReply: () => { throw new Error("listener broke"); } });
+    void h.socket.start();
+    const ws = await h.bind(1);
+    const ack = h.socket.setOrders("S1901M", ["A PAR H"]);
+    ws.push({ t: "orders.ack", id: ws.frames().at(-1)!.id!, p: { phase: "S1901M", accepted: ["A PAR H"], rejected: [], verdicts: [] } });
+    expect((await ack).p.accepted).toEqual(["A PAR H"]);
   });
 
   it("resumes after a drop: replays what it missed in order, then the snapshot, then what came after, each frame once", async () => {

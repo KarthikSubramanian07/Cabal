@@ -117,6 +117,12 @@ export interface CabalSocketOptions {
   pongTimeoutMs?: number;
   /** How long `request` waits for its reply. Default 15 s. */
   requestTimeoutMs?: number;
+  /**
+   * Told how long each answered request took, from sending it to its reply (not an `error`), by
+   * the frame type sent: `orders.set` to `orders.ack` is the order round trip. A listener that
+   * throws is ignored.
+   */
+  onReply?: (sent: ClientMessage["t"], ms: number) => void;
   /** Injectable clock, randomness and timers, for tests. */
   now?: () => number;
   random?: () => number;
@@ -135,6 +141,9 @@ interface Pending {
   resolve: (frame: ServerMessage) => void;
   reject: (error: Error) => void;
   timer: unknown;
+  /** The frame type sent, and when, for `onReply`. */
+  sent: ClientMessage["t"];
+  at: number;
 }
 
 const OPEN = 1;
@@ -269,7 +278,7 @@ export class CabalSocket {
         this.pending.delete(id);
         reject(new CabalError("timeout", `no reply to ${frame.t}`));
       }, this.options.requestTimeoutMs ?? 15_000);
-      this.pending.set(id, { resolve: resolve as (frame: ServerMessage) => void, reject, timer });
+      this.pending.set(id, { resolve: resolve as (frame: ServerMessage) => void, reject, timer, sent: frame.t, at: this.now() });
       if (!this.send({ ...frame, id } as ClientMessage)) {
         this.pending.delete(id);
         this.clearTimer(timer);
@@ -574,8 +583,16 @@ export class CabalSocket {
     if (!waiting) return;
     this.pending.delete(frame.id);
     this.clearTimer(waiting.timer);
-    if (frame.t === "error") waiting.reject(new CabalError(frame.p.code, frame.p.message));
-    else waiting.resolve(frame);
+    if (frame.t === "error") {
+      waiting.reject(new CabalError(frame.p.code, frame.p.message));
+      return;
+    }
+    try {
+      this.options.onReply?.(waiting.sent, this.now() - waiting.at);
+    } catch {
+      // timing is a bystander; the reply is delivered whatever it does
+    }
+    waiting.resolve(frame);
   }
 }
 
