@@ -4,7 +4,7 @@
  * One dialog with every section on it, opened at the one the player asked for.
  */
 import type { MeResponse, RecoveryCodeResponse } from "@cabal/protocol";
-import { type FormEvent, Suspense, lazy, useCallback, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { Link } from "../app/router.jsx";
 import { recoveryFile } from "../net/player.js";
 import { accountFailure, handleKey, handleProblem } from "./handles.js";
@@ -229,8 +229,8 @@ function DeviceSection({ me, onSignedOut }: { me: MeResponse; onSignedOut: () =>
 /**
  * Deleting the account: closed to one line and a button, then a slip that says what goes and asks
  * for the handle typed out. The safe choice is the one with focus; the destructive one stays
- * disabled until the handle matches. After it, the slip says what happened and the device is
- * cleared when the card closes.
+ * disabled until the handle matches. After it, the slip says what happened; the device is already
+ * signed out.
  */
 function DeleteSection({ me, onGone }: { me: MeResponse; onGone: (gone: Gone) => void }) {
   const { deleteAccount } = useAccount();
@@ -254,8 +254,7 @@ function DeleteSection({ me, onGone }: { me: MeResponse; onGone: (gone: Gone) =>
     setBusy(true);
     setError(null);
     try {
-      const { result, forget } = await deleteAccount(typed.trim());
-      onGone({ handle, games: result.games, forget });
+      await deleteAccount(typed.trim(), (result) => onGone({ handle, games: result.games, unreached: result.unreached }));
     } catch (err) {
       setError(accountFailure(err));
       setBusy(false);
@@ -324,8 +323,8 @@ function DeleteSection({ me, onGone }: { me: MeResponse; onGone: (gone: Gone) =>
 interface Gone {
   handle: string;
   games: number;
-  /** Clear this device of the account; called when the card closes. */
-  forget: () => void;
+  /** Games whose room could not be told; their seats lose the name when each game is next recorded. */
+  unreached: number;
 }
 
 /** What the card shows once the account is gone. */
@@ -339,10 +338,12 @@ function Farewell({ gone, onClose }: { gone: Gone; onClose: () => void }) {
       </p>
       <p>
         The account is deleted.{" "}
-        {gone.games > 0
-          ? `Its ${gone.games === 1 ? "seat is" : `seats in ${gone.games} games are`} now a ghost's, and nothing on Cabal carries the name.`
-          : "Nothing on Cabal carries the name any more."}{" "}
-        This device is signed out when you close this card.
+        {gone.games === 0
+          ? "Nothing on Cabal carries the name any more."
+          : gone.unreached === 0
+            ? `Its ${gone.games === 1 ? "seat is" : `seats in ${gone.games} games are`} now a ghost's, and nothing on Cabal carries the name.`
+            : `Its seats are now a ghost's, though ${gone.unreached === 1 ? "one game" : `${gone.unreached} games`} could not be reached just now and ${gone.unreached === 1 ? "drops" : "drop"} the name when ${gone.unreached === 1 ? "it is" : "they are"} next saved.`}{" "}
+        This device is signed out.
       </p>
       <div className="seal-actions">
         <button type="button" className="btn brass" onClick={onClose}>
@@ -361,11 +362,7 @@ export function AccountDialog({ open, section, onClose }: { open: boolean; secti
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const [gone, setGone] = useState<Gone | null>(null);
-  // Closing the card after a deletion is what lets go of the account on this device.
-  const close = useCallback(() => {
-    gone?.forget();
-    onClose();
-  }, [gone, onClose]);
+  const close = onClose;
 
   useEffect(() => {
     const d = ref.current;

@@ -117,11 +117,12 @@ export function useAccount() {
 
   /**
    * Delete the account for good: the server forgets it and turns its seats into ghosts. This device
-   * then lets go of everything the account left here: its push subscription (the server's copy is
-   * already gone), its seats and its secret. The device is cleared by the caller, with `forget`,
-   * once the player has read what happened: until then the card stays open.
+   * then lets go of everything the account left here, at once: its push subscription (the server's
+   * copy is already gone), its seats and its secret. A dead secret must not outlive the answer,
+   * whatever the player does next (reload, leave, close the tab). `deleted` hears the answer just
+   * before the secret goes, in the same tick, so a card can keep its farewell on screen.
    */
-  const deleteAccount = useCallback(async (handle: string): Promise<{ result: DeleteMeResponse; forget: () => void }> => {
+  const deleteAccount = useCallback(async (handle: string, deleted?: (result: DeleteMeResponse) => void): Promise<DeleteMeResponse> => {
     const current = readPlayer();
     if (!current) throw localRefusal(401, "not signed in");
     let result: DeleteMeResponse;
@@ -131,9 +132,11 @@ export function useAccount() {
     } catch (error) {
       return signedOutIfRefused(error);
     }
-    await turnOffPush(async () => undefined).catch(() => undefined);
     forgetSeatsOf(current);
-    return { result, forget: () => (readPlayer()?.id === current.id ? forgetPlayer() : undefined) };
+    deleted?.(result);
+    if (readPlayer()?.id === current.id) forgetPlayer();
+    await turnOffPush(async () => undefined).catch(() => undefined);
+    return result;
   }, []);
 
   return { player, create, recover, me, rename, issueRecoveryCode, signOut, deleteAccount };

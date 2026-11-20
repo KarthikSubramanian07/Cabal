@@ -202,13 +202,32 @@ test.describe("the player's account", () => {
     await expect(card.getByRole("status")).toContainText("The account is deleted.");
     await expect(card.getByRole("status")).toContainText("seats in 2 games are now a ghost's");
     expect(asked).toEqual([{ handle: "ADA-L" }]);
-    // The seats go at once; the secret goes when the card closes.
+    await expect(card.getByRole("status")).toContainText("This device is signed out.");
+    // The seats and the secret go at once, while the farewell is still on screen: a dead secret
+    // must not survive a reload or a closed tab.
     expect(await page.evaluate(() => localStorage.getItem("cabal.seat.Z2BSVX"))).toBeNull();
-    expect(await page.evaluate(() => localStorage.getItem("cabal.player"))).not.toBeNull();
+    expect(await page.evaluate(() => localStorage.getItem("cabal.player"))).toBeNull();
+    await expect(page.locator(".player-button")).toHaveAccessibleName("Your account");
     await card.getByRole("button", { name: "Close", exact: true }).last().click();
     await expect(card).toBeHidden();
-    await expect.poll(() => page.evaluate(() => localStorage.getItem("cabal.player"))).toBeNull();
     await expect(page.locator(".player-button")).toHaveAccessibleName("Your account");
+  });
+
+  test("a deletion some games could not hear of yet says so instead of promising the name is gone", async ({ page }) => {
+    const server = await fakeServer(page);
+    accountRoutes(server);
+    server.on("DELETE", /^\/api\/me$/, () => ({ body: { deleted: true, games: 3, unreached: 1 } }));
+    await signedIn(page);
+    await page.goto("/games");
+    await openMenu(page);
+    await page.getByRole("button", { name: "Sign out" }).click();
+    const card = page.getByRole("dialog", { name: "Your account" });
+    const section = card.getByRole("region", { name: "Delete the account" });
+    await section.getByRole("button", { name: "Delete this account" }).click();
+    await section.getByLabel("Type ada_l to confirm").fill("ada_l");
+    await section.getByRole("button", { name: "Delete for good" }).click();
+    await expect(card.getByRole("status")).toContainText("one game could not be reached just now");
+    await expect(card.getByRole("status")).not.toContainText("nothing on Cabal carries the name");
   });
 
   test("a refused deletion says why and keeps the account", async ({ page }) => {
