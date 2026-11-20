@@ -246,6 +246,18 @@ test.describe("phone layout", () => {
     await expect(page.locator(".sheet-note")).toHaveText("France: 1 of 3 orders");
   });
 
+  test("the whole board still names every supply centre, central Europe's included", async ({ page }) => {
+    await ready(page);
+    await page.getByRole("button", { name: "Show the whole board" }).click();
+    await expect(page.locator("svg.board")).toHaveAttribute("data-whole", "true");
+    const centres = "ANK BEL BER BRE BUD BUL CON DEN EDI GRE HOL KIE LON LVP MAR MOS MUN NAP NWY PAR POR ROM RUM SER SEV SMY SPA STP SWE TRI TUN VEN VIE WAR".split(" ");
+    await expect
+      .poll(() => page.evaluate(() => [...document.querySelectorAll("svg.board text.label")].map((t) => t.textContent ?? "")))
+      .toEqual(expect.arrayContaining(centres));
+    // Still at the readable floor.
+    expect((await mapSizes(page)).label).toBeGreaterThanOrEqual(6.9);
+  });
+
   test("a tap that just misses a piece still picks it", async ({ page }) => {
     await ready(page);
     // Land in the sea just off Brest, a few pixels from the fleet.
