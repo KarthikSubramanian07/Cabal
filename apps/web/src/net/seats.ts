@@ -7,6 +7,7 @@
  * is guarded and a failure reads as "no seat here".
  */
 import type { PowerName } from "@cabal/protocol";
+import { forgetDrafts } from "../room/drafts.js";
 import { isGameCode } from "./code.js";
 
 /** The seven powers, here rather than from the protocol's schemas so the shell can read seats cheaply. */
@@ -81,12 +82,14 @@ export function saveSeat(seat: Omit<HeldSeat, "savedAt"> & { savedAt?: number })
   }
 }
 
+/** Let go of a seat, and of any orders it wrote here that never reached the server. */
 export function forgetSeat(gameId: string): void {
   try {
     storage()?.removeItem(PREFIX + gameId);
   } catch {
     // nothing to forget
   }
+  forgetDrafts(gameId);
 }
 
 /** Every seat this device holds, newest first. */

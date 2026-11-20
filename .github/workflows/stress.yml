@@ -100,3 +100,52 @@ jobs:
             arena/games.tar.gz
           if-no-files-found: warn
           retention-days: 30
+
+  agents-arena:
+    # The @cabal/agents arena with every seat on the free Rust bot: no API key, no secrets, no
+    # spend. It measures what the issue tracks for model seats (illegal and off-menu orders, hold
+    # rate, pledge honesty, cost per game) so a Claude run, made by hand with `pnpm arena --claude`
+    # and a hard `--budget`, has a free baseline to be compared against.
+    name: Agent arena (bot seats, in process and through wrangler dev)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ARENA_SEED: N${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.97.0
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: agents-arena
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        with:
+          tool: wasm-pack
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm engine:build
+      # Exits non-zero on an illegal order, an off-menu rate of one percent or more, any cost, a
+      # fallback to holds, a game stopped short of 1910 without a solo, or a replay divergence.
+      - name: Ten games in process
+        run: pnpm arena --games 10 --seed "$ARENA_SEED" --until 1910 --out agents-arena/local --check --no-prompts
+      - name: One game through wrangler dev, over the human protocol
+        run: pnpm arena --wrangler --games 1 --seed "$ARENA_SEED" --until 1910 --out agents-arena/server --check --no-prompts
+      - name: Publish the summary
+        if: always()
+        run: |
+          for f in agents-arena/local/summary.md agents-arena/server/summary.md; do
+            if test -f "$f"; then cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi
+          done
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: agents-arena-${{ github.run_number }}
+          path: agents-arena
+          if-no-files-found: warn
+          retention-days: 30

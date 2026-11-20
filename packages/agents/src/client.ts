@@ -14,7 +14,8 @@
  */
 import { Game, type MapInfo, mapInfo } from "@cabal/engine";
 import type { PressView, ServerMessage, StateView } from "@cabal/protocol";
-import type { Played, Player } from "./player.js";
+import { type Played, type Player, yearOf } from "./player.js";
+import { outgoingPress } from "./press.js";
 import { type Step, phaseKind } from "./prompt.js";
 import { type DecisionRecord, decisionRecord } from "./record.js";
 
@@ -34,6 +35,11 @@ export interface AgentClientOptions {
   listenMs?: number;
   /** Time kept back before the deadline for the order step itself. Default 5 seconds. */
   orderReserveMs?: number;
+  /**
+   * Play no phase after this year: the seat stays connected and silent, and its turn counts as
+   * done. An arena stops a game at a year this way without the seats racing past it.
+   */
+  lastYear?: number;
   /** Injectable clock, for tests. */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -41,8 +47,6 @@ export interface AgentClientOptions {
 
 /** Press kept for context across phases; older messages are dropped. */
 const PRESS_KEPT = 400;
-/** Messages one decision may send. */
-const MESSAGES_PER_STEP = 4;
 
 export class AgentClient {
   private ws: WebSocket | null = null;
@@ -178,24 +182,7 @@ export class AgentClient {
   }
 
   private sendPress(played: Played): void {
-    if (this.pressMode === "gunboat") return;
-    const { decision, validated } = played;
-    let pledged = false;
-    for (const msg of decision.messages.slice(0, MESSAGES_PER_STEP)) {
-      const to = msg.to.trim().toUpperCase();
-      const body = msg.body.trim().slice(0, 1000);
-      if (!body || to === this.opts.player.power) continue;
-      if (this.pressMode === "public" && to !== "ALL") continue;
-      const orders =
-        !pledged && decision.pledge && decision.pledge.to.trim().toUpperCase() === to
-          ? decision.pledge.orders.map((o) => o.trim().toUpperCase()).filter((o) => validated.orders.includes(o))
-          : [];
-      if (orders.length > 0) pledged = true;
-      this.send({
-        t: "press.send",
-        p: { to, body, ...(orders.length > 0 ? { pledge: { orders, sealed: decision.pledge!.sealed } } : {}) },
-      });
-    }
+    for (const p of outgoingPress(played, this.opts.player.power, this.pressMode)) this.send({ t: "press.send", p });
   }
 
   /** How long to listen between the two steps: bounded by the option and by the deadline. */
@@ -209,6 +196,11 @@ export class AgentClient {
   /** Play the current phase. */
   private async act(): Promise<void> {
     if (this.busy || !this.state || !this.map) return;
+    const year = yearOf(this.phase);
+    if (this.opts.lastYear !== undefined && year !== null && year > this.opts.lastYear) {
+      this.completeTurn();
+      return;
+    }
     this.busy = true;
     // Everything below answers for this phase, even if the server moves on mid-decision.
     const phase = this.phase;

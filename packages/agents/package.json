@@ -13,7 +13,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "arena": "node --disable-warning=ExperimentalWarning --experimental-transform-types --import ./scripts/ts-hooks.mjs src/arena/cli.ts"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

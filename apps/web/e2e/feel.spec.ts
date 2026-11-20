@@ -122,9 +122,21 @@ test.describe("ink and the keyboard while a phase plays", () => {
     test.skip(isPhone(info), "the mask is the same at any size");
     await ready(page);
     await write(page, "A PAR - BUR; A MAR S A PAR - BUR; A MUN - BUR; F TRI - VEN; A VEN - TRI");
+    // Hold the phase at its very start and look at the order marks alone. Every CSS animation is
+    // made paused, so however slow the machine, none has moved on by the time it is looked at;
+    // and the board does not settle (it waits for every animation to end), so the marks stay.
+    await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important }" });
     await primary(page).click();
-    // Hold the phase at its very start and look at the order marks alone. (Paused first: a time
-    // set on a running animation has moved on a frame by the time a pause takes hold.)
+    // The results are drawn: every ink mask on the board has its draw.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const masks = [...document.querySelectorAll(".order-marks .reveal")];
+          return masks.length > 0 && masks.every((el) => el.closest(".order-marks.results") && el.getAnimations().length > 0);
+        }),
+      )
+      .toBe(true);
+    // The pieces' own animations are scripted, not CSS: stop them where they began too.
     await page.evaluate(() => document.getAnimations().forEach((a) => (a.pause(), (a.currentTime = 0))));
     // Every ink mask starts with its dashes clear of both ends of its path (a path length of 1):
     // the dash before it ends short of the start, the next one begins past the end. A dash of no

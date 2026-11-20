@@ -137,7 +137,7 @@ A `welcome` is everything a client needs to draw the game from nothing:
 | `dias` | boolean | true | Draws Include All Survivors; false lets voters name a subset |
 | `ghostVotes` | boolean | true | eliminated players may cast an advisory draw vote |
 | `cabals` | boolean | false | reserved for the Cabal layer |
-| `aiFill` | boolean | true | open seats become AI seats at the start; the bot covers seats in civil disorder |
+| `aiFill` | boolean | true | open seats become AI seats at the start; the game's AI covers seats in civil disorder, for orders only (the bot, or Claude in a Claude game, which reads only public press there) |
 | `aiBrain` | `bot`, `claude` | `bot` | who plays AI seats |
 | `scoring` | `sos`, `dss` | `sos` | how a draw is shared: Sum of Squares, or Draw Size (equal shares) |
 | `visibility` | `public`, `unlisted` | `unlisted` | public games are listed by `GET /api/games` while open or running |
@@ -161,7 +161,7 @@ Each entry of `seats` is `{ power, kind, name, handle?, ready, eliminated, misse
 | `open` | unclaimed, in the lobby |
 | `human` | a player's seat |
 | `ai` | played by the built-in bot (the heuristic player compiled into the engine, see `docs/BOT.md`), or by Claude when the game sets `aiBrain: "claude"` and the server has a key |
-| `civil_disorder` | its player has missed two movement phases; `autopilot: true` means the bot is covering it |
+| `civil_disorder` | its player has missed two movement phases; `autopilot: true` means the game's AI is covering it (the bot, or Claude in a Claude game) |
 
 | flag | meaning |
 |---|---|
@@ -169,7 +169,7 @@ Each entry of `seats` is `{ power, kind, name, handle?, ready, eliminated, misse
 | `ready` | the seat has declared itself done for the phase |
 | `eliminated` | no units and no centres |
 | `missed` | consecutive movement phases without orders from the player |
-| `autopilot` | the bot is covering this civil-disorder seat until its player returns |
+| `autopilot` | the game's AI is covering this civil-disorder seat until its player returns; `brain` says which |
 | `brain` | `bot` or `claude` for an AI seat or a seat on autopilot; null for a seat a person plays |
 | `present` | a connection is bound to the seat (always true for an AI seat) |
 | `submitted` | orders are on file for the current phase. The orders themselves are never sent to anyone else before adjudication |
@@ -180,7 +180,7 @@ Each entry of `seats` is `{ power, kind, name, handle?, ready, eliminated, misse
 
 Every AI seat is played every phase. The moment a phase opens the built-in bot's orders are on file for each AI seat and each seat on autopilot, so an AI seat can never leave a phase without orders or hold one up.
 
-A game that sets `aiBrain: "claude"` on a server that holds an API key then asks Claude for better orders. Claude seats use no part of this protocol and hold no token: their turns travel through an internal queue as `{ gameId, power, phase, step }` and reach the room over its private binding, which the internet cannot address. What they send is ordinary press and ordinary orders, subject to the same rules as a player's.
+A game that sets `aiBrain: "claude"` on a server that holds an API key then asks Claude for better orders. Claude seats use no part of this protocol and hold no token: their turns travel through an internal queue as `{ gameId, power, phase, step }` and reach the room over its private binding, which the internet cannot address. What they send is ordinary press and ordinary orders, subject to the same rules as a player's. A seat on autopilot is taken over the same way, under the same caps, until its player orders again, but for orders only. The seat still belongs to a person, so Claude never speaks or promises in their name: it skips the talks, any press or pledge it returns is refused (`covered_seat`), and it reads only the table's public press, never the letters the seat sent or received. Orders from Claude never count as the player returning, and an answer that arrives after the player is back is refused.
 
 A movement phase is played in two steps, both visible to the table as `seats` frames (`ready` stays false for a Claude seat until its orders are in):
 

@@ -5,15 +5,8 @@
 import { Link } from "../app/router.jsx";
 import type { PowerName, SeatView } from "@cabal/protocol";
 import type { CSSProperties } from "react";
-import { powerLabel } from "./terms.js";
+import { occupant, powerLabel } from "./terms.js";
 import { trustFigure, trustNote, useTrust } from "./trust.js";
-
-function occupant(seat: SeatView): string {
-  if (seat.kind === "open") return "Open seat";
-  if (seat.kind === "ai") return seat.brain === "claude" ? "Played by Claude" : "Played by the bot";
-  if (seat.kind === "civil_disorder") return seat.autopilot ? `${seat.name ?? "Player"}, the bot covering` : `${seat.name ?? "Player"}, in civil disorder`;
-  return seat.name ?? "Player";
-}
 
 function state(seat: SeatView, running: boolean): string | null {
   if (seat.kind === "open") return null;

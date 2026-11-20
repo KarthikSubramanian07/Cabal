@@ -223,6 +223,23 @@ describe("AgentClient", () => {
     expect(hub.of("FRANCE", "orders.set")).toHaveLength(1);
   });
 
+  it("plays nothing after its last year, so an arena can stop a game there", async () => {
+    const hub = new Hub();
+    const france = talker("FRANCE", "GERMANY", "A PAR H");
+    const { client, decisions } = await seat(hub, "FRANCE", france.brain, { lastYear: 1900 });
+    await client.awaitTurn();
+    await settle();
+    expect(decisions).toEqual([]);
+    expect(france.prompts).toEqual([]);
+    expect(hub.received.filter((r) => r.power === "FRANCE")).toEqual([]);
+    // Up to and including the last year it plays as usual.
+    const open = new Hub();
+    const played = await seat(open, "FRANCE", talker("FRANCE", "GERMANY", "A PAR H").brain, { lastYear: 1901, negotiate: false });
+    await played.client.awaitTurn();
+    await settle();
+    expect(open.of("FRANCE", "orders.set")).toHaveLength(1);
+  });
+
   it("holds and stays connected when the model fails", async () => {
     const hub = new Hub();
     const { client, decisions } = await seat(hub, "FRANCE", { decide: async () => Promise.reject(new Error("down")) }, { negotiate: false });

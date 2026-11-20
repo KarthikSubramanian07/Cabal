@@ -1,3 +1,7 @@
+export { type ArenaGame, type LocalArenaOptions, type PhaseLog, type PressMode, runLocalArena } from "./arena/local.js";
+export { type ArenaSummary, type Gates, type SeatSummary, arenaReport, gateFailures, summarise } from "./arena/summary.js";
+export { BotBrain, type BotBrainOptions } from "./bot-brain.js";
+export { CappedBrain, FailoverBrain, SpendCap } from "./budget.js";
 export { AgentClient, type AgentClientOptions } from "./client.js";
 export {
   PRICES,
@@ -34,12 +38,17 @@ export {
   Player,
   type Validated,
   requestKind,
+  consolidate,
+  staleYears,
   validateOrders,
+  yearOf,
 } from "./player.js";
+export { MAX_BODY_CHARS, MESSAGES_PER_STEP, type OutgoingPress, outgoingPress } from "./press.js";
 export {
   type PromptInput,
   type Relationship,
   SYSTEM_PROMPT,
+  CROWDED_UNIT,
   type Step,
   boardReport,
   legalMenu,
