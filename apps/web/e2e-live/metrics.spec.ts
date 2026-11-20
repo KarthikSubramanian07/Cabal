@@ -23,7 +23,8 @@ test.describe("phase 1 metrics, live", () => {
       w.__beacons = [];
       const send = navigator.sendBeacon.bind(navigator);
       navigator.sendBeacon = (url, data) => {
-        if (data instanceof Blob) w.__beacons.push(data.text());
+        // Only the timings: a page also reports what broke through the same call (net/errors.ts).
+        if (data instanceof Blob && new URL(String(url), location.href).pathname === "/api/metrics") w.__beacons.push(data.text());
         return send(url, data);
       };
     });
