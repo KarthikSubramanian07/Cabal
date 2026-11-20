@@ -1,6 +1,6 @@
 /**
- * The guest account this device holds: the player's id and handle, and the secret the server
- * issued when the account was made (or restored here from a recovery code). The secret is a
+ * The account this device is signed in to: the player's id and handle, whether it signs in with
+ * Google, and the secret the server issued for this device's session. The secret is a
  * credential. It lives in localStorage and nowhere else; it travels only as a bearer header and
  * never in a URL, a link or a log. The server keeps only its hash.
  *
@@ -14,6 +14,11 @@ export interface StoredPlayer {
   id: string;
   handle: string;
   secret: string;
+  /**
+   * The account signs in with Google, so it follows the player to any device. False for a guest
+   * account, which lives only where it was made (and wherever its recovery code is used).
+   */
+  google: boolean;
   /** When this device signed in, ms since the epoch. */
   savedAt: number;
 }
@@ -38,7 +43,7 @@ export function parsePlayer(raw: string | null): StoredPlayer | null {
     if (!v || typeof v !== "object") return null;
     const text = (x: unknown): x is string => typeof x === "string" && x !== "";
     if (!text(v.id) || !text(v.handle) || !text(v.secret)) return null;
-    return { id: v.id, handle: v.handle, secret: v.secret, savedAt: typeof v.savedAt === "number" ? v.savedAt : 0 };
+    return { id: v.id, handle: v.handle, secret: v.secret, google: v.google === true, savedAt: typeof v.savedAt === "number" ? v.savedAt : 0 };
   } catch {
     return null;
   }
@@ -66,8 +71,8 @@ function changed(): void {
 }
 
 /** Keep the account on this device. Returns false when storage refused (it then lasts this visit only). */
-export function savePlayer(player: Omit<StoredPlayer, "savedAt"> & { savedAt?: number }): boolean {
-  const value: StoredPlayer = { id: player.id, handle: player.handle, secret: player.secret, savedAt: player.savedAt ?? Date.now() };
+export function savePlayer(player: Omit<StoredPlayer, "savedAt" | "google"> & { savedAt?: number; google?: boolean }): boolean {
+  const value: StoredPlayer = { id: player.id, handle: player.handle, secret: player.secret, google: player.google === true, savedAt: player.savedAt ?? Date.now() };
   let stored = false;
   try {
     const store = storage();
@@ -87,6 +92,12 @@ export function savePlayer(player: Omit<StoredPlayer, "savedAt"> & { savedAt?: n
 export function renameStoredPlayer(handle: string): void {
   const current = readPlayer();
   if (current) savePlayer({ ...current, handle });
+}
+
+/** The server says whether the account signs in with Google (linked or unlinked elsewhere). */
+export function markGoogle(google: boolean): void {
+  const current = readPlayer();
+  if (current && current.google !== google) savePlayer({ ...current, google });
 }
 
 export function forgetPlayer(): void {
@@ -132,7 +143,7 @@ export function recoveryFile(handle: string, code: string, issuedAt: number, ori
     "",
     code,
     "",
-    `To use this account on another device, open ${origin}, choose Restore an account from the player menu, and enter the code above.`,
+    `To use this account on another device, open ${origin}, choose Sign in, pick the recovery code option, and enter the code above.`,
     "Anyone with this code can play as you. Keep it somewhere private. Issuing a new code makes this one stop working.",
     "",
   ].join("\n");

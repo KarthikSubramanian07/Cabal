@@ -39,7 +39,7 @@ describe("the player on this device", () => {
     expect(readPlayer()).toBeNull();
     expect(savePlayer({ id: "p1", handle: "ada", secret: "ps_x", savedAt: 5 })).toBe(true);
     const first = readPlayer();
-    expect(first).toEqual({ id: "p1", handle: "ada", secret: "ps_x", savedAt: 5 });
+    expect(first).toEqual({ id: "p1", handle: "ada", secret: "ps_x", google: false, savedAt: 5 });
     expect(readPlayer()).toBe(first);
     renameStoredPlayer("lovelace");
     expect(readPlayer()?.handle).toBe("lovelace");
@@ -69,6 +69,13 @@ describe("recovery codes", () => {
     expect(text).toContain("Handle: ada");
     expect(text).toContain("Issued: 2026-11-19");
     expect(text).toContain("CODE-1234");
-    expect(text).toContain("Restore an account");
+    expect(text).toContain("pick the recovery code option");
+  });
+});
+
+describe("an account that signs in with Google", () => {
+  it("is remembered as one, and an older stored account reads as a guest", () => {
+    expect(parsePlayer(JSON.stringify({ id: "p1", handle: "ada", secret: "ps_x", google: true }))?.google).toBe(true);
+    expect(parsePlayer(JSON.stringify({ id: "p1", handle: "ada", secret: "ps_x" }))?.google).toBe(false);
   });
 });

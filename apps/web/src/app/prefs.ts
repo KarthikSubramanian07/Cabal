@@ -1,5 +1,9 @@
-/** Small per-device preferences kept in localStorage and shared between screens. */
+/**
+ * Small preferences kept in localStorage and shared between screens. For a signed-in player they
+ * also follow the account to every device (net/sync.ts).
+ */
 import { useCallback, useSyncExternalStore } from "react";
+import { notePrefsChanged } from "../net/sync.js";
 
 const SHORTCUTS_KEY = "cabal.shortcuts";
 const listeners = new Set<() => void>();
@@ -32,6 +36,17 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
+/** Switch the shortcuts on or off: from the How to play card, or from the player's other device. */
+export function setShortcuts(on: boolean): void {
+  shortcuts = on;
+  try {
+    localStorage.setItem(SHORTCUTS_KEY, on ? "on" : "off");
+  } catch {
+    // storage can be unavailable (private windows); the choice still holds for this visit
+  }
+  for (const l of listeners) l();
+}
+
 /**
  * Whether the single-key shortcuts (M, S, C, H, D) are on right now, read from storage if
  * need be. For event handlers, which must not act on a default.
@@ -48,13 +63,8 @@ export function useShortcuts(): [boolean, (on: boolean) => void] {
     () => true,
   );
   const set = useCallback((on: boolean) => {
-    shortcuts = on;
-    try {
-      localStorage.setItem(SHORTCUTS_KEY, on ? "on" : "off");
-    } catch {
-      // storage can be unavailable (private windows); the choice still holds for this visit
-    }
-    for (const l of listeners) l();
+    setShortcuts(on);
+    notePrefsChanged();
   }, []);
   return [value, set];
 }
