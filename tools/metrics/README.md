@@ -17,6 +17,7 @@ One repeatable command for each phase 1 success metric in [docs/PLAN.md section 
 - **`order-rtt.mjs`** makes an unlisted game with AI fill, binds the creator's seat with a `hello` frame, and times `n` (default 50) `orders.set` frames to their `orders.ack` by `id`, one at a time inside the room's per-socket rate. It prints p50, p95 and p99. A run from a laptop measures that laptop's distance to the nearest Cloudflare edge: record where it ran. Real browsers report the same timing anonymously (`apps/web/src/net/timings.ts`), by continent, in `GET /api/metrics` (admin).
 - **`full-game.mjs`** seats two scripted people beside five bots. Each person files holds and readies every phase, and both vote for a draw from the `--until` year (default 1905). It passes when the game ends `finished` before `--timeout` seconds (default 600). This is also the exit criterion of #8.
 - **`e2e-live/metrics.spec.ts`** (in `apps/web`) starts a clock at the front page, presses Play now, chooses a handle and stops when the first movement phase accepts orders, on the desktop and phone projects. It also checks that the page's beacon carries both browser timings and that the server accepts it.
+- **`seo.mjs`** runs Lighthouse's SEO category (`npx lighthouse@13.6.0`, needs Chrome) on each path given and prints a table of scores with every failed audit, for #12's bar of a score above 95. A table's page asks to stay out of indexes, so a failed crawlability audit alone is reported as "noindex by design" rather than a miss. It exits 1 when any other page scores below `--min` (default 95).
 
 The probes share their preamble (create, join, start, bind a seat) in `lib/probe.mjs` with the server's socket load script (`apps/server/scripts/load-sockets.mjs`), and their nearest-rank percentile in `lib/stats.mjs`.
 
@@ -32,6 +33,21 @@ METRICS_RECORD=production LIVE_ORIGIN=https://playcabal.pages.dev pnpm --filter 
 ```
 
 Then copy the table from `metrics.md` into docs/PLAN.md section 8.
+
+```sh
+node tools/metrics/seo.mjs https://playcabal.pages.dev / /sandbox /games /ledger /about /privacy
+```
+
+Production, 2026-11-20, build 301ed8b:
+
+| Page | SEO | Failed audits | Result |
+|---|---|---|---|
+| `/` | 100 | none | pass |
+| `/sandbox` | 100 | none | pass |
+| `/games` | 100 | none | pass |
+| `/ledger` | 100 | none | pass |
+| `/about` | 100 | none | pass |
+| `/privacy` | 100 | none | pass |
 
 ## Tests
 
