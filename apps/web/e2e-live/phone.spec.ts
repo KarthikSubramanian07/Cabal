@@ -12,7 +12,8 @@
  *
  * Every order is tapped on the map, every button is tapped with a finger.
  */
-import { type Locator, type Page, expect, test } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { tap } from "../e2e/helpers.js";
 import { primary, scan, sitDown, tableAs } from "./room.js";
 

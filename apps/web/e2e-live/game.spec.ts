@@ -4,7 +4,7 @@
  * private, one seals a pledge, phases resolve with receipts, they vote a draw, and both read the
  * final scores and the Ledger. A third device watches.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { tap } from "../e2e/helpers.js";
 import { closeSheet, liveTable, primary, scan, sitDown, tab, titleCase } from "./room.js";
 

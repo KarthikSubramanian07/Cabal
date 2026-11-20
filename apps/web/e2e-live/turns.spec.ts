@@ -3,7 +3,7 @@
  * the builds left open waives them, and the player's record counts it as ordered on time, not
  * missed. And a keyboard player arriving by Play now starts on the table, not on the page body.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { chooseHandle, closeSheet, primary, tab, uniqueHandle } from "./room.js";
 
 /** Openings that win most powers a centre in 1901 against the bot. */

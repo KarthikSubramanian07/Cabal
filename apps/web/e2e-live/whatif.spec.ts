@@ -4,7 +4,7 @@
  * The sketch then becomes the seat's orders, the neighbour really makes that move, and the
  * adjudication agrees with the prediction, with the same "Why?" in the results.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { tap } from "../e2e/helpers.js";
 import { closeSheet, framesSent, primary, scan, sitDown, tab, tableAs } from "./room.js";
 

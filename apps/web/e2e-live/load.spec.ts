@@ -3,7 +3,8 @@
  * last thing on a long chain: the page, then the summary, then the socket, then the room's code
  * and a second copy of the stylesheet, all while a megabyte of engine competed for the line.
  */
-import { type Browser, expect, test } from "@playwright/test";
+import type { Browser } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { liveTable, sitDown } from "./room.js";
 
 test("a table draws its board from the map, before the engine is fetched, with one stylesheet", async ({ browser, request }, info) => {

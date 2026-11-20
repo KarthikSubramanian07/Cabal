@@ -4,6 +4,7 @@
  */
 import AxeBuilder from "@axe-core/playwright";
 import { type APIRequestContext, type Browser, type BrowserContext, type Page, type TestInfo, expect } from "@playwright/test";
+import { clientHeaders } from "./fixtures.js";
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
@@ -23,17 +24,14 @@ export interface Seat {
 }
 
 /**
- * A client address of its own for a table made over the API. The local server limits tables made
- * per address (ten a minute), and a whole run on two screens makes more than that: tables made
- * from the app itself (Play now, the lobby) keep the shared allowance.
+ * An address of its own for one attempt of `tableAs`, which may make dozens of tables to seat its
+ * host: more than the ten a minute the test's own address (fixtures.ts) is allowed.
  */
 const address = () => ({ "cf-connecting-ip": `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}` });
 
 /** A live table with two people seated and the five other seats left to the bot, started. */
 export async function liveTable(request: APIRequestContext): Promise<{ host: Seat; guest: Seat }> {
-  const made = await (
-    await request.post("/api/games", { data: { name: "Ada", settings: { pacing: "live", aiFill: true, visibility: "unlisted" } }, headers: address() })
-  ).json();
+  const made = await (await request.post("/api/games", { data: { name: "Ada", settings: { pacing: "live", aiFill: true, visibility: "unlisted" } } })).json();
   const host: Seat = { gameId: made.gameId, power: made.power, token: made.token, name: "Ada" };
   const joined = await (await request.post(`/api/games/${host.gameId}/join`, { data: { name: "Bea" } })).json();
   const guest: Seat = { gameId: joined.gameId, power: joined.power, token: joined.token, name: "Bea" };
@@ -104,6 +102,7 @@ export async function sitDown(
     hasTouch: Boolean(use.hasTouch),
     baseURL: use.baseURL ?? `http://localhost:${process.env.E2E_LIVE_PORT ?? 4184}`,
     serviceWorkers: "block",
+    extraHTTPHeaders: clientHeaders(),
   });
   if (seat) {
     await context.addInitScript((s) => localStorage.setItem(`cabal.seat.${s.gameId}`, JSON.stringify({ ...s, savedAt: Date.now() })), seat);

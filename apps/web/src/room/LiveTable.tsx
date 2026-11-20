@@ -8,7 +8,7 @@
  * first screen and the sidebar is a sheet docked to the bottom with the phase's main action
  * always in reach.
  */
-import type { PowerName } from "@cabal/protocol";
+import type { PowerName, Recipient } from "@cabal/protocol";
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageLoading } from "../app/PageLoading.jsx";
 import { shortcutsEnabled } from "../app/prefs.js";
@@ -41,6 +41,8 @@ import { SeatBar } from "./SeatBar.jsx";
 import { readiness } from "./seatState.js";
 import { threadList, totalUnread } from "./threads.js";
 import { NotifyOffer } from "../profile/NotificationsPanel.jsx";
+import { DispatchBoard, useDispatches } from "../toast/DispatchBoard.jsx";
+import { useNarrow } from "../app/useNarrow.js";
 import { filedLine } from "./settle.js";
 import { useDesk } from "./useDesk.js";
 import { sketchCount, sketchGhosts, sketchMarks, sketchPowers } from "./sketch.js";
@@ -131,6 +133,7 @@ function Floor({
   const seat = view.seats.find((s) => s.power === me);
   const [tab, setTab] = useState<Tab>(over ? "table" : me ? "orders" : "press");
   const [sheet, setSheet] = useState(false);
+  const [thread, setThread] = useState<Recipient>("ALL");
   const [draft, setDraft] = useState<Draft>(IDLE);
   const [picker, setPicker] = useState<PickerState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -521,14 +524,11 @@ function Floor({
   const pressVisible = tab === "press" && (sheet || !window.matchMedia?.("(max-width: 1000px)").matches);
   const resultsFor = useCallback((phase: string) => history.find((r) => r.phase === phase)?.outcome.results ?? view.resolved[phase]?.results ?? null, [history, view.resolved]);
 
-  // A private dispatch that arrives while the press is not on screen is said out loud once.
-  const heard = useRef(view.press.length);
-  useEffect(() => {
-    const fresh = view.press.slice(heard.current);
-    heard.current = view.press.length;
-    const letter = fresh.find((m) => m.from !== me && m.to !== "ALL");
-    if (letter && !pressVisible) announce(`New dispatch from ${powerLabel(letter.from)}.`);
-  }, [view.press, me, pressVisible, announce]);
+  // News from out of sight (a message for a thread not on screen, a seal stamped, a phase
+  // resolved) is pinned up as a slip, and said once to screen readers.
+  const narrow = useNarrow();
+  const resultsInView = narrow ? !sheet || tab === "orders" : tab === "orders";
+  const dispatches = useDispatches(view, { me, reading: pressVisible ? thread : null, resultsInView });
 
   // ---- the clock and the seats
 
@@ -964,6 +964,8 @@ function Floor({
                 connected={room.connection === "open"}
                 onSend={room.send}
                 onRead={room.markRead}
+                thread={thread}
+                onThread={setThread}
               />
             </div>
 
@@ -1037,6 +1039,22 @@ function Floor({
         {announcement}
       </div>
       <ClockCrier deadlineAt={view.status === "active" ? deadlineAt : null} offsetMs={view.clockOffsetMs} announce={announce} />
+      <DispatchBoard
+        dispatches={dispatches}
+        tucked={narrow && sheet}
+        onOpen={(d) => {
+          dispatches.dismiss(d.key);
+          if (d.thread) {
+            setThread(d.thread);
+            setTab("press");
+          } else {
+            setTab("orders");
+          }
+          setSheet(true);
+          // Take the player to what the slip was about, as if they had opened it themselves.
+          window.setTimeout(() => document.getElementById(d.thread ? "thread-log" : "tab-orders")?.focus(), 0);
+        }}
+      />
     </>
   );
 }

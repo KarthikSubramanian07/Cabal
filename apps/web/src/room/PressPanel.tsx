@@ -22,7 +22,16 @@ const ERRORS: Record<string, string> = {
   press_closed: "Press is closed during retreats and adjustments in this game.",
   not_active: "The game is not running, so nothing can be sent.",
   spectator: "Only players at this table can write.",
+  bad_quote: "Only a message from this thread can be quoted here.",
 };
+
+/** How much of a message the composer shows while quoting it; the server keeps its own excerpt. */
+const QUOTE_PREVIEW = 160;
+
+function preview(body: string): string {
+  const chars = [...body];
+  return chars.length <= QUOTE_PREVIEW ? body : `${chars.slice(0, QUOTE_PREVIEW - 1).join("").trimEnd()}…`;
+}
 
 function when(sentAt: number): string {
   return new Date(sentAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -45,16 +54,26 @@ export interface PressPanelProps {
   /** The engine is loaded here, so seals can be made and opened. */
   engineReady: boolean;
   connected: boolean;
-  onSend: (to: Recipient, body: string, pledge?: PledgeInput) => Promise<void>;
+  onSend: (to: Recipient, body: string, pledge?: PledgeInput, quote?: string) => Promise<void>;
   onRead: (thread: Recipient, upTo: number) => void;
+  /** The open thread, when the room keeps it (a dispatch slip can open one); the panel's own otherwise. */
+  thread?: Recipient;
+  onThread?: (thread: Recipient) => void;
 }
 
 export function PressPanel(props: PressPanelProps) {
   const { threads, me, names, settings, status, phase, press, visible, myOrders, resultsFor, engineReady, connected, onSend, onRead } = props;
-  const [open, setOpen] = useState<Recipient>("ALL");
+  const [own, setOwn] = useState<Recipient>("ALL");
+  const open = props.thread ?? own;
+  const setOpen = props.onThread ?? setOwn;
   const thread = threads.find((t) => t.id === open) ?? threads[0]!;
   const log = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const fromId = useId();
+  /** The message the composer is quoting; a quote never follows the player to another thread. */
+  const [quoting, setQuoting] = useState<PressView | null>(null);
+  useEffect(() => setQuoting(null), [thread.id]);
+  const canQuote = me !== null && pressOpen(settings, status, phase, thread.id).open;
 
   // Reading a thread on screen marks it read, here and on the server.
   useEffect(() => {
@@ -127,10 +146,29 @@ export function PressPanel(props: PressPanelProps) {
                 <li key={m.id} className={`dispatch${m.from === me ? " mine" : ""}`} style={{ "--power": `var(--p-${m.from.toLowerCase()})` } as CSSProperties}>
                   {turn ? <p className="phase-rule">{m.phase === "LOBBY" ? "Before the game" : phaseLabel(m.phase)}</p> : null}
                   <p className="dateline">
-                    <span className="dispatch-from">{powerLabel(m.from)}</span>
+                    <span className="dispatch-from" id={`${fromId}-${m.id}`}>
+                      {powerLabel(m.from)}
+                    </span>
                     {names[m.from] ? <span className="dispatch-name">{names[m.from]}</span> : null}
                     <time dateTime={new Date(m.sentAt).toISOString()}>{when(m.sentAt)}</time>
+                    {canQuote ? (
+                      // Described by the sender rather than named after them: the thread is a live log, and a
+                      // longer name would be read out with every message that arrives.
+                      <button type="button" className="dispatch-act" aria-pressed={quoting?.id === m.id} aria-describedby={`${fromId}-${m.id}`} onClick={() => setQuoting(quoting?.id === m.id ? null : m)}>
+                        Quote
+                      </button>
+                    ) : null}
                   </p>
+                  {m.quote ? (
+                    <blockquote className="dispatch-quote" style={{ "--power": `var(--p-${m.quote.from.toLowerCase()})` } as CSSProperties}>
+                      <p className="quote-from">
+                        <span className="sr-only">Quoting </span>
+                        {powerLabel(m.quote.from)}
+                        {m.quote.phase !== m.phase ? `, ${m.quote.phase === "LOBBY" ? "before the game" : phaseLabel(m.quote.phase)}` : ""}
+                      </p>
+                      <p className="quote-text">{m.quote.excerpt}</p>
+                    </blockquote>
+                  ) : null}
                   <p className="dispatch-body">{m.body}</p>
                   {m.pledge ? <SealCard pledge={m.pledge} results={resultsFor(m.pledge.phase)} mine={m.from === me} /> : null}
                 </li>
@@ -151,6 +189,8 @@ export function PressPanel(props: PressPanelProps) {
           myOrders={myOrders}
           engineReady={engineReady}
           connected={connected}
+          quoting={quoting}
+          onUnquote={() => setQuoting(null)}
           onSend={onSend}
         />
       ) : (
@@ -170,6 +210,8 @@ function Composer({
   myOrders,
   engineReady,
   connected,
+  quoting,
+  onUnquote,
   onSend,
 }: {
   to: Recipient;
@@ -181,6 +223,8 @@ function Composer({
   myOrders: string[];
   engineReady: boolean;
   connected: boolean;
+  quoting: PressView | null;
+  onUnquote: () => void;
   onSend: PressPanelProps["onSend"];
 }) {
   const [body, setBody] = useState("");
@@ -192,11 +236,17 @@ function Composer({
   const area = useRef<HTMLTextAreaElement>(null);
   const errorId = useId();
   const sealId = useId();
+  const quoteId = useId();
   const gate = pressOpen(settings, status, phase, to);
   const left = to === "ALL" ? null : whispersLeft(press, me, phase, settings.whisperBudget);
   const spent = left === 0;
   const pledgeable = useMemo(() => myOrders.filter((o) => o !== "WAIVE"), [myOrders]);
   const pickable = status === "active" && engineReady && pledgeable.length > 0;
+
+  // Choosing a message to quote puts the pen back in the player's hand.
+  useEffect(() => {
+    if (quoting) area.current?.focus();
+  }, [quoting]);
 
   // Orders that are no longer written cannot stay chosen.
   useEffect(() => {
@@ -225,8 +275,9 @@ function Composer({
     setError(null);
     try {
       const pledge = sealing ? makeSeal(chosen, sealed) : undefined;
-      await onSend(to, text, pledge);
+      await onSend(to, text, pledge, quoting?.id);
       setBody("");
+      onUnquote();
       setSealing(false);
       setChosen([]);
     } catch (err) {
@@ -254,6 +305,15 @@ function Composer({
   return (
     <form className="talk-compose press-compose" onSubmit={submit} noValidate>
       <label htmlFor={`compose-${to}`}>{label}</label>
+      {quoting ? (
+        <div className="quote-slip" id={quoteId} style={{ "--power": `var(--p-${quoting.from.toLowerCase()})` } as CSSProperties}>
+          <p className="quote-from">Quoting {quoting.from === me ? "yourself" : powerLabel(quoting.from)}</p>
+          <p className="quote-text">{preview(quoting.body)}</p>
+          <button type="button" className="dispatch-act" onClick={onUnquote}>
+            Remove the quote
+          </button>
+        </div>
+      ) : null}
       <textarea
         ref={area}
         id={`compose-${to}`}
@@ -263,7 +323,7 @@ function Composer({
         disabled={spent}
         onChange={(e) => setBody(e.target.value)}
         onKeyDown={onKey}
-        aria-describedby={error ? errorId : undefined}
+        aria-describedby={[quoting ? quoteId : null, error ? errorId : null].filter(Boolean).join(" ") || undefined}
       />
       {sealing ? (
         <fieldset className="seal-pick" aria-describedby={sealId}>

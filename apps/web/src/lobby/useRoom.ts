@@ -30,8 +30,8 @@ export interface Room {
   setOrders: (phase: string, orders: string[]) => Promise<Frame<"orders.ack">>;
   /** Say this seat is done (or not) with the phase. False when the socket is not open. */
   setReady: (phase: string, ready: boolean) => boolean;
-  /** Send press, with a pledge when one is attached. */
-  send: (to: Recipient, body: string, pledge?: PledgeInput) => Promise<void>;
+  /** Send press, with a pledge when one is attached, quoting an earlier message of the thread by id. */
+  send: (to: Recipient, body: string, pledge?: PledgeInput, quote?: string) => Promise<void>;
   /** Mark a thread read up to a message's `sentAt` (its newest, usually). */
   markRead: (thread: Recipient, upTo: number) => void;
   vote: (value: boolean, include?: PowerName[]) => boolean;
@@ -203,8 +203,8 @@ export function useRoom(code: string): Room {
 
   const setOrders = useCallback((phase: string, orders: string[]) => live().setOrders(phase, orders), []);
   const setReady = useCallback((phase: string, ready: boolean) => socket.current?.ready(phase, ready) ?? false, []);
-  const send = useCallback(async (to: Recipient, body: string, pledge?: PledgeInput) => {
-    await live().press(to, body, pledge);
+  const send = useCallback(async (to: Recipient, body: string, pledge?: PledgeInput, quote?: string) => {
+    await live().press(to, body, pledge, quote);
   }, []);
   const markRead = useCallback((thread: Recipient, upTo: number) => {
     setLoad((current) => {

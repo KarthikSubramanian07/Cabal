@@ -2,7 +2,7 @@
  * The clock ticks every second for the whole game. It must redraw only itself: the board (and
  * the table around it) stays put between frames from the server.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { countRenders, renders } from "./renders.js";
 import { liveTable, sitDown } from "./room.js";
 

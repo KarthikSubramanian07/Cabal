@@ -4,7 +4,7 @@
  * to the page, the order lands, and the positions are there as text for anyone not reading the
  * map.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { liveTable, scan, sitDown, tab, titleCase } from "./room.js";
 
 test.describe("the room by keyboard, live", () => {
