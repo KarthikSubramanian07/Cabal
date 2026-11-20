@@ -15,6 +15,8 @@ test.describe("the status page", () => {
     await expect(page.getByRole("heading", { level: 1, name: "Cabal is running." })).toBeVisible();
     const facts = page.locator(".status-facts");
     await expect(facts).toContainText("8a7f7e3c0ffee");
+    // A build that is a commit links to it, so what is live is one click from its source.
+    await expect(facts.getByRole("link", { name: "8a7f7e3c0ffee" })).toHaveAttribute("href", "https://github.com/KarthikSubramanian07/Cabal/commit/8a7f7e3c0ffee");
     await expect(facts).toContainText("Answering, schema 13 (D1)");
     await expect(facts).toContainText("Version 2, the same as this page");
     await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
@@ -31,11 +33,13 @@ test.describe("the status page", () => {
     const server = await fakeServer(page);
     let answer: "behind" | "down" | "well" = "behind";
     server.on("GET", /^\/api\/health$/, () =>
-      answer === "behind" ? { status: 503, body: { ...healthy, ok: false, index: { backend: "d1", reachable: true, schema: 12 } } } : answer === "down" ? { status: 502, body: { error: "bad gateway" } } : { body: healthy },
+      answer === "behind" ? { status: 503, body: { ...healthy, ok: false, build: "8a7f7e3c0ffee-dirty", index: { backend: "d1", reachable: true, schema: 12 } } } : answer === "down" ? { status: 502, body: { error: "bad gateway" } } : { body: healthy },
     );
     await page.goto("/status");
     await expect(page.getByRole("heading", { level: 1, name: "The server answers, but not well." })).toBeVisible();
     await expect(page.locator(".status-facts")).toContainText("schema 12");
+    // A build that is not a clean commit is shown, never linked as if it were one.
+    await expect(page.locator(".status-facts").getByRole("link")).toHaveCount(0);
     answer = "down";
     await page.getByRole("button", { name: "Check again" }).click();
     await expect(page.getByRole("heading", { level: 1, name: "The server is not answering." })).toBeVisible();

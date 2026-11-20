@@ -12,6 +12,15 @@ const EVERY_MS = 30_000;
 
 type Check = { kind: "checking" } | { kind: "answered"; health: HealthResponse; ms: number; at: number } | { kind: "silent"; reason: string; at: number };
 
+/** A build `pnpm deploy:server` stamped: a commit hash, `-dirty` when the tree had uncommitted changes. */
+const COMMIT = /^([0-9a-f]{7,40})(-dirty)?$/;
+
+/** The commit a build names, on GitHub, or null for a build that is not one (`dev`, a version id). */
+export function commitUrl(build: string): string | null {
+  const m = COMMIT.exec(build);
+  return m && !m[2] ? `https://github.com/KarthikSubramanian07/Cabal/commit/${m[1]}` : null;
+}
+
 function time(ms: number): string {
   return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
@@ -78,7 +87,13 @@ export default function ServerStatusPage() {
               <div>
                 <dt>Build</dt>
                 <dd>
-                  <code>{health.build}</code>
+                  {commitUrl(health.build) ? (
+                    <a href={commitUrl(health.build)!}>
+                      <code>{health.build}</code>
+                    </a>
+                  ) : (
+                    <code>{health.build}</code>
+                  )}
                 </dd>
               </div>
               <div>
