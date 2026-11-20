@@ -8,10 +8,16 @@
  * `cf-connecting-ip` as sent, so every test sends its own (in production Cloudflare sets that
  * header itself and a client cannot choose it). The limits stay on, and a test that makes more
  * than ten tables a minute still meets them.
+ *
+ * Against a deployment (LIVE_ORIGIN) no address is sent: Cloudflare refuses any request that
+ * carries `cf-connecting-ip` with 403, and the deployment sees the machine's real address anyway.
  */
 import { test as base } from "@playwright/test";
 
 export { expect } from "@playwright/test";
+
+/** True when the suite runs against a deployment, where a client cannot choose its address. */
+export const deployed = Boolean(process.env.LIVE_ORIGIN);
 
 /** A private address for `key`, the same every time for the same key. */
 export function addressFor(key: string): string {
@@ -26,6 +32,7 @@ export function addressFor(key: string): string {
 
 /** The headers that put a request on the running test's own address. A retry gets a fresh one. */
 export function clientHeaders(): Record<string, string> {
+  if (deployed) return {};
   const info = base.info();
   return { "cf-connecting-ip": addressFor(`${info.project.name}|${info.testId}|${info.retry}`) };
 }
