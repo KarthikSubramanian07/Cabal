@@ -235,3 +235,48 @@
     display: none;
   }
 }
+
+/* ---- the Ledger at the table: a player's trust on their place card */
+
+.place-trust {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+.trust-figure {
+  display: inline-block;
+  min-width: 3.4ch;
+  padding: 0 3px;
+  border: 1px solid var(--ink-4);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-align: center;
+}
+
+/* A card grows a line for trust: the state still sits at its foot. */
+.place-card,
+.place-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.place-card > .place-state,
+.place-pick > .place-take {
+  align-self: flex-start;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+/* In the room's narrow sidebar the Host and You marks take their own line over the power's name. */
+.live-side .place-marks {
+  position: static;
+  order: -1;
+  margin-bottom: 2px;
+}
+
+.live-side .place-marks:empty {
+  display: none;
+}
