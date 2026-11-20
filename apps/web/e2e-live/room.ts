@@ -33,6 +33,43 @@ export async function liveTable(request: APIRequestContext): Promise<{ host: Sea
   return { host, guest };
 }
 
+/**
+ * A live table where the host plays `hostPower` and a guest plays `guestPower`, the bot the rest,
+ * started. The server seats a table's creator at random, so tables are made until one seats the
+ * host where the test needs it (a lobby left behind costs nothing on the local server). The local
+ * server limits tables made per client address; each attempt comes from an address of its own.
+ */
+export async function tableAs(request: APIRequestContext, hostPower: string, guestPower: string): Promise<{ host: Seat; guest: Seat }> {
+  const run = Math.floor(Math.random() * 250);
+  for (let i = 0; i < 60; i++) {
+    const made = await (
+      await request.post("/api/games", {
+        data: { name: "Ada", settings: { pacing: "live", aiFill: true, visibility: "unlisted" } },
+        headers: { "cf-connecting-ip": `10.${run}.${i}.1` },
+      })
+    ).json();
+    if (made.power !== hostPower) continue;
+    const host: Seat = { gameId: made.gameId, power: made.power, token: made.token, name: "Ada" };
+    const joined = await (await request.post(`/api/games/${host.gameId}/join`, { data: { name: "Bea", power: guestPower } })).json();
+    expect(joined.power).toBe(guestPower);
+    const guest: Seat = { gameId: joined.gameId, power: joined.power, token: joined.token, name: "Bea" };
+    const started = await request.post(`/api/games/${host.gameId}/start`, { headers: { authorization: `Bearer ${host.token}` } });
+    expect(started.ok()).toBe(true);
+    return { host, guest };
+  }
+  throw new Error(`no table seated its creator as ${hostPower}`);
+}
+
+/** Every frame a page sends on its game socket, keepalive pings left out. */
+export function framesSent(page: Page): string[] {
+  const sent: string[] = [];
+  page.on("websocket", (ws) => ws.on("framesent", (f) => {
+    const text = typeof f.payload === "string" ? f.payload : f.payload.toString();
+    if (text !== "ping") sent.push(text);
+  }));
+  return sent;
+}
+
 /** Handles are unique on the server, which keeps them between runs: each test makes its own. */
 export const uniqueHandle = (stem: string) => `${stem}_${Date.now().toString(36).slice(-5)}${Math.floor(Math.random() * 36).toString(36)}`;
 
