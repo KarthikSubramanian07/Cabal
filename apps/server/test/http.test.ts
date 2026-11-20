@@ -139,6 +139,13 @@ describe("health and failure", () => {
 
     const named = await worker.fetch(new Request("http://cabal/health"), { ...serverEnv, BUILD_ID: "abc1234" });
     expect(((await named.json()) as HealthResponse).build).toBe("abc1234");
+    // The commit and the Worker version are both named, so one curl shows which commit is live.
+    const versioned = await worker.fetch(new Request("http://cabal/health"), {
+      ...serverEnv,
+      BUILD_ID: "3b30e06c5d9a",
+      CF_VERSION_METADATA: { id: "7807fcf8-716d-4af9-8949-897dd3f6ac0f", tag: "3b30e06c5d9a", timestamp: "" },
+    });
+    expect(HealthResponse.parse(await versioned.json())).toMatchObject({ build: "3b30e06c5d9a", version: "7807fcf8-716d-4af9-8949-897dd3f6ac0f" });
 
     // An index that does not answer is reported, and health itself still answers.
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);

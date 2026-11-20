@@ -684,8 +684,14 @@ export const HealthResponse = z.object({
   protocol: z.number().int(),
   /** Semantic version of the Rust engine compiled into this build. */
   engine: z.string(),
-  /** Identifies the deployed build: the `BUILD_ID` variable, else the Worker version id, else `dev`. */
+  /**
+   * Identifies the deployed build: the `BUILD_ID` variable, else the Worker version id, else `dev`.
+   * `pnpm deploy:server` sets `BUILD_ID` to the commit's twelve character hash (`-dirty` when the
+   * tree had uncommitted changes), so this names the commit that is live.
+   */
   build: z.string(),
+  /** The Cloudflare Worker version id of this deployment, when the platform supplies one. */
+  version: z.string().nullable().optional(),
   /** The Registry Durable Object (the Claude budget, and the index from before D1). */
   registry: z.object({ reachable: z.boolean(), schema: z.number().int().nullable() }),
   /** The cross-game index: `d1` in production, `registry` where no D1 database is bound. */

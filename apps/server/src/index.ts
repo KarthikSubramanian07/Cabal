@@ -112,6 +112,7 @@ async function health(env: Env): Promise<HealthResponse> {
     protocol: PROTOCOL_VERSION,
     engine: engineVersion(),
     build: buildId(env),
+    version: env.CF_VERSION_METADATA?.id ?? null,
     registry: { reachable: probed!.registry !== null, schema: probed!.registry },
     index: { backend, reachable: probed!.index !== null, schema: probed!.index },
     time: Date.now(),
