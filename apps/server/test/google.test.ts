@@ -107,9 +107,21 @@ async function signIn(credential: string, secret?: string) {
 }
 
 describe("signing in with Google", () => {
-  it("is off until a client ID is set: the button learns there is none, and a sign-in is refused", async () => {
-    expect(GoogleConfigResponse.parse(await (await call("/api/auth/google", null)).json())).toEqual({ clientId: null });
-    const res = await call("/api/auth/google", null, { method: "POST", body: JSON.stringify({ credential: "x".repeat(40) }) });
+  it("hands the button this deployment's client ID", async () => {
+    const config = GoogleConfigResponse.parse(await (await call("/api/auth/google", null)).json());
+    expect(config.clientId).toMatch(/\.apps\.googleusercontent\.com$/);
+  });
+
+  it("is off when no client ID is set: the button learns there is none, and a sign-in is refused", async () => {
+    const off = { ...serverEnv, GOOGLE_CLIENT_ID: "" };
+    const get = new Request("http://cabal/api/auth/google");
+    expect(GoogleConfigResponse.parse(await (await playerRoute(get, off, new URL(get.url)))!.json())).toEqual({ clientId: null });
+    const post = new Request("http://cabal/api/auth/google", {
+      method: "POST",
+      headers: { "cf-connecting-ip": nextIp() },
+      body: JSON.stringify({ credential: "x".repeat(40) }),
+    });
+    const res = (await playerRoute(post, off, new URL(post.url)))!;
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ code: "google_off" });
   });
