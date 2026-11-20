@@ -69,6 +69,7 @@ export function PressPanel(props: PressPanelProps) {
   const thread = threads.find((t) => t.id === open) ?? threads[0]!;
   const log = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const fromId = useId();
   /** The message the composer is quoting; a quote never follows the player to another thread. */
   const [quoting, setQuoting] = useState<PressView | null>(null);
   useEffect(() => setQuoting(null), [thread.id]);
@@ -145,12 +146,16 @@ export function PressPanel(props: PressPanelProps) {
                 <li key={m.id} className={`dispatch${m.from === me ? " mine" : ""}`} style={{ "--power": `var(--p-${m.from.toLowerCase()})` } as CSSProperties}>
                   {turn ? <p className="phase-rule">{m.phase === "LOBBY" ? "Before the game" : phaseLabel(m.phase)}</p> : null}
                   <p className="dateline">
-                    <span className="dispatch-from">{powerLabel(m.from)}</span>
+                    <span className="dispatch-from" id={`${fromId}-${m.id}`}>
+                      {powerLabel(m.from)}
+                    </span>
                     {names[m.from] ? <span className="dispatch-name">{names[m.from]}</span> : null}
                     <time dateTime={new Date(m.sentAt).toISOString()}>{when(m.sentAt)}</time>
                     {canQuote ? (
-                      <button type="button" className="dispatch-act" aria-pressed={quoting?.id === m.id} onClick={() => setQuoting(quoting?.id === m.id ? null : m)}>
-                        Quote<span className="sr-only"> this message from {powerLabel(m.from)}</span>
+                      // Described by the sender rather than named after them: the thread is a live log, and a
+                      // longer name would be read out with every message that arrives.
+                      <button type="button" className="dispatch-act" aria-pressed={quoting?.id === m.id} aria-describedby={`${fromId}-${m.id}`} onClick={() => setQuoting(quoting?.id === m.id ? null : m)}>
+                        Quote
                       </button>
                     ) : null}
                   </p>

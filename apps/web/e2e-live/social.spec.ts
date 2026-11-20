@@ -55,8 +55,12 @@ test.describe("the social layer, live", () => {
     await expect(thread).toBeFocused();
     await expect(slip).toHaveCount(0);
 
-    // Bea quotes it in her answer.
-    await thread.getByRole("button", { name: `Quote this message from ${Host}` }).click();
+    // Bea quotes it in her answer. The button says whose message it quotes as its description, so
+    // the live thread does not read a long button name out with every message.
+    const quote = thread.getByRole("button", { name: "Quote", exact: true });
+    await expect(quote).toHaveAccessibleDescription(Host);
+    await expect(thread).not.toContainText("this message from");
+    await quote.click();
     const composer = bea.getByLabel(`Message ${Host}`);
     await expect(composer).toBeFocused();
     await expect(bea.locator(".quote-slip")).toContainText(`Quoting ${Host}`);
