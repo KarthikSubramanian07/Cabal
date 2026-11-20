@@ -4,7 +4,7 @@
  */
 import AxeBuilder from "@axe-core/playwright";
 import { type APIRequestContext, type Browser, type BrowserContext, type Page, type TestInfo, expect } from "@playwright/test";
-import { clientHeaders } from "./fixtures.js";
+import { clientHeaders, deployed } from "./fixtures.js";
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
@@ -27,7 +27,7 @@ export interface Seat {
  * An address of its own for one attempt of `tableAs`, which may make dozens of tables to seat its
  * host: more than the ten a minute the test's own address (fixtures.ts) is allowed.
  */
-const address = () => ({ "cf-connecting-ip": `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}` });
+const address = (): Record<string, string> => (deployed ? {} : { "cf-connecting-ip": `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}` });
 
 /** A live table with two people seated and the five other seats left to the bot, started. */
 export async function liveTable(request: APIRequestContext): Promise<{ host: Seat; guest: Seat }> {
