@@ -299,7 +299,7 @@ export default function LandingPage() {
           </h2>
           <div>
             <p>
-              Cabal&apos;s adjudicator passes all {ADJUDICATION_CASES} of its test cases: every one of the {DATC_CASES} Diplomacy Adjudicator Test Cases, and
+              Cabal&apos;s adjudicator passes all {ADJUDICATION_CASES} of its test cases: every one of the {DATC_CASES} Diplomacy Adjudicator Test Cases, and{" "}
               {CABAL_CASES} rulings of its own that the DATC cannot express. It is written in Rust and runs in your browser as WebAssembly, and every result comes
               with its reason: why a move bounced, which support was cut, how a convoy was disrupted. The engine, the server and this site are open source under the MIT licence.
             </p>
