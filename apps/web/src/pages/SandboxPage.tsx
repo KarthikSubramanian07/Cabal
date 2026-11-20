@@ -5,11 +5,11 @@ import { StatusPage } from "../app/StatusPage.jsx";
 import { shortcutsEnabled } from "../app/prefs.js";
 import { OrderEntry, type WriteResult } from "../components/OrderEntry.jsx";
 import { OrderList, PhaseHeader, PhaseStepper, PowerTable, Results, whyKey } from "../components/Sidebar.jsx";
-import { type Why, explainPhase, indexOfUnit, whyOf, whyOfResult } from "../game/explain/explain.js";
+import { explainPhase, explainerFor } from "../game/explain/explain.js";
 import { useWhatIf } from "../game/explain/whatIf.js";
 import { trackUnits } from "../game/unitIds.js";
 import { deck } from "../sound/deck.js";
-import type { OrderResult, PhaseOutcome, State } from "../engine.js";
+import type { PhaseOutcome, State } from "../engine.js";
 import {
   type ComposeContext,
   type Draft,
@@ -565,19 +565,15 @@ function Table({ sb }: { sb: Sandbox }) {
 
   // Why an order failed: the engine's account of the phase on show (or of the sketch).
   const explanation = useMemo(() => (record ? explainPhase(record) : null), [record]);
-  const explainResult = useCallback(
-    (all: readonly OrderResult[], phase: string, ex: typeof explanation) =>
-      (r: OrderResult): Why | null => {
-        if (ex) {
-          const i = indexOfUnit(ex, r.power, r.unit);
-          if (i >= 0) return whyOf(ex, i, sb.board.provinces);
-        }
-        return whyOfResult(r, phase, sb.board.provinces, all);
-      },
-    [sb.board.provinces],
+  const names = sb.board.provinces;
+  const explainShown = useMemo(
+    () => (record ? explainerFor(record.outcome.results, record.phase, explanation, names) : null),
+    [record, explanation, names],
   );
-  const explainShown = record ? explainResult(record.outcome.results, record.phase, explanation) : null;
-  const explainSketch = prediction ? explainResult(prediction.outcome.results, sb.phase, prediction.explanation) : null;
+  const explainSketch = useMemo(
+    () => (prediction ? explainerFor(prediction.outcome.results, sb.phase, prediction.explanation, names) : null),
+    [prediction, sb.phase, names],
+  );
   /** The panel open now, so the board can pick out the units behind it. */
   const openWhy = useMemo(() => {
     if (!whyOpen) return null;

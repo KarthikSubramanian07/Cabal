@@ -228,3 +228,23 @@ export function indexOfUnit(ex: Explanation, power: string, unit: string): numbe
 export function hasWhy(result: OrderResult): boolean {
   return !result.ok && result.code !== "disband" && parseOrder(result.order)?.type !== "waive";
 }
+
+/**
+ * The "why" for each result of one phase: the engine's account where it has one (movement),
+ * else the result's own words. One function for the sandbox, the replay and the live room,
+ * so a failed order is explained the same way wherever it is read.
+ */
+export function explainerFor(
+  results: readonly OrderResult[],
+  phase: string,
+  explanation: Explanation | null,
+  names?: Names,
+): (result: OrderResult) => Why | null {
+  return (r) => {
+    if (explanation) {
+      const i = indexOfUnit(explanation, r.power, r.unit);
+      if (i >= 0) return whyOf(explanation, i, names);
+    }
+    return whyOfResult(r, phase, names, results);
+  };
+}
