@@ -1,7 +1,7 @@
 //! `cabal`: command line tools for the Cabal engine.
 //!
 //! ```text
-//! cabal datc [--report]                 adjudicate the DATC v3.0 corpus; pass, fail and skip totals (exit 1 on any failure)
+//! cabal datc [--report] [--json]        adjudicate the DATC v3.0 corpus; pass, fail and skip totals (exit 1 on any failure or skipped case)
 //! cabal explain [--graph] <order>...              adjudicate a movement phase from order text and explain it
 //! cabal legal <power> [<order>...]      list legal orders for a power (after optional setup orders)
 //! cabal replay [--json] <file|dir>...   replay saved games and report every divergence (exit 1 on any)
@@ -314,28 +314,85 @@ fn replay(args: &[String]) -> ExitCode {
     }
 }
 
+/// One corpus's totals for `cabal datc --json`. A case is skipped when the
+/// harness evaluated no assertion for it at all; orders the corpus gives no
+/// expectation for are counted apart, as `orders_without_expectation`.
+fn corpus_json(name: &str, report: &datc_harness::Report) -> serde_json::Value {
+    let skipped = report.cases.iter().filter(|c| c.checks == 0).count();
+    serde_json::json!({
+        "name": name,
+        "total": report.cases.len(),
+        "passed": report.passed() - report.cases.iter().filter(|c| c.checks == 0 && c.failures.is_empty()).count(),
+        "failed": report.failed(),
+        "skipped": skipped,
+        "checks": report.checks(),
+        "orders_without_expectation": report.skipped(),
+        "failures": report
+            .cases
+            .iter()
+            .filter(|c| !c.failures.is_empty())
+            .map(|c| serde_json::json!({ "case": c.name, "failures": c.failures }))
+            .collect::<Vec<_>>(),
+    })
+}
+
 /// Adjudicate the DATC corpus and Cabal's supplementary cases, and report.
 ///
 /// Prints pass, fail and skip totals and every failure; `--report` adds the
-/// per-section table. Exit status 1 when any case fails.
+/// per-section table and `--json` prints one JSON document instead (the
+/// phase 1 metric, issue #57). Exit status 1 when any case fails or is
+/// skipped (adjudicated with no assertion evaluated).
 fn datc(args: &[String]) -> ExitCode {
+    const USAGE: &str = "usage: cabal datc [--report] [--json]";
     let sections = args.iter().any(|a| a == "--report");
-    if let Some(unknown) = args.iter().find(|a| a.as_str() != "--report") {
-        eprintln!("unknown option {unknown}\nusage: cabal datc [--report]");
+    let json = args.iter().any(|a| a == "--json");
+    if let Some(unknown) = args
+        .iter()
+        .find(|a| a.as_str() != "--report" && a.as_str() != "--json")
+    {
+        eprintln!("unknown option {unknown}\n{USAGE}");
         return ExitCode::from(2);
     }
     let datc = datc_harness::run_corpus(datc_harness::DATC_V3);
     let cabal = datc_harness::run_corpus(datc_harness::CABAL_CASES);
-    print!("{}", datc_harness::render("DATC v3.0", &datc, sections));
-    print!("{}", datc_harness::render("Cabal cases", &cabal, sections));
-    let failed = datc.failed() + cabal.failed();
-    println!(
-        "total: {} passed, {} failed, {} skipped",
-        datc.passed() + cabal.passed(),
-        failed,
-        datc.skipped() + cabal.skipped()
-    );
-    if failed == 0 {
+    let corpora = [
+        corpus_json("DATC v3.0", &datc),
+        corpus_json("Cabal cases", &cabal),
+    ];
+    let sum = |key: &str| {
+        corpora
+            .iter()
+            .map(|c| c[key].as_u64().unwrap_or(0))
+            .sum::<u64>()
+    };
+    let (failed, skipped) = (sum("failed"), sum("skipped"));
+    if json {
+        let all = serde_json::json!({
+            "engine": VERSION,
+            "total": sum("total"),
+            "passed": sum("passed"),
+            "failed": failed,
+            "skipped": skipped,
+            "corpora": corpora,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&all).expect("report serialises")
+        );
+    } else {
+        print!("{}", datc_harness::render("DATC v3.0", &datc, sections));
+        print!("{}", datc_harness::render("Cabal cases", &cabal, sections));
+        println!(
+            "total: {} passed, {} failed, {} skipped",
+            datc.passed() + cabal.passed(),
+            failed,
+            datc.skipped() + cabal.skipped()
+        );
+        if skipped > 0 {
+            println!("{skipped} cases adjudicated with no assertion evaluated");
+        }
+    }
+    if failed == 0 && skipped == 0 {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
