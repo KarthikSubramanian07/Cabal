@@ -275,14 +275,14 @@
   padding-top: 4px;
 }
 
-/* In the room's narrow sidebar the Host and You marks take their own line over the power's name. */
-.live-side .place-head {
+/* In the room (its sidebar, and the phone's sheet) the Host and You marks take their own line over the power's name. */
+.seats-section .place-head {
   flex-direction: column-reverse;
   align-items: flex-start;
   gap: 2px;
 }
 
-.live-side .place-marks {
+.seats-section .place-marks {
   margin-left: 0;
 }
 

@@ -1007,9 +1007,15 @@ dialog.how.create {
     font-size: 16px;
   }
 
+  /* A phone's card is too narrow to share a line: the marks go over the power's name. */
+  .place-head {
+    flex-direction: column-reverse;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
   .place-marks {
-    position: static;
-    order: -1;
+    margin-left: 0;
   }
 
   /* The ledger of tables becomes one ruled entry per table. */
