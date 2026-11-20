@@ -10,7 +10,7 @@ import { botBrain, claudeBrain, seatBrain } from "../src/brain.js";
 import { Game, engineReady } from "../src/engine.js";
 import type { AgentTurn } from "../src/env.js";
 import { CLAUDE_MODEL, reservationMicros } from "../src/room.js";
-import { Client, type Seat, create, fireAlarm, inRoom, serverEnv, sleep, sql, start, stubOf, summary, until } from "./helpers.js";
+import { Client, type Seat, create, fireAlarm, inRoom, join, serverEnv, sleep, sql, start, stubOf, summary, until } from "./helpers.js";
 
 // One scripted brain per game. The queue is shared by every test in the run, so a brain is looked
 // up by the game a turn belongs to and can never answer for another test's game.
@@ -636,4 +636,75 @@ describe("Claude seats", () => {
     expect(JSON.stringify(sent)).not.toMatch(/sk-test-secret|token|[0-9a-f]{32}/);
     expect(JSON.stringify(sent)).not.toContain(ann.token.split(".")[2]!);
   });
+});
+
+describe("AI takeover of a seat in civil disorder", () => {
+  const seatOf = async (gameId: string, power: string) => (await summary(gameId)).seats.find((s) => s.power === power)!;
+
+  it("hands a seat whose player has gone to a Claude agent in a Claude game, until the player returns", async () => {
+    const { brain, requests } = scripted();
+    const ann = await create("Ann", { aiFill: true, readyAdvance: true, aiBrain: "claude", press: "gunboat" });
+    const bob = await join(ann.gameId, "Bob");
+    brains.set(ann.gameId, brain);
+    await inRoom(ann.gameId, (room) => {
+      room.env = { ...room.env, ANTHROPIC_API_KEY: "test-key" };
+    });
+    await start(ann);
+    await until(() => allReady(ann.gameId), "the AI seats to order", 20_000);
+    expect(requests.some((r) => r.prompt.includes(`You are ${bob.power}.`))).toBe(false);
+    // Bob has missed his turns: his seat is in civil disorder, already covered for this phase.
+    await sql(ann.gameId, "UPDATE seats SET kind = 'civil_disorder', missed = 2, ready = 1 WHERE power = ?", bob.power);
+    const { a, units } = await seated(ann);
+    holdAndReady(a, units, "S1901M");
+    await a.next("state", (m) => m.p.phase === "F1901M", 20_000);
+    // The next phase opens with a Claude turn for Bob's seat, as for every AI seat.
+    await until(async () => (await seatOf(ann.gameId, bob.power)).ready, "Claude to order for the seat", 20_000);
+    const asked = requests.filter((r) => r.prompt.includes(`You are ${bob.power}.`));
+    expect(asked.map((r) => r.step)).toEqual(["order"]);
+    const filed = await sql<{ source: string }>(ann.gameId, "SELECT source FROM orders WHERE phase = 'F1901M' AND power = ?", bob.power);
+    expect(filed).toEqual([{ source: "claude" }]);
+    // An agent's orders are not the player coming back: the seat stays his and stays in civil disorder.
+    expect(await seatOf(ann.gameId, bob.power)).toMatchObject({ kind: "civil_disorder", name: "Bob", autopilot: true, brain: "claude" });
+    const call = await sql<{ outcome: string; cost_micros: number }>(ann.gameId, "SELECT outcome, cost_micros FROM agent_calls WHERE phase = 'F1901M' AND power = ?", bob.power);
+    expect(call).toEqual([{ outcome: "answered", cost_micros: CALL_COST }]);
+  }, 60_000);
+
+  it("leaves a returning player's orders alone when the agent answers after they are back", async () => {
+    const queued: AgentTurn[] = [];
+    const ann = await create("Ann", { aiFill: true, readyAdvance: true, aiBrain: "claude", press: "gunboat" });
+    const bob = await join(ann.gameId, "Bob");
+    const power = bob.power as "FRANCE";
+    await inRoom(ann.gameId, (room) => {
+      room.env = {
+        ...room.env,
+        ANTHROPIC_API_KEY: "test-key",
+        AGENT_QUEUE: { sendBatch: async (messages: { body: AgentTurn }[]) => void queued.push(...messages.map((m) => m.body)) } as never,
+      };
+    });
+    await sql(ann.gameId, "UPDATE seats SET kind = 'civil_disorder', missed = 2 WHERE power = ?", power);
+    await start(ann);
+    await until(async () => queued.some((t) => t.power === power), "a turn for the seat in civil disorder");
+    expect(queued.filter((t) => t.power === power)).toEqual([{ gameId: ann.gameId, power, phase: "S1901M", step: "order" }]);
+    expect(await seatOf(ann.gameId, power)).toMatchObject({ ready: false, brain: "claude" });
+    // The consumer claims the step; then Bob comes back and orders while the model is thinking.
+    const room = stubOf(ann.gameId);
+    expect(await room.agentBrief(power, "S1901M", "order")).toMatchObject({ power, step: "order" });
+    const b = await Client.connect(ann.gameId, bob.token);
+    const units = (await b.next("welcome")).p.state.units[power]!;
+    b.send({ t: "orders.set", p: { phase: "S1901M", orders: units.map((u) => `${u} H`) } });
+    await until(async () => (await seatOf(ann.gameId, power)).kind === "human", "Bob to take his seat back");
+    // The agent's answer arrives late: it is billed, and refused.
+    const moves = units.map((u) => `${u} H`);
+    const report = { model: CLAUDE_MODEL, usage: USAGE, billed: "yes" } as const;
+    expect(await room.agentSubmit(power, "S1901M", "order", { orders: moves, messages: [], pledge: null }, report)).toMatchObject({
+      applied: false,
+      reason: "not_an_ai_seat",
+    });
+    const filed = await sql<{ source: string }>(ann.gameId, "SELECT source FROM orders WHERE phase = 'S1901M' AND power = ?", power);
+    expect(filed).toEqual([{ source: "human" }]);
+    expect((await meta(ann.gameId)).claudeSpentMicros).toBe(CALL_COST);
+    // Back in his hands, the seat is no longer the agent's to claim.
+    expect(await seatOf(ann.gameId, power)).toMatchObject({ kind: "human", brain: null, autopilot: false });
+    b.close();
+  }, 60_000);
 });

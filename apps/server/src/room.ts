@@ -16,13 +16,15 @@
  *  - Only live games pause when every human leaves, the pause keeps the time that was left, and it
  *    ends by itself. Daily and async games never look at who is connected.
  *  - A seat belongs to its player until that player has been gone for four movement phases. Two
- *    misses put it in civil disorder, where the bot covers it and the player takes it back by
- *    ordering. Only after four may a seated player invite a substitute.
+ *    misses put it in civil disorder, where the game's AI covers it (in a Claude game, a Claude
+ *    agent takes the seat over) and the player takes it back by ordering. Only after four may a
+ *    seated player invite a substitute.
  *  - Spectators are read-only: nothing a socket without a seat does can change the game.
- *  - Every AI seat is played every phase through a `SeatBrain`. The bot's orders are on file the
- *    moment a phase opens. A game that opted into Claude then asks the queue for better ones, in
- *    two bounded steps (negotiate, then order), under a hard spend cap; whatever goes wrong, the
- *    orders on file stand and the phase resolves on time.
+ *  - Every AI-played seat (an AI seat, or a civil-disorder seat on autopilot) is played every
+ *    phase through a `SeatBrain`. The bot's orders are on file the moment a phase opens. A game
+ *    that opted into Claude then asks the queue for better ones, in two bounded steps (negotiate,
+ *    then order), under a hard spend cap; whatever goes wrong, the orders on file stand and the
+ *    phase resolves on time.
  */
 import { DurableObject } from "cloudflare:workers";
 import {
@@ -1232,6 +1234,15 @@ export class GameRoom extends DurableObject<Env> {
     return seat.kind === "civil_disorder" && seat.eliminated === 0 && !!this.meta?.settings.aiFill;
   }
 
+  /**
+   * Played by the game's AI brain right now: an AI seat, or a civil-disorder seat the AI covers
+   * until its player returns. In a Claude game both kinds are offered Claude turns, so a seat a
+   * person walked away from is taken over by an agent, under the same spend cap as every other.
+   */
+  private aiPlayed(seat: SeatRow): boolean {
+    return (seat.kind === "ai" && seat.eliminated === 0) || this.autopilot(seat);
+  }
+
   /** Gone long enough that the seat may be handed to an invited substitute. */
   private vacant(seat: SeatRow): boolean {
     return seat.kind === "civil_disorder" && seat.eliminated === 0 && seat.missed >= LIMITS.vacantAfter;
@@ -1287,7 +1298,7 @@ export class GameRoom extends DurableObject<Env> {
         eliminated: s.eliminated === 1,
         missed: s.missed,
         autopilot,
-        brain: s.kind === "ai" ? aiBrain : autopilot ? "bot" : null,
+        brain: s.kind === "ai" || autopilot ? aiBrain : null,
         handle: s.player_id !== null ? s.name : null,
         present: s.kind === "ai" || present.has(s.power),
         submitted: submitted.has(s.power),
@@ -2492,7 +2503,7 @@ export class GameRoom extends DurableObject<Env> {
     for (const seat of this.seats()) {
       if (seat.eliminated === 1 || !(seat.kind === "ai" || this.autopilot(seat)) || !canAct(game, seat.power)) continue;
       this.writeOrders(phase, seat.power, brain.orders(game, seat.power, meta.id), "bot");
-      if (deliberate && seat.kind === "ai" && this.reserveTurn(phase, seat.power, talks ? ["negotiate", "order"] : ["order"])) {
+      if (deliberate && this.aiPlayed(seat) && this.reserveTurn(phase, seat.power, talks ? ["negotiate", "order"] : ["order"])) {
         asked.push(seat.power);
       } else {
         this.sql.exec("UPDATE seats SET ready = 1 WHERE power = ?", seat.power);
@@ -2580,7 +2591,7 @@ export class GameRoom extends DurableObject<Env> {
     const asked: PowerName[] = [];
     this.atomic(() => {
       // Talks that never reported are over; whatever they cost is settled when they report or expire.
-      const waiting = this.seats().filter((s) => s.kind === "ai" && s.eliminated === 0 && s.ready === 0 && canAct(game, s.power));
+      const waiting = this.seats().filter((s) => this.aiPlayed(s) && s.ready === 0 && canAct(game, s.power));
       for (const seat of waiting) {
         const reserved = this.sql
           .exec<CallRow>("SELECT * FROM agent_calls WHERE phase = ? AND power = ? AND step = 'order' AND dispatched_at IS NULL", phase, seat.power)
@@ -2608,14 +2619,14 @@ export class GameRoom extends DurableObject<Env> {
   private releaseAiSeats(why: string): void {
     const meta = this.meta!;
     if (meta.status !== "active" && meta.status !== "paused") return;
-    const waiting = this.seats().filter((s) => s.kind === "ai" && s.eliminated === 0 && s.ready === 0 && canAct(this.game!, s.power));
+    const waiting = this.seats().filter((s) => this.aiPlayed(s) && s.ready === 0 && canAct(this.game!, s.power));
     this.atomic(() => {
       meta.aiDueAt = null;
       meta.ai = null;
       // Steps that were reserved and will now never be asked for cost nothing: hand them back.
       this.sql.exec("DELETE FROM agent_calls WHERE phase = ? AND dispatched_at IS NULL AND cost_micros IS NULL", this.game!.phase());
       if (waiting.length === 0) return;
-      this.sql.exec("UPDATE seats SET ready = 1 WHERE kind = 'ai' AND eliminated = 0");
+      for (const seat of waiting) this.sql.exec("UPDATE seats SET ready = 1 WHERE power = ?", seat.power);
       this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
     });
     if (waiting.length > 0) this.log("agent_turns_released", { why, powers: waiting.map((s) => s.power) });
@@ -3125,8 +3136,7 @@ export class GameRoom extends DurableObject<Env> {
         (meta.status === "active" || meta.status === "paused") &&
         game.phase() === phase &&
         !!seat &&
-        seat.kind === "ai" &&
-        seat.eliminated === 0 &&
+        this.aiPlayed(seat) &&
         seat.ready === 0 &&
         meta.claudeOff === null &&
         meta.ai?.step === step;
@@ -3249,7 +3259,7 @@ export class GameRoom extends DurableObject<Env> {
         ? "not_active"
         : game.phase() !== phase
           ? "stale_phase"
-          : !seat || seat.kind !== "ai" || seat.eliminated === 1
+          : !seat || !this.aiPlayed(seat)
             ? "not_an_ai_seat"
             : seat.ready === 1
               ? "turn_already_closed"
@@ -3303,7 +3313,7 @@ export class GameRoom extends DurableObject<Env> {
       }
       this.atomic(() => {
         this.sql.exec("UPDATE seats SET ready = 1 WHERE power = ?", power);
-        const waiting = this.seats().some((s) => s.kind === "ai" && s.eliminated === 0 && s.ready === 0 && canAct(game, s.power));
+        const waiting = this.seats().some((s) => this.aiPlayed(s) && s.ready === 0 && canAct(game, s.power));
         if (!waiting) {
           meta.aiDueAt = null;
           meta.ai = null;
