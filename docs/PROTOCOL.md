@@ -273,6 +273,8 @@ A seal protects a player from the other players, not from the server, which must
 | `POST /api/me/recovery` | `{ recoveryCode, issuedAt }`: a new recovery code, shown once; any older code stops working |
 | `POST /api/me/logout` | `{ everywhere? }` ends this device's session, or every session: 204 |
 | `DELETE /api/me/google` | unlinks the Google account: the `GET /api/me` answer, with `account.google` false. The recovery code still works |
+| `GET /api/me/sync` | what follows the player between devices: `{ prefs, prefsAt, sandbox }`. `prefs` is `{ shortcuts?, sound? }`; `sandbox` is `{ savedAt, body }`, the sandbox autosave as text. Each is null until first saved |
+| `PATCH /api/me/sync` | a device's newer copy: `{ prefs?: { at, value }, sandbox?: { savedAt, body } \| { cleared } }`. Each part is kept only if it is newer than the copy held (the latest write wins); `cleared` forgets the sandbox game. A body is at most 240,000 characters. Answers what is held after, as `GET` does |
 | `GET /api/me/games` | `{ games }`: the player's games, live and ended, listed or not, as `{ gameId, power, status, joinedAt, finishedAt, result, score, centers, ratingDelta }` |
 | `GET /api/leaderboard` | `{ ladder, entries, offset, limit, next }`: established ratings, best first, each `{ rank, player, rating, rd, conservative, games, lastGameAt }`. `offset` and `limit` (up to 100) page it |
 | `GET /api/ledger` | `{ entries, offset, limit, next }`: the global trust ledger, most trusted first, each `{ rank, player, trust, games }`, for players with at least three kept or broken pledges |

@@ -14,6 +14,8 @@
  *   POST  /api/me/recovery        a new recovery code, shown once; the old one stops working
  *   POST  /api/me/logout          end this device's session (or every one)
  *   DELETE /api/me/google         unlink the Google account; the recovery code still works
+ *   GET   /api/me/sync            the settings and sandbox game that follow the player between devices
+ *   PATCH /api/me/sync            a device's newer settings or sandbox game (the latest write wins)
  *   GET   /api/me/games           the player's own games, live and ended, listed or not
  *   GET   /api/leaderboard        established ratings, best first, paged by `offset`
  *   GET   /api/ledger             the global trust ledger, paged by `offset`
@@ -37,6 +39,8 @@ import {
   PushSubscriptionRequest,
   PushUnsubscribeRequest,
   RecoverPlayerRequest,
+  SANDBOX_SYNC_MAX,
+  SyncRequest,
   UpdateMeRequest,
   UpdateNotificationPreferences,
 } from "@cabal/protocol";
@@ -58,6 +62,8 @@ const RATINGS_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})\/ratings$/;
 const REPORT_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})\/report$/;
 /** Rooms told about a deletion at once; a player rarely holds more seats than this in all. */
 const FORSAKE_CONCURRENCY = 8;
+/** A sync body: a sandbox game at its longest, its JSON escaping, and room for the rest. */
+const SYNC_BODY_MAX = SANDBOX_SYNC_MAX * 2 + 4096;
 
 export const bearerOf = (request: Request) => request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
 
@@ -205,6 +211,13 @@ async function me(request: Request, env: Env, store: PlayerStore, player: Player
   if (path === "/api/me/google" && request.method === "DELETE") {
     await store.unlinkGoogle(player.id);
     return privateJson(await store.me(player.id, now));
+  }
+  if (path === "/api/me/sync" && request.method === "GET") return privateJson(await store.sync(player.id));
+  if (path === "/api/me/sync" && request.method === "PATCH") {
+    // A sandbox game is the one body here larger than a few kilobytes.
+    const body = SyncRequest.safeParse(await readJson(request, SYNC_BODY_MAX));
+    if (!body.success) return json({ error: "invalid request", issues: body.error.issues }, 400);
+    return privateJson(await store.pushSync(player.id, body.data));
   }
   if (path === "/api/me/games" && request.method === "GET") return privateJson({ games: await store.myGames(player.id) });
   if (path === "/api/me/push" || path === "/api/me/notifications") return notifications(request, env, player, bearer, path, now);

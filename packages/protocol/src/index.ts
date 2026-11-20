@@ -908,6 +908,43 @@ export const MeResponse = PlayerProfile.extend({
 });
 export type MeResponse = z.infer<typeof MeResponse>;
 
+/** Settings that follow a signed-in player to every device. Each is optional: a device sends what it knows. */
+export const SyncedPrefs = z
+  .object({
+    /** The single-key shortcuts are on. */
+    shortcuts: z.boolean(),
+    /** The table's sounds are on. */
+    sound: z.boolean(),
+  })
+  .partial();
+export type SyncedPrefs = z.infer<typeof SyncedPrefs>;
+
+/** The longest sandbox game kept for a player, in characters of its saved form. */
+export const SANDBOX_SYNC_MAX = 240_000;
+
+/** A sandbox game as a device saved it: its autosave, as text, and when it was written. */
+export const SyncedSandbox = z.object({ savedAt: z.number().int().nonnegative(), body: z.string().min(1).max(SANDBOX_SYNC_MAX) });
+export type SyncedSandbox = z.infer<typeof SyncedSandbox>;
+
+/** `GET /api/me/sync`: what follows the player between devices. Nulls are things never saved. */
+export const SyncResponse = z.object({
+  prefs: SyncedPrefs.nullable(),
+  /** When the settings were last changed, ms since the epoch. */
+  prefsAt: z.number().int().nullable(),
+  sandbox: SyncedSandbox.nullable(),
+});
+export type SyncResponse = z.infer<typeof SyncResponse>;
+
+/**
+ * `PATCH /api/me/sync`: a device's newer copy. Each part is kept only when it is newer than the
+ * copy already held (the latest write wins); `sandbox: {cleared: at}` forgets the sandbox game.
+ */
+export const SyncRequest = z.object({
+  prefs: z.object({ at: z.number().int().nonnegative(), value: SyncedPrefs }).optional(),
+  sandbox: z.union([SyncedSandbox, z.object({ cleared: z.number().int().nonnegative() })]).optional(),
+});
+export type SyncRequest = z.infer<typeof SyncRequest>;
+
 /** `GET /api/auth/google`: the deployment's Google client ID, or null when Google sign-in is off. */
 export const GoogleConfigResponse = z.object({ clientId: z.string().nullable() });
 export type GoogleConfigResponse = z.infer<typeof GoogleConfigResponse>;
