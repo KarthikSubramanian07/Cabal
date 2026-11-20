@@ -37,6 +37,8 @@ import {
   NotificationPreferences,
   NotificationsResponse,
   PlayerProfile,
+  PlayerReportResponse,
+  type PlayerReportRequest,
   PlayerSession,
   type PledgeInput,
   type PowerName,
@@ -689,6 +691,9 @@ export function createApi(options: ApiOptions = {}) {
     /** A new recovery code, shown once; the previous one stops working. */
     issueRecoveryCode: (secret: string) => call(RecoveryCodeResponse, "POST", "/api/me/recovery", { token: secret }),
     logout: (secret: string, everywhere = false) => call(z.null(), "POST", "/api/me/logout", { token: secret, body: { everywhere } }),
+    /** Report a player to the maintainers. */
+    reportPlayer: (secret: string, handle: string, report: PlayerReportRequest) =>
+      call(PlayerReportResponse, "POST", `/api/players/${encodeURIComponent(handle)}/report`, { token: secret, body: report }),
     /** Delete the account for good. `handle` must be its handle as it is now. */
     deleteAccount: (secret: string, handle: string) => call(DeleteMeResponse, "DELETE", "/api/me", { token: secret, body: { handle } }),
     myGames: (secret: string) => call(MyGamesResponse, "GET", "/api/me/games", { token: secret }).then((r) => r.games),

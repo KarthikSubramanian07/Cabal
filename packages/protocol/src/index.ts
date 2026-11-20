@@ -944,6 +944,45 @@ export const DeleteMeResponse = z.object({
 });
 export type DeleteMeResponse = z.infer<typeof DeleteMeResponse>;
 
+/** Why a player reports another. */
+export const ReportReason = z.enum(["cheating", "abuse", "multi_account", "other"]);
+export type ReportReason = z.infer<typeof ReportReason>;
+
+/**
+ * `POST /api/players/:handle/report` (signed in): tell the maintainers about a player. One report
+ * per reporter, player and day counts; more are accepted and change nothing.
+ */
+export const PlayerReportRequest = z.object({
+  reason: ReportReason,
+  /** What happened, in the reporter's words. Read by a maintainer, never shown to anyone else. */
+  note: z.string().trim().max(500).optional(),
+  /** The table it happened at, if any. */
+  gameId: z.string().regex(/^[A-Z0-9]{6}$/).optional(),
+});
+export type PlayerReportRequest = z.infer<typeof PlayerReportRequest>;
+
+export const PlayerReportResponse = z.object({ received: z.literal(true) });
+export type PlayerReportResponse = z.infer<typeof PlayerReportResponse>;
+
+/** `GET /api/reports` (admin): the most recent reports, newest first, for review. */
+export const ReportsResponse = z.object({
+  reports: z.array(
+    z.object({
+      id: z.number().int(),
+      /** Null once the reporter has deleted their account. */
+      reporter: z.string().nullable(),
+      subject: z.string(),
+      reason: ReportReason,
+      note: z.string().nullable(),
+      gameId: z.string().nullable(),
+      at: z.number().int(),
+    }),
+  ),
+  /** Days, newest first, on which one network address made more accounts than the review threshold. */
+  busyOrigins: z.array(z.object({ day: z.number().int(), accounts: z.number().int() })),
+});
+export type ReportsResponse = z.infer<typeof ReportsResponse>;
+
 /** `GET /api/leaderboard`: established ratings, best first. */
 export const LeaderboardResponse = z.object({
   ladder: z.string(),
