@@ -45,7 +45,7 @@ import { DispatchBoard, useDispatches } from "../toast/DispatchBoard.jsx";
 import { useNarrow } from "../app/useNarrow.js";
 import { filedLine } from "./settle.js";
 import { useDesk } from "./useDesk.js";
-import { sameOrders, sketchCount, sketchGhosts, sketchMarks, sketchPowers, sketchSyncLine } from "./sketch.js";
+import { ordersOwed, sameOrders, sketchCount, sketchGhosts, sketchMarks, sketchPowers, sketchSyncLine } from "./sketch.js";
 import { WhatIfPanel } from "./WhatIfPanel.jsx";
 
 type Tab = "orders" | "press" | "table";
@@ -564,12 +564,14 @@ function Floor({
   // ---- the order desk's figures
 
   const orderable = Object.keys(desk.legal).filter((u) => u !== "");
-  const due = kind === "A" ? Math.abs(desk.allowance) : orderable.length;
+  const due = ordersOwed(kind, desk.legal, desk.allowance);
   const givenCount = Object.keys(desk.book).length;
   /** The units the choices under the map offer: the guessed power's while sketching. */
   const activeUnits = sketching && active ? Object.keys(ctx.legal[active] ?? {}).filter((u) => u !== "") : orderable;
   const activeBook = sketching && active ? (whatIf.orders[active] ?? {}) : desk.book;
   const activeAllowance = sketching && active ? (everyone?.allowance[active] ?? 0) : desk.allowance;
+  /** What the order tools offer follows the power being written for: a guessed one's retreat too. */
+  const activeDue = sketching && active ? ordersOwed(kind, ctx.legal[active], activeAllowance) : due;
 
   /** Open a sketch from the orders written so far, or close it and leave them as they were. */
   const toggleWhatIf = () => {
@@ -730,7 +732,7 @@ function Floor({
               />
             ) : null}
             <div className="toolbar" role="group" aria-label="Order tools">
-              {kind === "M" && playing && due > 0 ? (
+              {kind === "M" && playing && activeDue > 0 ? (
                 <>
                   <button type="button" className="tool" aria-pressed={draft.step === "unit"} onClick={() => mode("move")}>
                     Move <kbd>M</kbd>
@@ -751,7 +753,7 @@ function Floor({
                   </button>
                 </>
               ) : null}
-              {kind === "R" && playing && due > 0 ? (
+              {kind === "R" && playing && activeDue > 0 ? (
                 <button type="button" className="tool" onClick={() => apply(disbandSelected(ctx, draft))}>
                   Disband <kbd>D</kbd>
                 </button>
