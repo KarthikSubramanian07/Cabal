@@ -8,7 +8,7 @@
  * METRICS_RECORD=<where> also writes the figure into tools/metrics/metrics.json (one line per
  * screen), e.g. `METRICS_RECORD=production LIVE_ORIGIN=https://playcabal.pages.dev`.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 // @ts-expect-error: a plain ES module with no type declarations
 import { line, record } from "../../../tools/metrics/lib/report.mjs";
 import { chooseHandle, primary, tab, uniqueHandle } from "./room.js";
@@ -17,6 +17,13 @@ const TARGET_MS = 60_000;
 
 test.describe("phase 1 metrics, live", () => {
   test("the front page to a game in progress in under a minute, and the browser's beacon", async ({ page }, info) => {
+    // Answers to a request the page timed: an orders.ack carrying the id its socket sent.
+    let acks = 0;
+    page.on("websocket", (ws) =>
+      ws.on("framereceived", ({ payload }) => {
+        if (/"t":"orders\.ack"/.test(String(payload)) && /"id":"c\d+"/.test(String(payload))) acks += 1;
+      }),
+    );
     // Keep a copy of what each beacon carries (the network log does not show a beacon's body).
     await page.addInitScript(() => {
       const w = window as unknown as { __beacons: Promise<string>[] };
@@ -44,9 +51,12 @@ test.describe("phase 1 metrics, live", () => {
     if (where) record(line({ id: "landing_to_game", value: `${(ms / 1000).toFixed(1)} s`, pass: ms < TARGET_MS, where: `${where}, ${info.project.name}` }));
     expect(ms).toBeLessThan(TARGET_MS);
 
-    // An order filed is timed from orders.set to orders.ack.
+    // An order filed is timed from orders.set to orders.ack. Orders are filed shortly after a
+    // change, and the line can already say "on file" for the empty set, so wait for the answer
+    // to this filing itself, carrying the request id the browser timed it by.
     await page.getByRole("button", { name: "Hold the rest" }).click();
     await expect(page.locator(".sync-line")).toHaveText("Your orders are on file with the server.");
+    await expect.poll(() => acks, { timeout: 20_000 }).toBeGreaterThan(0);
     await expect(primary(page)).toBeEnabled();
 
     // Leaving the page sends what was measured, as one anonymous beacon the server accepts.
