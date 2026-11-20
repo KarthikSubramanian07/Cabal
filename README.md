@@ -6,181 +6,203 @@
   <img src="docs/brand/wordmark.svg" alt="CABAL" width="360" />
 </picture>
 
-**Diplomacy with receipts.** Seven powers. One board. Every promise can be sealed, verified, and held against you.
+**Diplomacy with receipts.** The classic game of alliances and betrayal in your browser, where every promise can be sealed in wax and every broken one goes on the record.
 
 [![CI](https://github.com/KarthikSubramanian07/Cabal/actions/workflows/ci.yml/badge.svg)](https://github.com/KarthikSubramanian07/Cabal/actions/workflows/ci.yml)
 [![Stress](https://github.com/KarthikSubramanian07/Cabal/actions/workflows/stress.yml/badge.svg)](https://github.com/KarthikSubramanian07/Cabal/actions/workflows/stress.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-c9a227)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-c8a24a)](LICENSE)
+[![Play](https://img.shields.io/badge/play-playcabal.pages.dev-121110)](https://playcabal.pages.dev)
+![DATC](https://img.shields.io/badge/DATC_v3.0-171%2F171-c8a24a)
 ![Rust](https://img.shields.io/badge/Rust-1.97-b7410e?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/WebAssembly-wasm--bindgen-654ff0?logo=webassembly&logoColor=white)
-![React 19](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=white)
-![Cloudflare](https://img.shields.io/badge/Cloudflare-Pages%20%2B%20Durable%20Objects-f38020?logo=cloudflare&logoColor=white)
-![DATC](https://img.shields.io/badge/DATC-v3.0-2f9e44)
+![Cloudflare](https://img.shields.io/badge/Cloudflare-Workers%20%C2%B7%20Durable%20Objects%20%C2%B7%20D1-f38020?logo=cloudflare&logoColor=white)
 
-`diplomacy` `negotiation` `strategy-game` `rust` `webassembly` `cloudflare-workers` `durable-objects` `react` `llm-agents` `datc` `game-theory`
+`diplomacy` `board-game` `negotiation` `rust` `webassembly` `cloudflare-workers` `durable-objects` `d1` `react` `web-push` `game-ai` `datc`
 
-[Play](https://playcabal.pages.dev) · [The sandbox](https://playcabal.pages.dev/sandbox) · [The plan](docs/PLAN.md) · [Architecture](docs/ARCHITECTURE.md) · [Rules decisions](docs/RULES.md) · [Protocol](docs/PROTOCOL.md) · [ADRs](docs/adr/)
+**[Play now](https://playcabal.pages.dev)** · [The sandbox](https://playcabal.pages.dev/sandbox) · [The Ledger](https://playcabal.pages.dev/ledger) · [Architecture](docs/ARCHITECTURE.md) · [Protocol](docs/PROTOCOL.md) · [Rules decisions](docs/RULES.md) · [ADRs](docs/adr/)
 
 </div>
 
 <p align="center">
-  <img src="docs/images/board-orders.png" width="900" alt="The classic Diplomacy board in Cabal with Spring 1901 orders drawn as arrows and the order sidebar" />
+  <img src="docs/images/front-door.png" width="900" alt="Cabal's front door: SHAKE HANDS. SEAL IT. BREAK IT. beside the English Channel, where England's fleet sails into the water it promised to leave empty" />
 </p>
 
 ---
 
-Diplomacy is the greatest negotiation game ever designed and every online version of it feels like a forum from 2006. Cabal keeps the rules exactly (a Rust adjudicator that passes the full Diplomacy Adjudicator Test Cases) and rebuilds everything around them: the classic board you can order from with two clicks, press with cryptographic pledges, a trust ledger that follows you between games, secret cabals, vendettas, ghosts who keep talking after they die, and AI players who negotiate through the same protocol you do.
+Spring, 1901. Seven great powers, one map of Europe, and nothing to stop you lying to all six of your neighbours. Diplomacy has no dice and no luck: every player writes orders in secret, every order resolves at once, and the only way to win is to talk someone into trusting you and then decide whether to deserve it.
+
+It is the greatest negotiation game ever designed, and online it has mostly lived in forums. Cabal keeps the rules exactly as tournament players know them and rebuilds the table around them. It loads in a browser tab, plays on a phone, fills empty seats with a bot that never stalls, and adds the one thing the board never had: proof of who kept their word.
 
 ## What makes it Cabal
 
-| Mechanic | What it does |
-|---|---|
-| **Pledges** | Attach a sealed commitment to specific orders to any message. After adjudication the engine stamps it `kept` or `broken`. Stabs become public record. |
-| **Trust ledger** | A public honour score built from pledges across games, with Bayesian shrinkage so a newcomer starts neutral. Lie all you want; it will be on your profile. |
-| **Cabals** | Optional mode. Two or three players are secretly dealt a shared hidden win condition. Revealed at the end. |
-| **Vendettas** | Stake rating on a declared goal against a named power with a deadline. Miss it and they collect. |
-| **Ghost votes** | Eliminated players keep press and one draw vote. The dead stay dangerous. |
-| **AI seats** | Any seat can be an AI, so tables always fill. The default is a free, instant heuristic bot written in Rust; a game can opt in to Claude powered agents with a persona, a private diary and a memory of who lied to it. |
-| **No dead games** | Sealed default orders, ready-to-advance deadlines, substitutes and AI takeover after two missed phases. |
+**Seals.** Any dispatch can carry a sealed pledge: the exact orders you promise to give, committed on your own device as a BLAKE3 hash with a random nonce. Nobody can read a seal before the phase resolves, and nobody, the server included, can change one afterwards.
 
-None of these change the rules. They are layers that read the adjudication result. See [ADR 0004](docs/adr/0004-cabal-layer-above-adjudication.md).
+**Receipts.** When the phase resolves, every seal is opened and stamped **kept**, **broken** or **void**, and every order on the board gets a reason in plain words: *bounced with the unit from Warsaw, equal strength, so nobody got in*; *support cut by F Kie*; *no convoy path*. Nobody has to argue about what happened.
+
+**The Ledger.** Every seal opened in a rated game goes on a public record that follows a player from table to table. Trust is (kept + 5) ÷ (kept + broken + 10), so everyone starts at 50 percent and one promise can neither make nor ruin a name. Skill is rated separately, with a weighted pairwise Glicko-2 ([ADR 0011](docs/adr/0011-weighted-pairwise-glicko-2.md)), and so is reliability: whether you file your orders on time.
+
+**The bot that always plays.** Every empty seat, and every seat whose player has gone quiet, is played by a deterministic heuristic bot written in Rust that searches its candidate orders on the real adjudicator. It costs nothing, answers instantly and never holds a phase up. Press *Play now* and you are at a full table with six of them in seconds. See [docs/BOT.md](docs/BOT.md).
+
+**Claude, when you ask for it.** A table can opt in to Claude brains instead (`aiBrain: "claude"`): agents with a persona, a private diary and a memory of who lied to them, negotiating through the same protocol a human uses. Their turns run through a queue under a hard spend cap per game and a daily budget for the whole deployment, and any failure leaves the bot's orders standing. It is off unless the server has an API key.
+
+**No dead games.** Live, daily or async clocks (ten minutes, a day or two days a move by default), ready-to-advance, sealed default orders, civil disorder covered by the bot after two missed phases, substitutes after four, and a game that no human is playing ends on its own instead of playing itself forever.
+
+None of this changes the rules. Every layer reads the adjudication result and never writes it ([ADR 0004](docs/adr/0004-cabal-layer-above-adjudication.md)). Cabals, vendettas and ghost votes are next ([plan](docs/PLAN.md)).
 
 ## The board
 
-The board is the one Diplomacy players know, drawn fresh from real geography. `tools/mapgen` assigns every Natural Earth region (public domain) to one of the 75 classic provinces, dissolves and simplifies them with shared borders intact, cuts the seas along the printed board's straight lines, and checks every drawn border against the engine's adjacency table. Nothing is traced from anyone else's artwork, so the map ships under MIT with the rest of the code.
-
-| Orders, then receipts | On a phone |
+| Spring 1901, adjudicated | On a phone |
 |---|---|
-| <img src="docs/images/board-receipts.png" width="560" alt="Spring 1901 results: bounces marked with a vermilion cross and the reason for every order" /> | <img src="docs/images/board-phone.png" width="200" alt="The board on a phone with pinch zoom controls" /> |
+| <img src="docs/images/board-receipts.png" width="560" alt="Spring 1901 resolved on the classic board: bounces marked with a cross, and the results panel giving the reason for every order" /> | <img src="docs/images/board-phone.png" width="210" alt="The same phase on a phone: the board, five failed orders counted under it, and Continue to Fall 1901" /> |
 
-Ordering works the way Backstabbr players expect. Click a unit, then where it goes. Click it twice to hold. Press <kbd>S</kbd> to support or <kbd>C</kbd> to convoy, and the buttons under the map do the same on touch screens. Only legal orders are ever offered, fleets moving to Spain, Bulgaria or St Petersburg get a coast picker, and every phase can be replayed, undone, exported and imported as a MILA saved game.
+The map is the one Diplomacy players know, drawn fresh from real geography. `tools/mapgen` assigns every Natural Earth region (public domain) to one of the 75 classic provinces, dissolves them with shared borders intact, cuts the seas along the printed board's lines and checks every drawn border against the engine's adjacency table. Nothing is traced from anyone's artwork, so the map ships under MIT with the code.
 
-See [tools/mapgen/README.md](tools/mapgen/README.md) for how the map is built and [docs/BRAND.md](docs/BRAND.md) for the palette and wordmark.
+Ordering works the way Backstabbr players expect: click a unit, then where it goes; click it twice to hold; <kbd>S</kbd> to support, <kbd>C</kbd> to convoy, or the buttons under the map on a touch screen. Only legal orders are offered, fleets bound for Spain, Bulgaria or St Petersburg get a coast picker, and every phase can be replayed, undone, exported and imported as a MILA saved game.
+
+<p align="center">
+  <img src="docs/images/board-orders.png" width="900" alt="The sandbox before adjudication: every power's Spring 1901 orders drawn as arrows, the order table by power, and Move, Support, Convoy, Hold and What if under the map" />
+</p>
 
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TB
   subgraph Browser
-    UI[React 19 UI]
-    W1[cabal-engine.wasm]
+    UI[React 19 app<br/>board, press, seals, Ledger]
+    W1[cabal-engine.wasm<br/>legality and previews]
     UI --> W1
   end
-  subgraph Cloudflare
-    Pages[(Pages: playcabal)]
-    API[Worker: cabal-server]
-    DO[(Durable Object\nGameRoom)]
-    W2[cabal-engine.wasm\n+ heuristic bot]
-    SQL[(SQLite)]
-    REG[(Durable Object\nRegistry)]
-    Q[[Queue: agent turns]]
-    DO --> W2
-    DO --> SQL
-    Pages -->|/api, service binding| API
-    API --> DO
-    API --> REG
-    DO -->|game over| REG
-    DO --> Q
+
+  GW[Pages: playcabal<br/>gateway worker]
+
+  subgraph Worker["Worker: cabal-server"]
+    API[router<br/>accounts, lobby, rate limits]
+    subgraph Room["GameRoom: one per game"]
+      SM[phase state machine<br/>sockets, alarm, SQLite]
+      W2[cabal-engine.wasm<br/>adjudication and the Rust bot]
+      SM --> W2
+    end
+    REG[(Registry Durable Object<br/>Claude budget)]
+    QC[queue consumer]
   end
-  UI <-->|HTTPS and WebSocket, one origin| Pages
-  Q -->|opt-in| Claude[(Anthropic API)]
+
+  D1[(D1: cabal<br/>games, players, ratings,<br/>Ledger, push subscriptions)]
+  Q[[Queue: cabal-agent-turns]]
+  AI[(Anthropic API)]
+  PS[(browser push services)]
+
+  UI <-->|"/api over HTTPS and WebSocket, protocol v2"| GW
+  GW -->|service binding SERVER| API
+  API --> SM
+  API --> D1
+  SM -->|finished games| D1
+  SM -->|admission| REG
+  SM -->|opt-in Claude turns| Q
+  Q --> QC
+  QC <--> AI
+  QC -->|better orders, or none| SM
+  SM -->|Web Push| PS
+  PS --> UI
 ```
 
-- **One engine, two hosts.** The Rust crate is compiled once to WebAssembly. The browser uses it for instant legality checks and what-if previews; the Durable Object uses the same bytes as the authority. They cannot disagree.
-- **One object owns one game.** Positions, orders, press, pledges, the deadline alarm and every WebSocket live in a single Durable Object with SQLite. Adjudicate, persist, broadcast: one transaction, no hops.
-- **Cross-game data in one Registry object.** Accounts, weighted pairwise Glicko ratings, reliability, trust ledgers and match history live in a singleton SQLite-backed Durable Object ([ADR 0009](docs/adr/0009-registry-durable-object-instead-of-d1.md)). No D1.
-- **One origin.** The browser only talks to `playcabal.pages.dev`; Pages forwards `/api` (HTTP and WebSocket) to the Worker through a service binding, so the content security policy stays `connect-src 'self'`.
+- **One engine, two hosts.** `crates/cabal-engine` is compiled once to WebAssembly (about 384 KB gzipped with the bot inside; CI fails above 409 KB). The browser uses it for instant legality checks and what-if previews, the `GameRoom` uses the same bytes as the authority, so they cannot disagree.
+- **The bot lives next to the rules.** `crates/cabal-bot` is compiled into the same module and exported as `botOrders`. The room puts the bot's orders on file the moment a phase opens, so an AI seat is never late.
+- **One object owns one game.** Positions, orders, press, seals, the deadline alarm and every socket live in a single SQLite-backed Durable Object. Adjudicate, persist and broadcast is one transaction; a retried alarm can never resolve a phase twice.
+- **Cross-game data in D1.** Finished games, public listings, guest players, ratings, reliability, the Ledger and push subscriptions live in the D1 database `cabal`, behind two narrow ports (`GameIndex` and `PlayerStore`) with plain SQL in numbered migrations ([ADR 0010](docs/adr/0010-d1-index-registry-for-the-claude-budget.md)). A room hands its finished game over through a durable outbox; recording is idempotent and a game is rated at most once.
+- **One small Registry.** A singleton `Registry` Durable Object stays deployed for the one job that wants a single writer: the deployment-wide Claude budget, where two games asking at once must never both take the last place.
+- **One origin.** The browser only ever talks to `playcabal.pages.dev`. The Pages gateway worker serves the prerendered front door and app shell, answers `Accept: text/markdown` for agents, and forwards `/api/*`, WebSocket upgrades included, to `cabal-server` through a service binding, so the content security policy stays `connect-src 'self'`.
+- **Protocol v2.** One WebSocket per client, zod schemas in `@cabal/protocol`, a first `hello` frame to bind a seat (tokens never appear in URLs), a sequence number on every broadcast, and `sync { since }` to resume after a dropped connection. A test fails when [PROTOCOL.md](docs/PROTOCOL.md) and the schemas disagree.
+- **Web Push without a library.** RFC 8291 encryption and RFC 8292 VAPID with Web Crypto alone. A player who is away hears that a phase resolved, that a dispatch arrived or that orders are due, and never what the orders or the press said.
 
-Full detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The Registry, the same-origin proxy and the Rust bot are phase 1 work in progress; the table below says what `main` has today.
+The full picture, with the per-game schema, the alarm, identity, notifications and metrics, is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## The engine
 
-`crates/cabal-engine` is a pure, deterministic Diplomacy adjudicator.
+`crates/cabal-engine` is a pure, deterministic Diplomacy adjudicator with no I/O and no randomness.
 
-```mermaid
-flowchart LR
-  P[parse\nMILA notation] --> N[normalise\ncoasts, unit types]
-  N --> L[legality\nstrip illegal, inject holds]
-  L --> R[resolve\nKruijswijk partial information]
-  R --> E[explain\nper-order reasons + dependency graph]
-  E --> RT[retreats]
-  RT --> B[builds + civil disorder]
-  B --> S[next phase state]
-```
-
-- **Algorithm.** DATC v3.0 chapter 5 partial information resolver: every order is a Boolean equation over attack, hold, defend and prevent strengths; `resolve` memoises, detects dependency cycles and applies the two backup rules (circular movement succeeds, convoy paradoxes fail the convoys per Szykman). No "cut supports first" heuristics anywhere.
-- **Explanations, not Booleans.** Every outcome says why: `bounced by A Mun`, `support cut by F Kie`, `no convoy path`, `friendly fire`, `paradox`. The UI renders the dependency graph.
-- **Editions as data.** 1971, 1982, 2023 and DPTG rulebooks differ only in `Rulebook` fields (convoy intent, civil disorder distance).
-- **Tests.** 171 DATC v3.0 cases across movement, retreat and build phases, vendored with attribution from the MIT `diplomacy` crate, checked for dislodgements, standoffs and retreats as well as order outcomes; property tests for order-independence, no-panic and whole-game round trips; replay fixtures in three tiers, including a complete 35-phase published Cicero game; criterion benches; fuzz targets on the parser.
-- **Verifiable saves.** A saved game records its rulebook, outcome, press and pledges. `cabal replay` and `verifySaved` report every divergence from a record; `Game.resume` and snapshots restore a game without adjudicating its past, so a corrected ruling never breaks a game in flight.
-- **Interop.** Orders and saved games use the MILA / Cicero notation, so every published AI Diplomacy harness understands Cabal games.
+- **Kruijswijk's partial information algorithm** from DATC v3.0 chapter 5: every order is a Boolean equation over attack, hold, defend and prevent strengths, resolved with memoisation, cycle detection and the two backup rules (circular movement succeeds; convoy paradoxes fail the convoys, per Szykman). No "cut supports first" heuristics.
+- **Explanations, not Booleans.** Every outcome says why, and `cabal explain --graph` draws the dependency graph the resolver actually walked.
+- **178 adjudication cases:** all 171 Diplomacy Adjudicator Test Cases v3.0 and 7 of Cabal's own, checked for dislodgements, standoffs and retreats as well as order outcomes; an independent position oracle transcribed from godip; property tests; replay fixtures including a complete published Cicero game; criterion benches with a regression gate; fuzz targets.
+- **Editions as data.** The 1971, 1982, 2023 and DPTG rulebooks differ only in `Rulebook` fields.
+- **Interop.** Orders and saved games use the MILA / Cicero notation, so published AI Diplomacy harnesses can read Cabal games.
 
 ```sh
-cargo run -p cabal-cli -- datc --report   # adjudicate the DATC corpus: pass, fail and skip totals per section
-cargo run -p cabal-cli -- replay crates/cabal-engine/tests/data/games   # replay saved games, report every divergence
+cargo run -p cabal-cli -- datc --report        # every case, per section; the last line reads "total: 178 passed"
 cargo run -p cabal-cli -- explain "ENG: F NTH - HOL" "ENG: A BEL S F NTH - HOL" "GER: A HOL H"
-cargo run --release -p cabal-cli -- arena --games 100   # bot against bot on every core, with a strength table
-```
-
-## What is built today
-
-| Piece | State |
-|---|---|
-| `cabal-engine` | 171 of 171 DATC v3.0 cases, property tests, benches, verifiable MILA saved games, lossless snapshots, seals and receipts |
-| `cabal-wasm`, `@cabal/engine` | one wasm module for browser and Workers (372 KB gzipped with the bot inside, CI fails above 409 KB), generated TypeScript types |
-| `cabal-bot`, `cabal arena` | a deterministic heuristic player at three levels, exported as `botOrders`, and a native arena that plays 6 games a second and checks every order; see [docs/BOT.md](docs/BOT.md) |
-| `@cabal/protocol` | zod schemas for every frame, settings, pledges and scoring |
-| `apps/server` | GameRoom Durable Object: seats, deadlines, orders, press, sealed pledges with receipts, replay export |
-| `apps/web` | the front door (prerendered, with Play now against six bots), guest accounts with recovery codes, live game rooms, player records with rating history, the Ledger, replays of finished games, push notifications, and the classic board sandbox at `/sandbox`: click-to-order, receipts with reasons, phase replay, MILA import and export, phone and desktop |
-| `tools/mapgen` | the board itself, generated from Natural Earth and checked against the engine's borders |
-| `@cabal/agents` | Claude players with narrative prompts, structured decisions and legal order validation |
-
-## Repository
-
-```
-crates/cabal-engine   Rust rules engine (geo, orders, parser, resolver, phases, json, pledges)
-crates/cabal-wasm     wasm-bindgen + tsify bindings, TypeScript types generated from Rust
-crates/cabal-bot      the heuristic player: tactical candidates searched on the real adjudicator
-crates/cabal-cli      cabal CLI: datc, explain, legal, replay, arena, version
-packages/engine       @cabal/engine   npm wrapper for the wasm build
-packages/protocol     @cabal/protocol zod schemas for the WebSocket and HTTP protocol
-packages/agents       @cabal/agents   Claude powered player harness
-apps/web              @cabal/web      Vite + React 19 on Cloudflare Pages
-apps/server           @cabal/server   Worker + GameRoom Durable Object
-tools/mapgen          board generator: Natural Earth to board.json
-docs                  plan, architecture, rules, protocol, brand, ADRs
+cargo run -p cabal-cli -- replay crates/cabal-engine/tests/data/games
+cargo run --release -p cabal-cli -- arena --games 100   # the bot against itself, with a strength table
 ```
 
 ## Quickstart
 
+You need Rust (the toolchain file picks 1.97 and the wasm target), `wasm-pack`, Node 24 and pnpm.
+
 ```sh
 rustup show && cargo install wasm-pack
 corepack enable && pnpm install
-pnpm engine:build     # cabal-engine -> packages/engine/pkg
-pnpm dev              # web :5173, server :8787
-cargo test --workspace && pnpm check
+pnpm engine:build     # cabal-engine and the bot to packages/engine/pkg
+pnpm dev              # the site on :5173, cabal-server on :8787 with a local D1 database
 ```
+
+Open http://localhost:5173 and press *Play now*. The dev server proxies `/api` to the local Worker exactly as the gateway does in production. Claude seats stay off unless you set `ANTHROPIC_API_KEY`; push stays off unless you set a VAPID key pair (see [apps/server/README.md](apps/server/README.md)).
+
+## Testing
+
+| Command | What it proves |
+|---|---|
+| `cargo test --workspace` | the 178 adjudication cases, the godip oracle, property tests, replays, the bot's golden transcript |
+| `pnpm check` | typecheck, lint, and the unit suites, including the Worker suites inside workerd against real Durable Objects, alarms, D1 and the queue |
+| `pnpm test:e2e` | the Playwright suite against the built site, every test on a desktop and on a phone, with axe accessibility checks |
+| `pnpm test:e2e:live` | the site against `cabal-server` under `wrangler dev`: the front door, the lobby, whole turns and a full game, desktop and phone |
+
+CI runs all of it on every pull request, plus the wasm and Worker size budgets, a benchmark gate, a GameRoom cold start gate and a credential-free `wrangler deploy --dry-run`. The nightly Stress workflow fuzzes the parser, runs the property tests with a larger budget and plays 300 bot games, failing on any illegal order or replay divergence. No test ever calls a paid API.
+
+The number of cases quoted on the site, in this README and in the docs is checked against the fixtures themselves (`apps/web/src/app/adjudication.test.ts`), so it cannot drift.
 
 ## Deploying
 
-Merging to `main` does not deploy. A maintainer runs `pnpm deploy:all` from a green `main`, and every pull request bundles the Worker with a credential-free `wrangler deploy --dry-run` under a size budget. The runbook (previews, rollback, the health check, Durable Object migrations) is in [CONTRIBUTING.md](CONTRIBUTING.md#deploying) and the reasoning in [ADR 0008](docs/adr/0008-manual-wrangler-deploys.md).
+Merging to `main` deploys nothing. A maintainer runs one command from a green `main`:
 
-## Roadmap
+```sh
+pnpm deploy:all   # D1 migrations, then cabal-server, then the site to Pages
+```
 
-| Phase | Scope | Status |
-|---|---|---|
-| 0 | Foundation: DATC complete engine, wasm, protocol, GameRoom server, classic board sandbox, Claude players, docs, CI | done |
-| 1 | A complete ranked game end to end on playcabal.pages.dev: seven issues across three subteams, Adjudicators, Couriers and Cartographers ([plan](docs/PLAN.md), [onboarding](docs/ONBOARDING.md)) | onboarding |
-| 2 | Cabal layer: cabals, vendettas, ghost votes, press modes, variants, spectators | planned |
-| 3 | Prediction markets, tournaments, streaming overlay, seasonal ladders | planned |
+CI holds no Cloudflare credentials ([ADR 0008](docs/adr/0008-manual-wrangler-deploys.md)). The runbook, with previews, rollback, the health check and both kinds of migration, is in [CONTRIBUTING.md](CONTRIBUTING.md#deploying).
 
-The full plan, with exit criteria per issue and a risk register, is in [docs/PLAN.md](docs/PLAN.md).
+## Project layout
 
-## Research this stands on
+```
+crates/cabal-engine   the rules: geo, orders, parser, resolver, phases, saved games, pledges
+crates/cabal-bot      the heuristic player, searched on the real adjudicator
+crates/cabal-wasm     wasm-bindgen bindings; TypeScript types generated from Rust
+crates/cabal-cli      cabal: datc, explain, legal, replay, arena
+packages/engine       @cabal/engine     the wasm build as an npm package
+packages/protocol     @cabal/protocol   zod schemas and the typed client for protocol v2
+packages/agents       @cabal/agents     Claude players: personas, diaries, legal order repair
+apps/server           @cabal/server     Worker, GameRoom and Registry, D1 migrations, Web Push
+apps/web              @cabal/web        Vite and React 19 on Pages, the gateway worker, the service worker
+tools/mapgen          the board, from Natural Earth to board.json
+fuzz                  cargo-fuzz targets
+docs                  architecture, protocol, rules, bot, performance, brand, ADRs
+```
 
-Before writing code we read the adjudicators of the MILA `diplomacy` engine, `godip`, the MIT `diplomacy` crate, `stpsyr` and jDip, the DATC v3.0 and "The Math of Adjudication" by Lucas Kruijswijk, the Cicero, DipNet, SearchBot, Welfare Diplomacy, DipLLM and AI Diplomacy papers and harnesses, and the feature sets and complaints of webDiplomacy, Backstabbr, Playdiplomacy, Diplicity and Conspiracy. Thirty-two catalogued real-world adjudication bugs from those projects' issue trackers became regression tests here.
+## Contributing
 
-Test data attribution: the DATC v3.0 corpus and standard map province tables are derived from [TedDriggs/diplomacy](https://github.com/TedDriggs/diplomacy) (MIT). The DATC itself is by Lucas B. Kruijswijk. The independent oracle corpus transcribes test positions from [zond/godip](https://github.com/zond/godip) (GPL-3.0) and is test-only data that ships in no build; the Cicero import fixture is an excerpt of a [Meta Cicero](https://github.com/facebookresearch/diplomacy_cicero) redacted game (MIT). Details and licence terms are in [crates/cabal-engine/data/NOTICE.md](crates/cabal-engine/data/NOTICE.md).
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/ONBOARDING.md](docs/ONBOARDING.md). Rules questions are settled by DATC v3.0 first and [docs/RULES.md](docs/RULES.md) second; engine changes ship with tests; every order outcome carries an explanation; and the brand is ink, bone, brass and vermilion ([docs/BRAND.md](docs/BRAND.md)), with vermilion kept for failure and betrayal.
+
+## Credits
+
+Cabal is built by its contributors:
+
+- [KarthikSubramanian07](https://github.com/KarthikSubramanian07), who started it and maintains it.
+- [justinobomeghie](https://github.com/justinobomeghie): order normalisation, the godip oracle, fuzzing and the explanation graph in the engine, and the GameRoom's complete lifecycle on the server.
+- [mattsu-sketch](https://github.com/mattsu-sketch): replay fixtures, variant maps, fog of war views, the benchmark gate, convoy route choice, typed MILA orders with autocomplete, animated adjudication and phase history playback.
+- [Froggo21](https://github.com/Froggo21): the web lobby, the games room and the installable app shell.
+- [DRL49erman2](https://github.com/DRL49erman2): the agents' decision records, cost estimates and token accounting.
+
+It stands on other people's work. Before writing code we read the adjudicators of the MILA `diplomacy` engine, godip, the MIT `diplomacy` crate, stpsyr and jDip; the DATC and "The Math of Adjudication" by Lucas Kruijswijk; the Cicero, DipNet, SearchBot, Welfare Diplomacy, DipLLM and AI Diplomacy papers and harnesses; and the feature lists and complaints of webDiplomacy, Backstabbr, Playdiplomacy, Diplicity and Conspiracy. Thirty-two real adjudication bugs from those projects' issue trackers became regression tests here.
+
+Test data: the DATC v3.0 corpus and the standard map's province tables are derived from [TedDriggs/diplomacy](https://github.com/TedDriggs/diplomacy) (MIT); the DATC itself is by Lucas B. Kruijswijk. The oracle corpus transcribes positions from [zond/godip](https://github.com/zond/godip) (GPL-3.0) and is test-only data that ships in no build; the Cicero fixture is an excerpt of a [Meta Cicero](https://github.com/facebookresearch/diplomacy_cicero) game (MIT). Details are in [crates/cabal-engine/data/NOTICE.md](crates/cabal-engine/data/NOTICE.md). The map is drawn from [Natural Earth](https://www.naturalearthdata.com/) (public domain). Diplomacy was designed by Allan B. Calhamer; Cabal is an independent project and is not affiliated with its publishers.
 
 ## License
 

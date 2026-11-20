@@ -2,7 +2,7 @@
 
 > Shake hands. Seal it. Break it. Cabal is the classic game of Diplomacy on the 1901 board, played in the browser against six bots or with friends, with promises sealed in wax and a Ledger of who kept their word.
 
-Cabal is a browser Diplomacy game. Seven great powers write their orders in secret and every order resolves at once, adjudicated by a Rust engine that passes all 171 Diplomacy Adjudicator Test Cases and gives a reason for every bounce, cut support and disrupted convoy. A player can attach a seal to a promise: the exact orders they will give, committed on their own device. When the phase resolves, every seal is opened and stamped kept, broken or void, and the Ledger keeps each player's record across every game.
+Cabal is a browser Diplomacy game. Seven great powers write their orders in secret and every order resolves at once, adjudicated by a Rust engine that passes all 178 of its adjudication test cases (the 171 Diplomacy Adjudicator Test Cases and 7 of its own) and gives a reason for every bounce, cut support and disrupted convoy. A player can attach a seal to a promise: the exact orders they will give, committed on their own device. When the phase resolves, every seal is opened and stamped kept, broken or void, and the Ledger keeps each player's record across every game.
 
 ## Play
 
