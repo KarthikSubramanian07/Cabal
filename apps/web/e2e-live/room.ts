@@ -22,9 +22,18 @@ export interface Seat {
   name: string;
 }
 
+/**
+ * A client address of its own for a table made over the API. The local server limits tables made
+ * per address (ten a minute), and a whole run on two screens makes more than that: tables made
+ * from the app itself (Play now, the lobby) keep the shared allowance.
+ */
+const address = () => ({ "cf-connecting-ip": `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}` });
+
 /** A live table with two people seated and the five other seats left to the bot, started. */
 export async function liveTable(request: APIRequestContext): Promise<{ host: Seat; guest: Seat }> {
-  const made = await (await request.post("/api/games", { data: { name: "Ada", settings: { pacing: "live", aiFill: true, visibility: "unlisted" } } })).json();
+  const made = await (
+    await request.post("/api/games", { data: { name: "Ada", settings: { pacing: "live", aiFill: true, visibility: "unlisted" } }, headers: address() })
+  ).json();
   const host: Seat = { gameId: made.gameId, power: made.power, token: made.token, name: "Ada" };
   const joined = await (await request.post(`/api/games/${host.gameId}/join`, { data: { name: "Bea" } })).json();
   const guest: Seat = { gameId: joined.gameId, power: joined.power, token: joined.token, name: "Bea" };
@@ -36,17 +45,13 @@ export async function liveTable(request: APIRequestContext): Promise<{ host: Sea
 /**
  * A live table where the host plays `hostPower` and a guest plays `guestPower`, the bot the rest,
  * started. The server seats a table's creator at random, so tables are made until one seats the
- * host where the test needs it (a lobby left behind costs nothing on the local server). The local
- * server limits tables made per client address; each attempt comes from an address of its own.
+ * host where the test needs it (a lobby left behind costs nothing on the local server). Each
+ * attempt comes from an address of its own (see `address`).
  */
 export async function tableAs(request: APIRequestContext, hostPower: string, guestPower: string): Promise<{ host: Seat; guest: Seat }> {
-  const run = Math.floor(Math.random() * 250);
   for (let i = 0; i < 60; i++) {
     const made = await (
-      await request.post("/api/games", {
-        data: { name: "Ada", settings: { pacing: "live", aiFill: true, visibility: "unlisted" } },
-        headers: { "cf-connecting-ip": `10.${run}.${i}.1` },
-      })
+      await request.post("/api/games", { data: { name: "Ada", settings: { pacing: "live", aiFill: true, visibility: "unlisted" } }, headers: address() })
     ).json();
     if (made.power !== hostPower) continue;
     const host: Seat = { gameId: made.gameId, power: made.power, token: made.token, name: "Ada" };
