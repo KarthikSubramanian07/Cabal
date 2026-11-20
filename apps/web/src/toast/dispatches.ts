@@ -49,6 +49,8 @@ export interface DispatchContext {
   me: PowerName | null;
   /** The thread the player is reading right now; null when press is not on screen. */
   reading: Recipient | null;
+  /** The board or the results panel is in view, so a resolved phase shows itself. */
+  resultsInView?: boolean;
 }
 
 /** The slips one change of the room earns, oldest news first. */
@@ -59,7 +61,7 @@ export function roomDispatches(before: RoomView, after: RoomView, ctx: DispatchC
   // A phase resolved. The room already says so out loud with the failures counted, so the slip is
   // for the eyes only.
   const phase = after.lastResolved;
-  if (phase && phase !== before.lastResolved) {
+  if (phase && phase !== before.lastResolved && !ctx.resultsInView) {
     const results = after.resolved[phase]?.results ?? [];
     const mine = ctx.me ? results.filter((r) => r.power === ctx.me && r.code !== "disband") : [];
     const failed = mine.filter((r) => !r.ok).length;

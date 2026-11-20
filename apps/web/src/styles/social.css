@@ -91,3 +91,147 @@
   grid-row: 1 / span 2;
   align-self: center;
 }
+
+/* ---- dispatch slips: news from out of sight, pinned to the edge of the room */
+
+.dispatch-board {
+  position: fixed;
+  left: var(--space-4);
+  bottom: 96px;
+  z-index: var(--z-toast);
+  width: min(360px, calc(100vw - 2 * var(--space-4)));
+  pointer-events: none;
+}
+
+.dispatch-board ol {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.slip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px 10px;
+  padding: 10px 10px 8px 14px;
+  border: 1px solid var(--ink);
+  border-top: 4px solid var(--power);
+  background: var(--paper);
+  box-shadow: 0 6px 18px rgba(18, 17, 16, 0.22);
+  pointer-events: auto;
+}
+
+.slip-text {
+  min-width: 0;
+}
+
+.slip-title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 680;
+  line-height: 1.3;
+}
+
+.slip-line {
+  margin: 2px 0 0;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.slip .rubber.small {
+  margin: 4px 2px 0 0;
+  background: var(--paper);
+}
+
+.slip.stamped.broken {
+  border-color: var(--vermilion-deep);
+  border-top-color: var(--power);
+}
+
+.slip-acts {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.slip-acts .btn.small {
+  min-height: 32px;
+}
+
+.slip-close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.slip-close:hover {
+  border-color: var(--rule);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .slip {
+    animation: slip-pin var(--dur-base) var(--ease-out);
+  }
+
+  .slip.stamped .rubber {
+    animation: stamp-down var(--dur-slow) var(--ease-thud) 120ms both;
+  }
+
+  @keyframes slip-pin {
+    from {
+      transform: translateY(10px);
+      opacity: 0;
+    }
+  }
+}
+
+/* On a phone the foot of the screen is the order sheet's: slips hang under the seat strip. */
+@media (max-width: 1000px) {
+  .dispatch-board {
+    left: 12px;
+    right: 12px;
+    top: calc(var(--topbar-h) + 60px);
+    bottom: auto;
+    width: auto;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .slip {
+      animation-name: slip-drop;
+    }
+
+    @keyframes slip-drop {
+      from {
+        transform: translateY(-10px);
+        opacity: 0;
+      }
+    }
+  }
+}
+
+/* A phone has room for two slips over the map; older news waits in the room itself. */
+@media (max-width: 1000px) {
+  .slip:nth-last-child(n + 3) {
+    display: none;
+  }
+}

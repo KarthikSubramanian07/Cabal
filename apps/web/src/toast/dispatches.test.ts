@@ -119,6 +119,10 @@ describe("phase slips", () => {
     expect(out).toEqual([expect.objectContaining({ key: "resolved", title: "Spring 1901, movement resolved", line: "1 of your 2 orders failed.", say: null })]);
   });
 
+  it("stay away while the results are in view anyway", () => {
+    expect(roomDispatches(view(), view({ resolved, lastResolved: "S1901M" }), { ...me, resultsInView: true })).toEqual([]);
+  });
+
   it("tell a spectator to look at the board", () => {
     const out = roomDispatches(view({ power: null }), view({ power: null, resolved, lastResolved: "S1901M" }), { me: null, reading: null });
     expect(out[0]?.line).toBe("The results are on the board.");
