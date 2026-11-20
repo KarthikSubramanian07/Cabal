@@ -81,6 +81,7 @@ export function LiveTable({ room, view }: { room: Room; view: RoomView }) {
   useTrustMoments(view.phase, over);
 
   const load = useDesk({
+    gameId: view.gameId,
     power: me,
     phase: view.phase,
     state: view.state,
