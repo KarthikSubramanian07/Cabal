@@ -27,6 +27,8 @@ export interface DecisionRecord {
   dropped: Validated["dropped"];
   /** True when the brain failed and the built-in decision (every unit holds) was used. */
   fallback: boolean;
+  /** Why the brain asked for was replaced by a stand-in (a spend cap, a failed call), or null. */
+  failover: string | null;
   /** The model's whole structured answer, reasoning and press included. */
   decision: Decision;
   /** Tokens the call used, whether or not it produced a decision. Null for an unmetered brain. */
@@ -46,6 +48,7 @@ export function decisionRecord(phase: string, power: string, played: Played): De
     orders: played.validated.orders,
     dropped: played.validated.dropped,
     fallback: played.fallback,
+    failover: played.failover,
     decision: played.decision,
     usage: played.usage,
     costMicros: played.costMicros,

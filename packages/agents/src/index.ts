@@ -1,4 +1,5 @@
 export { BotBrain, type BotBrainOptions } from "./bot-brain.js";
+export { CappedBrain, FailoverBrain, SpendCap } from "./budget.js";
 export { AgentClient, type AgentClientOptions } from "./client.js";
 export {
   PRICES,

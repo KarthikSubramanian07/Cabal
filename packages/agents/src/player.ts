@@ -81,6 +81,11 @@ export interface BrainReply {
   /** Null when the brain is not a metered model (a scripted or local brain). */
   usage: Usage | null;
   model: string | null;
+  /**
+   * Set when the brain that was asked could not answer and a stand-in did (see `FailoverBrain`):
+   * why, and what the failed attempt cost, so the bill still counts it.
+   */
+  failover?: { reason: string; usage: Usage | null; model: string | null };
 }
 
 /** Anything that can turn a prompt into a decision; the Claude client is the default, tests inject a fake. */
@@ -356,6 +361,8 @@ export interface Played {
   costMicros: number;
   /** The prompt that was sent, for logs and evaluations. */
   prompt: string;
+  /** Why the brain asked for was replaced by a stand-in this turn, or null (see `FailoverBrain`). */
+  failover: string | null;
 }
 
 export class Player {
@@ -433,11 +440,13 @@ export class Player {
     let failure: BrainFailure | null = null;
     let usage: Usage | null = null;
     let model: string | null = null;
+    let failover: NonNullable<BrainReply["failover"]> | null = null;
     try {
       const reply = await this.brain.decide({ system: systemPrompt(input.map), prompt, kind, step, situation: full });
       decision = reply.decision;
       usage = reply.usage;
       model = reply.model;
+      failover = reply.failover ?? null;
     } catch (e) {
       failure = e instanceof BrainFailure ? e : new BrainFailure(e instanceof Error ? e.message : String(e), "unknown");
       usage = failure.usage;
@@ -473,6 +482,7 @@ export class Player {
       this.diary = [...this.diary, line];
     }
     this.diary = this.diary.slice(-MEMORY_LIMITS.diaryEntries);
+    const failed = failover?.usage && failover.model ? costMicros(failover.model, failover.usage) : 0;
     return {
       decision,
       validated,
@@ -481,8 +491,9 @@ export class Player {
       step,
       model,
       usage,
-      costMicros: usage && model ? costMicros(model, usage) : 0,
+      costMicros: (usage && model ? costMicros(model, usage) : 0) + failed,
       prompt,
+      failover: failover?.reason ?? null,
     };
   }
 }
