@@ -10,7 +10,8 @@ import { playFullGame } from "../../../tools/metrics/full-game.mjs";
 // @ts-expect-error: plain ES modules with no type declarations
 import { measureOrderRtt } from "../../../tools/metrics/order-rtt.mjs";
 
-const server = `http://localhost:${process.env.LIVE_SERVER_PORT ?? 8799}`;
+/** The server itself under wrangler dev; a deployment's own origin (its /api) when LIVE_ORIGIN is set. */
+const server = process.env.LIVE_ORIGIN ?? `http://localhost:${process.env.LIVE_SERVER_PORT ?? 8799}`;
 
 test.describe("phase 1 probes, live", () => {
   test.skip(({ isMobile }) => isMobile, "the probes are not a browser: once is enough");

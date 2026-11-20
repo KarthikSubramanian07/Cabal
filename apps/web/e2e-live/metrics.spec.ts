@@ -4,8 +4,13 @@
  * chooses a handle, and it stops when the first movement phase accepts orders. The target is under
  * 60 seconds; the measured figure is attached to the report. The same visit's anonymous beacon
  * (net/timings.ts) carries that figure and the first order's round trip to the server.
+ *
+ * METRICS_RECORD=<where> also writes the figure into tools/metrics/metrics.json (one line per
+ * screen), e.g. `METRICS_RECORD=production LIVE_ORIGIN=https://playcabal.pages.dev`.
  */
 import { expect, test } from "@playwright/test";
+// @ts-expect-error: a plain ES module with no type declarations
+import { line, record } from "../../../tools/metrics/lib/report.mjs";
 import { chooseHandle, primary, tab, uniqueHandle } from "./room.js";
 
 const TARGET_MS = 60_000;
@@ -33,6 +38,9 @@ test.describe("phase 1 metrics, live", () => {
     const ms = Date.now() - started;
     info.annotations.push({ type: "landing_to_game_ms", description: String(ms) });
     console.log(`landing_to_game ${info.project.name}: ${ms} ms`);
+    // Recorded before it is judged, so a miss is on the record as a fail.
+    const where = process.env.METRICS_RECORD;
+    if (where) record(line({ id: "landing_to_game", value: `${(ms / 1000).toFixed(1)} s`, pass: ms < TARGET_MS, where: `${where}, ${info.project.name}` }));
     expect(ms).toBeLessThan(TARGET_MS);
 
     // An order filed is timed from orders.set to orders.ack.
