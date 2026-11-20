@@ -146,8 +146,21 @@ test.describe("the social layer, live", () => {
     expect(box.height).toBeGreaterThanOrEqual(24);
     // Bots' cells are not links.
     await expect(strip.getByRole("link")).toHaveCount(2);
+
+    // An order written a moment before the tap (inside the pause before it is filed) is not lost
+    // when the record opens: it is filed on the way out.
+    await tab(page, "Orders");
+    const unit = (await page.locator(".orders .row code").first().innerText()).trim();
+    const entry = page.getByRole("combobox", { name: "Write an order" });
+    await entry.fill(`${unit} H`);
+    await entry.press("Enter");
     await link.click();
     await expect(page).toHaveURL(new RegExp(`/u/${bob.player.handle}$`));
     await expect(page.getByRole("heading", { level: 1 })).toContainText(bob.player.handle);
+
+    await page.goBack();
+    await expect(page.locator("svg.board text.label").first()).toBeVisible({ timeout: 30_000 });
+    await tab(page, "Orders");
+    await expect(page.locator(".orders .row.given code")).toHaveText([`${unit} H`]);
   });
 });
