@@ -1063,7 +1063,7 @@ export class GameRoom extends DurableObject<Env> {
       if (status === "lobby") {
         const dropped = this.sql.exec<{ power: PowerName; n: number }>("SELECT power, MAX(stint) AS n FROM stints WHERE player_id = ? GROUP BY power", playerId).toArray();
         if (dropped.length > 0) {
-          const floor = { ...(this.kv.get<Partial<Record<PowerName, number>>>("stint-floor") ?? {}) };
+          const floor: Partial<Record<PowerName, number>> = { ...this.kv.get<Partial<Record<PowerName, number>>>("stint-floor") };
           for (const d of dropped) floor[d.power] = Math.max(floor[d.power] ?? 0, d.n + 1);
           this.kv.put("stint-floor", floor);
         }
