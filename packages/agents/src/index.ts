@@ -1,3 +1,5 @@
+export { type ArenaGame, type LocalArenaOptions, type PhaseLog, type PressMode, runLocalArena } from "./arena/local.js";
+export { type ArenaSummary, type Gates, type SeatSummary, arenaReport, gateFailures, summarise } from "./arena/summary.js";
 export { BotBrain, type BotBrainOptions } from "./bot-brain.js";
 export { CappedBrain, FailoverBrain, SpendCap } from "./budget.js";
 export { AgentClient, type AgentClientOptions } from "./client.js";
