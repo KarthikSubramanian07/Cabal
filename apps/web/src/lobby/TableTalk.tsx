@@ -3,11 +3,13 @@
  * (the server files it under phase `LOBBY` and allows only messages to the whole table); once the
  * game runs it is the public press. Seated players write; spectators read.
  *
- * The thread is a log region, so screen readers hear new dispatches as they arrive.
+ * The thread is a log region, so screen readers hear new dispatches as they arrive. A seated
+ * player can quote any message here in their reply, as in the game's own press (see Quote.tsx).
  */
 import type { PowerName, PressView } from "@cabal/protocol";
 import { CabalError } from "@cabal/protocol/client";
 import { type CSSProperties, type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { QuoteButton, QuotedDispatch, QuotingSlip } from "./Quote.jsx";
 import { powerLabel } from "./terms.js";
 
 const ERRORS: Record<string, string> = {
@@ -16,6 +18,7 @@ const ERRORS: Record<string, string> = {
   rate_limited: "That is a lot of messages at once. Wait a moment.",
   press_rate_limited: "That is a lot of messages at once. Wait a minute and send it again.",
   press_closed: "Press is closed during retreats and adjustments in this game.",
+  bad_quote: "Only a message from the table can be quoted here.",
 };
 
 function when(sentAt: number): string {
@@ -37,7 +40,7 @@ export function TableTalk({
   canWrite: boolean;
   /** What a reader who cannot write is told instead of the composer. */
   readOnlyNote: string;
-  onSay: (body: string) => Promise<void>;
+  onSay: (body: string, quote?: string) => Promise<void>;
 }) {
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
@@ -46,7 +49,17 @@ export function TableTalk({
   const list = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const errorId = useId();
+  const fromId = useId();
+  const quoteId = useId();
   const visible = press.filter((m) => m.to === "ALL");
+  /** The message the composer is quoting, if any. */
+  const [quoting, setQuoting] = useState<PressView | null>(null);
+  const canQuote = canWrite && me !== null;
+
+  // Choosing a message to quote puts the pen back in the player's hand.
+  useEffect(() => {
+    if (quoting) area.current?.focus();
+  }, [quoting]);
 
   // Keep the newest dispatch in view as they arrive.
   useEffect(() => {
@@ -61,8 +74,9 @@ export function TableTalk({
     setBusy(true);
     setError(null);
     try {
-      await onSay(text);
+      await onSay(text, quoting?.id);
       setBody("");
+      setQuoting(null);
     } catch (err) {
       setError(err instanceof CabalError ? (ERRORS[err.code] ?? err.message) : "The message did not go through. Check your connection and send it again.");
     } finally {
@@ -91,10 +105,14 @@ export function TableTalk({
           visible.map((m) => (
             <li key={m.id} className={`dispatch${m.from === me ? " mine" : ""}`} style={{ "--power": `var(--p-${m.from.toLowerCase()})` } as CSSProperties}>
               <p className="dateline">
-                <span className="dispatch-from">{powerLabel(m.from)}</span>
+                <span className="dispatch-from" id={`${fromId}-${m.id}`}>
+                  {powerLabel(m.from)}
+                </span>
                 {names[m.from] ? <span className="dispatch-name">{names[m.from]}</span> : null}
                 <time dateTime={new Date(m.sentAt).toISOString()}>{when(m.sentAt)}</time>
+                {canQuote ? <QuoteButton sender={`${fromId}-${m.id}`} pressed={quoting?.id === m.id} onToggle={() => setQuoting(quoting?.id === m.id ? null : m)} /> : null}
               </p>
+              {m.quote ? <QuotedDispatch quote={m.quote} phase={m.phase} /> : null}
               <p className="dispatch-body">{m.body}</p>
             </li>
           ))
@@ -104,6 +122,7 @@ export function TableTalk({
       {canWrite ? (
         <form className="talk-compose" onSubmit={submit}>
           <label htmlFor="talk-body">Message the table</label>
+          {quoting && me ? <QuotingSlip id={quoteId} quoting={quoting} me={me} onUnquote={() => setQuoting(null)} /> : null}
           <textarea
             ref={area}
             id="talk-body"
@@ -112,7 +131,7 @@ export function TableTalk({
             value={body}
             onChange={(e) => setBody(e.target.value)}
             onKeyDown={onKey}
-            aria-describedby={error ? errorId : undefined}
+            aria-describedby={[quoting ? quoteId : null, error ? errorId : null].filter(Boolean).join(" ") || undefined}
           />
           <div className="talk-row">
             <span className="fine">Enter sends. Shift and Enter for a new line.</span>
