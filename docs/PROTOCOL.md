@@ -150,7 +150,7 @@ A `welcome` is everything a client needs to draw the game from nothing:
 - `lobby`: seats are being claimed. Seated players may send press to `ALL` (table talk, stored with `phase: "LOBBY"`); nothing else is accepted. The game starts when the seventh seat is claimed or the host calls `start`.
 - `paused` happens only in `live` pacing, when every human player has disconnected. The phase clock stops with its remaining time banked, the pause ends by itself (at most ten minutes of pause per phase) and the game resumes with exactly that time. Daily and async games never pause.
 - `finished` carries a result of `solo` or `draw` and a reason: `solo`, `vote`, `engine_draw`, or `no_humans_left` (no human power survives on the board).
-- `abandoned` carries a reason: `no_orders` (three movement phases without a human order), `lobby_expired` (a lobby not started within a week) or `adjudication_failed`.
+- `abandoned` carries a reason: `no_orders` (three movement phases without a human order), `lobby_expired` (a lobby not started within a week), `lobby_emptied` (everyone seated in a lobby deleted their account) or `adjudication_failed`.
 
 ## Seats
 

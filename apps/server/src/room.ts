@@ -89,6 +89,9 @@ import { checkPledge, judgeOrders } from "./validate.js";
 
 type Status = "lobby" | "active" | "paused" | "finished" | "abandoned";
 
+/** What a seat is called once the player who held it has deleted their account. */
+export const GHOST_NAME = "Ghost";
+
 /** Abuse limits. A room is single threaded, so every unbounded input is a way to stall a game. */
 export const LIMITS = {
   /** Token bucket per socket: burst size and refill per second. */
@@ -792,6 +795,7 @@ export class GameRoom extends DurableObject<Env> {
       if (request.method === "POST" && path === "/start") return await this.start(request);
       if (request.method === "POST" && path === "/substitute") return await this.inviteSubstitute(request);
       if (request.method === "POST" && path === "/seat") return await this.seatToken(request);
+      if (request.method === "POST" && path === "/forsake") return await this.forsake(request);
       if (request.method === "GET" && path === "/summary") {
         if (!this.meta) return bad("no such game", 404);
         return json(this.summary());
@@ -990,6 +994,87 @@ export class GameRoom extends DurableObject<Env> {
     });
     this.log("seat_token_issued", { power: seat.power });
     return json({ gameId: this.meta.id, token, power: seat.power });
+  }
+
+  /**
+   * A player deleted their account. Every trace of who they were leaves this room: their seat
+   * becomes a ghost by the game's own rules, and their name and id go from the seat, its stints,
+   * its pledges and a hand-off still waiting for the index. In a lobby the seat opens again (and a
+   * lobby left with nobody in it ends); in a running game the seat is in civil disorder, at once
+   * vacant for a substitute and played by the bot where the table asked for AI fill; in an ended
+   * game only the name goes. Their tokens die and their sockets close. Idempotent. Called by the
+   * router over the Durable Object binding only (`/forsake` is not a public route).
+   */
+  private async forsake(request: Request): Promise<Response> {
+    if (!this.meta) return bad("no such game", 404);
+    const { playerId } = (await request.json()) as { playerId?: string };
+    if (!playerId) return bad("no player named", 400);
+    const held = this.seats().filter((s) => s.player_id === playerId);
+    const stints = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM stints WHERE player_id = ?", playerId).one().n;
+    if (held.length === 0 && stints === 0) return json({ gameId: this.meta.id, seats: [] });
+    const status = this.meta.status;
+    this.atomic(() => {
+      for (const seat of held) {
+        if (status === "lobby") {
+          this.sql.exec("UPDATE seats SET kind = 'open', name = NULL, token_hash = NULL, player_id = NULL, ready = 0, missed = 0 WHERE power = ?", seat.power);
+        } else if ((status === "active" || status === "paused") && seat.eliminated === 0 && seat.kind !== "ai") {
+          this.sql.exec(
+            "UPDATE seats SET kind = 'civil_disorder', name = ?, token_hash = NULL, player_id = NULL, ready = 0, missed = MAX(missed, ?) WHERE power = ?",
+            GHOST_NAME,
+            LIMITS.vacantAfter,
+            seat.power,
+          );
+          // Where the table fills seats with AI the bot takes the ghost's turn at once, so the phase
+          // never waits on a player who is not coming back.
+          const ghost = this.seat(seat.power)!;
+          if (status === "active" && this.autopilot(ghost) && canAct(this.game!, seat.power)) {
+            const phase = this.game!.phase();
+            this.writeOrders(phase, seat.power, this.brain().orders(this.game!, seat.power, this.meta!.id), "bot");
+            this.sql.exec("UPDATE seats SET ready = 1 WHERE power = ?", seat.power);
+          }
+        } else {
+          this.sql.exec("UPDATE seats SET name = ?, token_hash = NULL, player_id = NULL WHERE power = ?", GHOST_NAME, seat.power);
+        }
+        this.sql.exec("DELETE FROM seat_tokens WHERE power = ?", seat.power);
+      }
+      // A lobby seat that opens again was never played: its stint goes, rather than staying anonymous.
+      if (status === "lobby") this.sql.exec("DELETE FROM stints WHERE player_id = ?", playerId);
+      this.sql.exec("UPDATE stints SET player_id = NULL, name = ? WHERE player_id = ?", GHOST_NAME, playerId);
+      this.sql.exec("UPDATE pledges SET pledger_player = NULL WHERE pledger_player = ?", playerId);
+      this.sql.exec("UPDATE pledges SET audience_player = NULL WHERE audience_player = ?", playerId);
+      const outbox = this.kv.get<Outbox>("registry-outbox");
+      if (outbox) {
+        const powers = new Set(outbox.record.players?.filter((p) => p.playerId === playerId).map((p) => p.power) ?? []);
+        const record: GameRecord = {
+          ...outbox.record,
+          seats: outbox.record.seats.map((s) => (powers.has(s.power) || held.some((h) => h.power === s.power) ? { ...s, name: GHOST_NAME } : s)),
+          ...(outbox.record.players
+            ? { players: outbox.record.players.map((p) => (p.playerId === playerId ? { ...p, playerId: null, name: GHOST_NAME } : p)) }
+            : {}),
+        };
+        this.kv.put("registry-outbox", { ...outbox, record } satisfies Outbox);
+      }
+      if (status === "lobby") {
+        const seated = this.seats().filter((s) => s.kind === "human");
+        if (seated.length === 0) {
+          this.conclude("abandoned", [], "lobby_emptied", false);
+          return;
+        }
+        // The host left: whoever sat down first after them can start the game now.
+        if (held.some((s) => s.power === this.meta!.creator)) {
+          const first = this.sql
+            .exec<{ power: PowerName }>("SELECT power FROM stints WHERE left_reason IS NULL AND power IN (SELECT power FROM seats WHERE kind = 'human') ORDER BY joined_at, power LIMIT 1")
+            .toArray()[0];
+          this.meta!.creator = first?.power ?? seated[0]!.power;
+        }
+      }
+      if (held.length > 0) this.broadcast({ t: "seats", p: { seats: this.seatViews() } }, "ALL");
+    });
+    for (const seat of held) this.closeSeatSockets(seat.power, 4001, "seat reassigned");
+    if (held.length > 0) this.touchListing();
+    if (status === "active" && held.length > 0) this.advance();
+    this.log("player_departed", { seats: held.map((s) => s.power), status });
+    return json({ gameId: this.meta.id, seats: held.map((s) => s.power) });
   }
 
   /** True when this player holds or has held any seat in this game. */
@@ -2960,7 +3045,7 @@ export class GameRoom extends DurableObject<Env> {
     this.broadcastState();
     this.log(result === "abandoned" ? "game_abandoned" : "game_finished", { result, reason, winners });
     // A lobby that never started has nothing to report.
-    if (reason !== "lobby_expired") {
+    if (reason !== "lobby_expired" && reason !== "lobby_emptied") {
       const away = this.awayPlayers().map((seat) => seat.player_id!);
       if (away.length > 0) this.notices.push(notices.finished(meta.id, away, result, winners, reason));
     }
