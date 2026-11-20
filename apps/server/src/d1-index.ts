@@ -68,6 +68,8 @@ const RECENT_RESULTS = 20;
 const MY_GAMES = 100;
 /** Rated games in one rating history answer: the default and the most a caller may ask for. */
 export const HISTORY_POINTS = { fallback: 50, max: 200 } as const;
+/** The name a deleted player's seat goes by in the index, as in the room (room.ts `GHOST_NAME`). */
+const GHOST = "Ghost";
 
 export type RenameOutcome =
   | { ok: true }
@@ -90,6 +92,14 @@ export interface PlayerStore {
   trustBoard(page: { offset: number; limit: number }): Promise<TrustLeaderboardResponse>;
   /** The rating after each of the player's most recent rated games, oldest first; null for no such player. */
   ratingHistory(handle: string, now: number, limit?: number): Promise<RatingHistoryResponse | null>;
+  /** Every game the player holds or held a seat in, as the index knows it. */
+  gamesOf(playerId: string): Promise<string[]>;
+  /**
+   * Delete the player for good: the account, its sessions, devices, rating, history, totals and
+   * switches go; their seats in the index stay as anonymous ghosts so other players' records and
+   * every finished game still add up; their id goes from other players' rating breakdowns. Idempotent.
+   */
+  deletePlayer(playerId: string): Promise<void>;
 }
 
 interface PlayerRow {
@@ -235,7 +245,7 @@ export class D1Index implements GameIndex, PlayerStore {
   // ---------- GameIndex: finished games ----------
 
   async recordGame(input: GameRecord): Promise<void> {
-    const record = GameRecordSchema.parse(input);
+    const record = await this.withoutDeparted(GameRecordSchema.parse(input));
     const now = Date.now();
     const statements: D1PreparedStatement[] = [
       this.db
@@ -306,6 +316,26 @@ export class D1Index implements GameIndex, PlayerStore {
     if (metric) statements.push(metric);
     await this.db.batch(statements);
     await this.rate(record);
+  }
+
+  /**
+   * A record can name a player who has since deleted their account (the room could not be told, or
+   * its hand-off was already on its way): that stint is kept, as an anonymous ghost, never tied to
+   * an id the index no longer knows.
+   */
+  private async withoutDeparted(record: GameRecord): Promise<GameRecord> {
+    const ids = [...new Set((record.players ?? []).map((p) => p.playerId).filter((id): id is string => id !== null))];
+    if (ids.length === 0) return record;
+    const known = new Set(
+      (await this.db.prepare(`SELECT id FROM players WHERE id IN (${placeholders(ids.length)})`).bind(...ids).all<{ id: string }>()).results.map((r) => r.id),
+    );
+    if (known.size === ids.length) return record;
+    const gone = new Set(record.players!.filter((p) => p.playerId !== null && !known.has(p.playerId) && p.leftReason === null).map((p) => p.power));
+    return {
+      ...record,
+      seats: record.seats.map((s) => (gone.has(s.power) ? { ...s, name: GHOST } : s)),
+      players: record.players!.map((p) => (p.playerId !== null && !known.has(p.playerId) ? { ...p, playerId: null, name: GHOST } : p)),
+    };
   }
 
   /** Fold a rated game into its players' ratings, at most once. */
@@ -877,6 +907,52 @@ export class D1Index implements GameIndex, PlayerStore {
         })),
       more: rows.length > n,
     };
+  }
+
+  // ---------- PlayerStore: leaving for good ----------
+
+  async gamesOf(playerId: string): Promise<string[]> {
+    const rows = (await this.db.prepare("SELECT DISTINCT game_id FROM game_players WHERE player_id = ? ORDER BY game_id").bind(playerId).all<{ game_id: string }>()).results;
+    return rows.map((r) => r.game_id);
+  }
+
+  async deletePlayer(playerId: string): Promise<void> {
+    // The seats they held at the end of each recorded game, whose name the game's record still shows.
+    const held = (
+      await this.db
+        .prepare(
+          `SELECT gp.game_id, gp.power, g.seats_json FROM game_players gp JOIN games_index g ON g.game_id = gp.game_id
+           WHERE gp.player_id = ? AND gp.left_reason IS NULL`,
+        )
+        .bind(playerId)
+        .all<{ game_id: string; power: string; seats_json: string }>()
+    ).results;
+    const games = new Map<string, { seats: GameRecord["seats"]; powers: Set<string> }>();
+    for (const h of held) {
+      const entry = games.get(h.game_id) ?? { seats: JSON.parse(h.seats_json) as GameRecord["seats"], powers: new Set<string>() };
+      entry.powers.add(h.power);
+      games.set(h.game_id, entry);
+    }
+    const quoted = JSON.stringify(playerId);
+    await this.db.batch([
+      ...[...games].map(([gameId, g]) =>
+        this.db
+          .prepare("UPDATE games_index SET seats_json = ? WHERE game_id = ?")
+          .bind(JSON.stringify(g.seats.map((s) => (g.powers.has(s.power) && s.kind !== "ai" ? { ...s, name: GHOST } : s))), gameId),
+      ),
+      // The stints stay, so every game still has a holder for every seat, but nobody's name or id.
+      this.db.prepare("UPDATE game_players SET player_id = NULL, name = ? WHERE player_id = ?").bind(GHOST, playerId),
+      // Other players' ratings moved against this player; the breakdown keeps the move, not the id.
+      this.db.prepare("UPDATE rating_history SET opponents_json = REPLACE(opponents_json, ?, 'null') WHERE instr(opponents_json, ?) > 0").bind(quoted, quoted),
+      this.db.prepare("DELETE FROM rating_history WHERE player_id = ?").bind(playerId),
+      this.db.prepare("DELETE FROM ratings WHERE player_id = ?").bind(playerId),
+      this.db.prepare("DELETE FROM player_stats WHERE player_id = ?").bind(playerId),
+      this.db.prepare("DELETE FROM push_subscriptions WHERE player_id = ?").bind(playerId),
+      this.db.prepare("DELETE FROM notification_preferences WHERE player_id = ?").bind(playerId),
+      this.db.prepare("DELETE FROM handle_aliases WHERE player_id = ?").bind(playerId),
+      this.db.prepare("DELETE FROM player_sessions WHERE player_id = ?").bind(playerId),
+      this.db.prepare("DELETE FROM players WHERE id = ?").bind(playerId),
+    ]);
   }
 }
 

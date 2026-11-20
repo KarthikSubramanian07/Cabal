@@ -7,6 +7,7 @@
  *   GET   /api/players/:handle/ratings  the rating after each rated game, oldest first (`limit`)
  *   GET   /api/me                 the signed-in player's profile and account
  *   PATCH /api/me                 change handle (once freely, then once every 14 days)
+ *   DELETE /api/me                delete the account for good (`{ handle }` to confirm); seats become ghosts
  *   POST  /api/me/recovery        a new recovery code, shown once; the old one stops working
  *   POST  /api/me/logout          end this device's session (or every one)
  *   GET   /api/me/games           the player's own games, live and ended, listed or not
@@ -22,6 +23,8 @@
  */
 import {
   CreatePlayerRequest,
+  DeleteMeRequest,
+  type DeleteMeResponse,
   LogoutRequest,
   type NotificationsResponse,
   type PlayerSummary,
@@ -38,9 +41,13 @@ import { json, limited, limitedKey, readJson, tooMany, withCors } from "./http.j
 import { reminderMinutes } from "./notify.js";
 import { pushStore, subscriptionProblem } from "./push-store.js";
 import { isPlayerSecret } from "./tokens.js";
+import { handleKey } from "./handles.js";
+import { REQUEST_ID_HEADER, currentRequestId, describeError, log } from "./log.js";
 
 const PLAYER_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})$/;
 const RATINGS_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})\/ratings$/;
+/** Rooms told about a deletion at once; a player rarely holds more seats than this in all. */
+const FORSAKE_CONCURRENCY = 8;
 
 export const bearerOf = (request: Request) => request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
 
@@ -143,6 +150,7 @@ async function me(request: Request, env: Env, store: PlayerStore, player: Player
     if (!outcome.ok) return refused(outcome);
     return privateJson(await store.me(player.id, now));
   }
+  if (path === "/api/me" && request.method === "DELETE") return deleteAccount(request, env, store, player);
   if (path === "/api/me/recovery" && request.method === "POST") return privateJson(await store.issueRecoveryCode(player.id, now));
   if (path === "/api/me/logout" && request.method === "POST") {
     const body = LogoutRequest.safeParse((await readJson(request)) ?? {});
@@ -183,3 +191,42 @@ async function notifications(request: Request, env: Env, player: PlayerSummary, 
   return json({ error: "not found" }, 404);
 }
 
+/**
+ * Delete the signed-in player's account for good. The body must name the account's handle (as it
+ * reads now: any case, `_` for `-`), so a replayed or mistaken request cannot delete anyone.
+ *
+ * Every room the player holds or held a seat in is told first, so their seats become ghosts by the
+ * game's own rules and their name leaves each game; then the index forgets them (d1-index.ts
+ * `deletePlayer`). A room that cannot be reached is no reason to keep the account: its seat is
+ * anonymised when that game is next recorded, because the index no longer knows the id.
+ */
+async function deleteAccount(request: Request, env: Env, store: PlayerStore, player: PlayerSummary): Promise<Response> {
+  const body = DeleteMeRequest.safeParse(await readJson(request));
+  if (!body.success) return json({ error: "invalid request", issues: body.error.issues }, 400);
+  if (handleKey(body.data.handle) !== handleKey(player.handle)) {
+    return json({ error: "type the account's handle to delete it", code: "handle_mismatch" }, 400);
+  }
+  const games = await store.gamesOf(player.id);
+  let unreached = 0;
+  for (let i = 0; i < games.length; i += FORSAKE_CONCURRENCY) {
+    const told = await Promise.allSettled(
+      games.slice(i, i + FORSAKE_CONCURRENCY).map(async (gameId) => {
+        const forsake = new Request("https://room/forsake", { method: "POST", body: JSON.stringify({ playerId: player.id }) });
+        const id = currentRequestId();
+        if (id) forsake.headers.set(REQUEST_ID_HEADER, id);
+        const res = await env.GAME_ROOM.get(env.GAME_ROOM.idFromName(gameId)).fetch(forsake);
+        // A game the room never stored (it was created and forgotten) has nothing to forget either.
+        if (!res.ok && res.status !== 404) throw new Error(`room answered ${res.status}`);
+      }),
+    );
+    for (const t of told) {
+      if (t.status === "rejected") {
+        unreached += 1;
+        log("account_delete_room_unreached", describeError(t.reason), "error");
+      }
+    }
+  }
+  await store.deletePlayer(player.id);
+  log("account_deleted", { games: games.length, unreached });
+  return privateJson({ deleted: true, games: games.length, unreached } satisfies DeleteMeResponse);
+}
