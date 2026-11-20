@@ -1,11 +1,12 @@
 import { ClientErrorReport } from "@cabal/protocol";
 import { describe, expect, it } from "vitest";
-import { MAX_REPORTS, createErrorReporter, topFrame } from "./errors.js";
+import { MAX_REPORTS, createErrorReporter, maskWords, topFrame } from "./errors.js";
 
-function setup(path = "/g/ABC123", beacon = true) {
+function setup(path = "/g/ABC123", beacon = true, handles: string[] = []) {
   const sent: Blob[] = [];
   const reporter = createErrorReporter({
     path: () => path,
+    handles: () => handles,
     sendBeacon: beacon
       ? (url, data) => {
           expect(url).toBe("/api/errors");
@@ -29,6 +30,21 @@ describe("error reports", () => {
     expect(body).toEqual({ kind: "crash", message: "units is undefined", route: "game", where: "/assets/GamePage-abc.js:3:2048" });
     expect(JSON.stringify(body)).not.toContain("ABC123");
     expect(JSON.stringify(body)).not.toContain("playcabal.pages.dev");
+  });
+
+  it("masks the page's code and handle, and the signed-in handle, wherever a message quotes them", async () => {
+    const game = setup("/g/K7Q2XZ", true, ["Talleyrand"]);
+    game.reporter.report("rejection", new Error("talleyrand has no seat in k7q2xz"));
+    expect((await game.bodies())[0]!.message).toBe("<handle> has no seat in <code>");
+    const record = setup("/u/von_Bismarck", true, []);
+    record.reporter.report("error", new Error("no record for von_Bismarck (von_Bismarck2 is another)"));
+    expect((await record.bodies())[0]).toMatchObject({ route: "profile", message: "no record for <handle> (von_Bismarck2 is another)" });
+  });
+
+  it("masks only whole words, and never a word shorter than a handle", () => {
+    expect(maskWords("Annabel met Ann and ann_b", [{ word: "Ann", as: "<handle>" }])).toBe("Annabel met <handle> and ann_b");
+    expect(maskWords("go to g", [{ word: "g", as: "<code>" }])).toBe("go to g");
+    expect(maskWords("a.b+c? or a.b+c?", [{ word: "a.b+c?", as: "<x>" }])).toBe("<x> or <x>");
   });
 
   it("calls a page no route matches `none`, and names a failed chunk as such", async () => {
