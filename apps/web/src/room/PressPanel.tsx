@@ -56,11 +56,16 @@ export interface PressPanelProps {
   connected: boolean;
   onSend: (to: Recipient, body: string, pledge?: PledgeInput, quote?: string) => Promise<void>;
   onRead: (thread: Recipient, upTo: number) => void;
+  /** The open thread, when the room keeps it (a dispatch slip can open one); the panel's own otherwise. */
+  thread?: Recipient;
+  onThread?: (thread: Recipient) => void;
 }
 
 export function PressPanel(props: PressPanelProps) {
   const { threads, me, names, settings, status, phase, press, visible, myOrders, resultsFor, engineReady, connected, onSend, onRead } = props;
-  const [open, setOpen] = useState<Recipient>("ALL");
+  const [own, setOwn] = useState<Recipient>("ALL");
+  const open = props.thread ?? own;
+  const setOpen = props.onThread ?? setOwn;
   const thread = threads.find((t) => t.id === open) ?? threads[0]!;
   const log = useRef<HTMLDivElement>(null);
   const titleId = useId();
