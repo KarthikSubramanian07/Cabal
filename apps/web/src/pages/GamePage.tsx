@@ -10,6 +10,7 @@ import { PageLoading } from "../app/PageLoading.jsx";
 import { StatusPage } from "../app/StatusPage.jsx";
 import { Link } from "../app/router.jsx";
 import { SeatingPlan } from "../lobby/SeatingPlan.jsx";
+import { ShareBar } from "../lobby/ShareBar.jsx";
 import { TableTalk } from "../lobby/TableTalk.jsx";
 import { type RoomView, canStart, humanSeats, openSeats } from "../lobby/room.js";
 import { describeTerms, phaseLabel, powerLabel, timeLeft } from "../lobby/terms.js";
@@ -38,46 +39,6 @@ function usePageTitle(title: string) {
       document.title = before;
     };
   }, [title]);
-}
-
-/** Copy the table's link, or hand it to the system share sheet where there is one. */
-function ShareBar({ code }: { code: string }) {
-  const [said, setSaid] = useState("");
-  const link = `${window.location.origin}/g/${code}`;
-  const canShare = typeof navigator.share === "function";
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(link);
-      setSaid("Link copied. Send it to the people you want at the table.");
-    } catch {
-      setSaid(`Copy this link: ${link}`);
-    }
-  }
-
-  async function share() {
-    try {
-      await navigator.share({ title: `Cabal table ${spacedCode(code)}`, text: `Take a seat at my Diplomacy table. Code ${spacedCode(code)}.`, url: link });
-    } catch {
-      // Dismissed: nothing to say.
-    }
-  }
-
-  return (
-    <div className="share">
-      <button type="button" className="btn" onClick={copy}>
-        Copy link
-      </button>
-      {canShare ? (
-        <button type="button" className="btn" onClick={share}>
-          Share
-        </button>
-      ) : null}
-      <span className="share-said" role="status">
-        {said}
-      </span>
-    </div>
-  );
 }
 
 function Terms({ view }: { view: RoomView }) {

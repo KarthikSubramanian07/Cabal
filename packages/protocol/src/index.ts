@@ -270,6 +270,19 @@ export type RejectedOrderView = z.infer<typeof RejectedOrderView>;
 export const PressPhase = z.union([PhaseName, z.literal("LOBBY")]);
 export type PressPhase = z.infer<typeof PressPhase>;
 
+/**
+ * An earlier message a dispatch quotes, as the server holds it: the words are the original's, never
+ * the sender's retelling. Only a message from the same thread can be quoted.
+ */
+export const PressQuote = z.object({
+  id: z.string(),
+  from: PowerName,
+  phase: PressPhase,
+  /** The quoted message's text, cut to its first 280 characters. */
+  excerpt: z.string(),
+});
+export type PressQuote = z.infer<typeof PressQuote>;
+
 export const PressView = z.object({
   id: z.string(),
   phase: PressPhase,
@@ -278,6 +291,8 @@ export const PressView = z.object({
   body: z.string(),
   sentAt: z.number().int(),
   pledge: PledgeView.nullable(),
+  /** The earlier message this one quotes; absent or null when it quotes nothing. */
+  quote: PressQuote.nullable().optional(),
 });
 export type PressView = z.infer<typeof PressView>;
 
@@ -309,6 +324,8 @@ export const ClientMessage = z.discriminatedUnion("t", [
       to: Recipient,
       body: z.string().trim().min(1).max(4000),
       pledge: PledgeInput.optional(),
+      /** The id of an earlier message in the same thread to quote. */
+      quote: z.string().min(1).max(32).optional(),
     }),
   }),
   z.object({

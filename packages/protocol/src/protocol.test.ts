@@ -200,6 +200,19 @@ describe("envelope", () => {
     expect(ServerMessage.safeParse({ t: "pledge.receipt", p: { pledgeId: "x", receipt: "kept", revealed: ["A PAR H"], nonce: "00".repeat(16) } }).success).toBe(true);
     expect(ClientMessage.safeParse({ t: "press.send", p: { to: "ALL", body: "x", pledge: { orders: ["A PAR H"], commitment: "nope" } } }).success).toBe(false);
   });
+
+  it("carries a quote: an id on the way in, the original's words on the way out", () => {
+    expect(ClientMessage.safeParse({ t: "press.send", p: { to: "ENGLAND", body: "You said this.", quote: "p1234567" } }).success).toBe(true);
+    expect(ClientMessage.safeParse({ t: "press.send", p: { to: "ENGLAND", body: "x", quote: "" } }).success).toBe(false);
+    expect(ClientMessage.safeParse({ t: "press.send", p: { to: "ENGLAND", body: "x", quote: "q".repeat(33) } }).success).toBe(false);
+    const quoted = { id: "b", phase: "S1901M", from: "FRANCE", to: "ENGLAND", body: "Remember?", sentAt: 2, pledge: null };
+    const quote = { id: "a", from: "ENGLAND", phase: "S1901M", excerpt: "I will not enter the Channel." };
+    expect(ServerMessage.safeParse({ t: "press", p: { ...quoted, quote } }).success).toBe(true);
+    expect(ServerMessage.safeParse({ t: "press", p: { ...quoted, quote: null } }).success).toBe(true);
+    // Older rooms and fixtures send no quote at all.
+    expect(ServerMessage.safeParse({ t: "press", p: quoted }).success).toBe(true);
+    expect(ServerMessage.safeParse({ t: "press", p: { ...quoted, quote: { ...quote, from: "NOBODY" } } }).success).toBe(false);
+  });
 });
 
 describe("notifications and metrics", () => {

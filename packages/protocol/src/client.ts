@@ -302,8 +302,9 @@ export class CabalSocket {
     return this.send({ t: "ready", p: { phase, ready } });
   }
 
-  press(to: Recipient, body: string, pledge?: PledgeInput): Promise<Frame<"press">> {
-    return this.request<"press">({ t: "press.send", p: { to, body, ...(pledge ? { pledge } : {}) } });
+  /** Send a message, optionally with a pledge and quoting an earlier message of the same thread by id. */
+  press(to: Recipient, body: string, pledge?: PledgeInput, quote?: string): Promise<Frame<"press">> {
+    return this.request<"press">({ t: "press.send", p: { to, body, ...(pledge ? { pledge } : {}), ...(quote ? { quote } : {}) } });
   }
 
   markRead(thread: Recipient, upTo: number): boolean {
