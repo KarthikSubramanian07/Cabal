@@ -20,6 +20,7 @@ import { type Brain, BrainFailure, type BrainReply, type BrainRequest, MAX_INPUT
 export class SpendCap {
   private spent = 0;
   private held = 0;
+  private overrun = 0;
 
   /** `capMicros` is the most this cap will ever let through, in micro-dollars. */
   constructor(
@@ -46,10 +47,21 @@ export class SpendCap {
     return true;
   }
 
-  /** Release a reservation and charge what the call really cost (never more than was held). */
+  /** Spend beyond what was reserved, in micro-dollars: zero unless a call broke its own bound. */
+  overrunMicros(): number {
+    return this.overrun;
+  }
+
+  /**
+   * Release a reservation and charge what the call really cost. A bill above its reservation would
+   * mean the worst case was wrong: it is charged in full and counted in `overrunMicros`, never
+   * hidden, and the cap then refuses every further call it can no longer cover.
+   */
   settle(reservedMicros: number, actualMicros: number): void {
+    const actual = Math.max(0, actualMicros);
     this.held -= reservedMicros;
-    this.spent += Math.min(reservedMicros, Math.max(0, actualMicros));
+    this.spent += actual;
+    this.overrun += Math.max(0, actual - reservedMicros);
   }
 }
 

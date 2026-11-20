@@ -40,6 +40,18 @@ describe("SpendCap and CappedBrain", () => {
     expect(cap.leftMicros()).toBe(WORST_ORDER * 3 - costMicros(MODEL, USAGE));
   });
 
+  it("charges a bill above its reservation in full and says so, instead of hiding it", () => {
+    const cap = new SpendCap(1_000, "run budget");
+    expect(cap.reserve(600)).toBe(true);
+    cap.settle(600, 900);
+    expect(cap.spentMicros()).toBe(900);
+    expect(cap.overrunMicros()).toBe(300);
+    expect(cap.leftMicros()).toBe(100);
+    expect(cap.reserve(101)).toBe(false);
+    cap.settle(0, -5);
+    expect(cap.spentMicros()).toBe(900);
+  });
+
   it("refuses a call it could not cover in the worst case, before calling the model", async () => {
     const cap = new SpendCap(WORST_ORDER - 1, "seat cap");
     const { brain, calls } = metered();
