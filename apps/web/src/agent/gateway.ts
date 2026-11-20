@@ -1,6 +1,7 @@
 import { type PageMeta, metaFor, writeHead } from "../app/meta.js";
 import { type RouteMatch, matchRoute } from "../app/routes.js";
 import { isGameCode } from "../net/code.js";
+import { hintsFor } from "./hints.js";
 import {
   appendVaryAccept,
   markdownPath,
@@ -57,28 +58,13 @@ function htmlAssetPath(pathname: string): string {
   return `${path}/index.html`;
 }
 
-/** The shell with this address's own title, description, canonical link and share card. */
-async function withPageHead(res: Response, path: string, meta: PageMeta = metaFor(path), status = res.status, keepBoard = true): Promise<Response> {
-  let html = writeHead(await res.text(), meta);
-  if (!keepBoard) html = withoutBoardPreloads(html);
+/** The shell with this address's own title, description, canonical link and share card, and its own hints. */
+async function withPageHead(res: Response, path: string, meta: PageMeta = metaFor(path), status = res.status, route: string | null = null): Promise<Response> {
+  const html = hintsFor(writeHead(await res.text(), meta), route);
   const headers = new Headers(res.headers);
   headers.delete("Content-Length");
   headers.set("Content-Type", "text/html; charset=utf-8");
   return new Response(html, { status, headers });
-}
-
-/** Pages that draw the board: they want its chunk and the engine fetched alongside the entry script. */
-const BOARD_ROUTES: ReadonlySet<string> = new Set(["sandbox", "game", "replay"]);
-
-/**
- * The shell's hints for the board (its page chunk, its code and the megabyte engine), dropped for
- * a page that never draws it: on a phone they compete with the page's own script and data. The
- * build drops the same tags from the front door's copy (scripts/emit-agent-site.mjs).
- */
-export function withoutBoardPreloads(html: string): string {
-  return html
-    .replace(/\s*<link rel="modulepreload"[^>]*(?:SandboxPage|board)-[^>]*>/g, "")
-    .replace(/\s*<link rel="preload" as="fetch"[^>]*cabal_engine_bg-[^>]*>/g, "");
 }
 
 /**
@@ -270,7 +256,7 @@ async function route(request: Request, env: AssetEnv): Promise<Response> {
       if (shell.status !== 200) return notFound(env, url, request, false);
       const route = matchRoute(path)!;
       const { meta, status } = await appPage(env, url, path, route);
-      const res = withNegotiationHeaders(await withPageHead(shell, path, meta, status, BOARD_ROUTES.has(route.name)));
+      const res = withNegotiationHeaders(await withPageHead(shell, path, meta, status, route.name));
       // Tables and replays are for the people sent the code: keep them out of search indexes.
       if (!meta.index) res.headers.set("X-Robots-Tag", "noindex");
       return res;

@@ -5,7 +5,10 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import react from "@vitejs/plugin-react";
-import { type HtmlTagDescriptor, type Plugin, defineConfig } from "vite";
+import { type HtmlTagDescriptor, type Plugin, type Rolldown, defineConfig } from "vite";
+
+type OutputChunk = Rolldown.OutputChunk;
+type OutputAsset = Rolldown.OutputAsset;
 
 /**
  * In production the Pages worker hands `/api` to the game server through a service binding
@@ -17,12 +20,17 @@ const api = {
 };
 
 /**
- * The board needs four things the entry script only asks for once it runs: the sandbox
- * page chunk, the map geometry, the WebAssembly engine and the display fonts. Left alone
- * they are found one after another. This writes hints into index.html so the browser
- * fetches them alongside the entry script, and inlines the small stylesheet so the first
- * paint does not wait on a second request. The stylesheet file is still emitted: the
+ * The pages that draw the board need things the entry script only asks for once it runs, and
+ * left alone they are found one after another: the page's chunk, then its imports, then (for a
+ * table) the room's chunk once the server has answered. This writes hints into index.html so
+ * the browser fetches them alongside the entry script, and inlines the small stylesheet so the
+ * first paint does not wait on a second request. The stylesheet file is still emitted: the
  * static trust pages link to it.
+ *
+ * Each hint names the routes it is for (`data-for`); the Pages worker keeps a page's own and
+ * drops the rest (src/agent/hints.ts). A table (`game`) is told about its page, the room and the
+ * map, but not the engine: the board is drawn from the map alone, and the megabyte of
+ * WebAssembly is fetched once it is (room/useDesk.ts), so it never competes with the first paint.
  */
 function firstLoad(): Plugin {
   return {
@@ -36,22 +44,58 @@ function firstLoad(): Plugin {
         const find = (pattern: RegExp) => {
           const file = files.find((f) => pattern.test(f));
           if (!file) throw new Error(`cabal:first-load: nothing in the build matches ${pattern}`);
-          return `/${file}`;
+          return file;
         };
+        const entry = Object.values(bundle).find((c): c is OutputChunk => c.type === "chunk" && c.isEntry);
+        if (!entry) throw new Error("cabal:first-load: the build has no entry chunk");
+        // The entry's own imports are already hinted by Vite; a page's chunk adds what it needs on top.
+        const loaded = new Set<string>([entry.fileName, ...staticImports(bundle, entry.fileName)]);
+        const pageChunks = (...patterns: RegExp[]) => {
+          const out = new Set<string>();
+          for (const pattern of patterns) {
+            const file = find(pattern);
+            for (const f of [file, ...staticImports(bundle, file)]) if (!loaded.has(f)) out.add(f);
+          }
+          return [...out];
+        };
+        // One tag per file and priority: the worker serves a page only the tags naming it.
+        const hints = new Map<string, { file: string; routes: Set<string>; late: boolean }>();
+        const hint = (file: string, routes: string[], late = false) => {
+          const key = `${file} ${late}`;
+          const h = hints.get(key) ?? { file, routes: new Set<string>(), late };
+          for (const r of routes) h.routes.add(r);
+          hints.set(key, h);
+        };
+        for (const f of pageChunks(/SandboxPage-[\w-]+\.js$/)) hint(f, ["sandbox"]);
+        hint(find(/board-[\w-]+\.js$/), ["sandbox", "replay"]);
+        // A table's page asks the server about the game as soon as it runs; the room and the map
+        // are drawn only once the server has answered, so they give way to it on a slow line.
+        const tablePage = pageChunks(/GamePage-[\w-]+\.js$/);
+        for (const f of tablePage) hint(f, ["game"]);
+        for (const f of pageChunks(/LiveTable-[\w-]+\.js$/)) if (!tablePage.includes(f)) hint(f, ["game"], true);
+        hint(find(/board-[\w-]+\.js$/), ["game"], true);
+        const wasm = find(/cabal_engine_bg-[\w-]+\.wasm$/);
+
         const tags: HtmlTagDescriptor[] = [
-          ...[/SandboxPage-[\w-]+\.js$/, /board-[\w-]+\.js$/].map((pattern) => ({
+          ...[...hints.values()].map(({ file, routes, late }) => ({
             tag: "link",
-            attrs: { rel: "modulepreload", crossorigin: true, href: find(pattern) },
+            attrs: {
+              rel: "modulepreload",
+              crossorigin: true,
+              href: `/${file}`,
+              "data-for": [...routes].join(" "),
+              ...(late ? { fetchpriority: "low" } : {}),
+            },
             injectTo: "head" as const,
           })),
           {
             tag: "link",
-            attrs: { rel: "preload", as: "fetch", type: "application/wasm", crossorigin: "anonymous", href: find(/cabal_engine_bg-[\w-]+\.wasm$/) },
+            attrs: { rel: "preload", as: "fetch", type: "application/wasm", crossorigin: "anonymous", href: `/${wasm}`, "data-for": "sandbox replay" },
             injectTo: "head",
           },
           ...[/archivo-black-latin-400-normal-[\w-]+\.woff2$/, /ibm-plex-mono-latin-400-normal-[\w-]+\.woff2$/].map((pattern) => ({
             tag: "link",
-            attrs: { rel: "preload", as: "font", type: "font/woff2", crossorigin: "anonymous", href: find(pattern) },
+            attrs: { rel: "preload", as: "font", type: "font/woff2", crossorigin: "anonymous", href: `/${find(pattern)}` },
             injectTo: "head" as const,
           })),
         ];
@@ -65,6 +109,18 @@ function firstLoad(): Plugin {
       },
     },
   };
+}
+
+/** Every chunk `file` imports statically, however deep. */
+function staticImports(bundle: Record<string, OutputChunk | OutputAsset>, file: string, seen = new Set<string>()): string[] {
+  const chunk = bundle[file];
+  if (chunk?.type !== "chunk") return [];
+  for (const dep of chunk.imports) {
+    if (seen.has(dep)) continue;
+    seen.add(dep);
+    staticImports(bundle, dep, seen);
+  }
+  return [...seen];
 }
 
 /** What the edge compresses on the way out. Fonts and images are already packed. */
