@@ -135,6 +135,9 @@ export function useAccount() {
     forgetSeatsOf(current);
     deleted?.(result);
     if (readPlayer()?.id === current.id) forgetPlayer();
+    // A profile is cached publicly for half a minute: refetch it past this browser's cache, so the
+    // deleted record is not what this device shows next (the server now answers 404).
+    if (typeof fetch === "function") void fetch(`/api/players/${encodeURIComponent(current.handle)}`, { cache: "reload" }).catch(() => undefined);
     await turnOffPush(async () => undefined).catch(() => undefined);
     return result;
   }, []);

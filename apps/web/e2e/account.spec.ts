@@ -208,6 +208,9 @@ test.describe("the player's account", () => {
     expect(await page.evaluate(() => localStorage.getItem("cabal.seat.Z2BSVX"))).toBeNull();
     expect(await page.evaluate(() => localStorage.getItem("cabal.player"))).toBeNull();
     await expect(page.locator(".player-button")).toHaveAccessibleName("Your account");
+    // The public profile is fetched again past the browser's cache, so the deleted record is not
+    // what this device shows next.
+    await expect.poll(() => server.calls.includes("GET /api/players/ada_l")).toBe(true);
     await card.getByRole("button", { name: "Close", exact: true }).last().click();
     await expect(card).toBeHidden();
     await expect(page.locator(".player-button")).toHaveAccessibleName("Your account");
