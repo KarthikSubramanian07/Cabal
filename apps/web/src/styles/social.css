@@ -124,7 +124,8 @@
   border: 1px solid var(--ink);
   border-top: 4px solid var(--power);
   background: var(--paper);
-  box-shadow: 0 6px 18px rgba(18, 17, 16, 0.22);
+  /* A slip of paper pinned over the room: a hard edge under it, never a soft glow. */
+  box-shadow: 3px 3px 0 var(--ink);
   pointer-events: auto;
 }
 

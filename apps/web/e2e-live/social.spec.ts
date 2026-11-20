@@ -37,6 +37,8 @@ test.describe("the social layer, live", () => {
       await closeSheet(bea);
     }
     await expect(slip).toContainText("Keep out of the Channel this year");
+    // Flat paper, as everywhere in the room: a hard offset edge, no blurred shadow.
+    expect(await slip.evaluate((el) => getComputedStyle(el).boxShadow)).toMatch(/^rgb\([^)]*\) 3px 3px 0px/);
     // Ada is reading that very thread: her own words bring her no slip.
     await expect(ada.getByRole("region", { name: "News from the table" })).toHaveCount(0);
     // A slip leaves on its own after nine seconds, but never while the player is on it. Bea moves
