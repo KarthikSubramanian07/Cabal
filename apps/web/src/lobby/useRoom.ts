@@ -1,7 +1,8 @@
 /**
- * One table, live. Reads the public summary first (so a wrong code is a clear "no such table"
- * rather than a socket that never answers), then holds a socket open: as a spectator, or bound
- * to this device's seat when it holds one. Joining stores the new seat token and rebinds.
+ * One table, live. Reads the public summary (so a wrong code is a clear "no such table" rather
+ * than a socket that never answers) while it dials a socket, and holds the socket open: as a
+ * spectator, or bound to this device's seat when it holds one. Whichever answers first draws the
+ * table. Joining stores the new seat token and rebinds.
  */
 import type { PledgeInput, PowerName, Recipient } from "@cabal/protocol";
 import type { CabalSocket, ConnectionStatus, Frame } from "@cabal/protocol/client";
@@ -86,7 +87,6 @@ export function useRoom(code: string): Room {
     };
   }, [code, attempt]);
 
-  const ready = load.kind === "ready";
   const token = seat?.token;
 
   // A seat this player holds from another device: the account gets its own token for this one.
@@ -113,9 +113,12 @@ export function useRoom(code: string): Room {
     };
   }, [code, claim]);
 
-  // The socket, once the table is known to exist. A new token (a seat just taken) rebinds it.
+  // The socket, dialled alongside the summary rather than after it (on a slow line that is a
+  // whole round trip sooner to the board), and hung up if the table turns out not to exist. A
+  // new token (a seat just taken) rebinds it.
+  const gone = load.kind === "missing" || load.kind === "unreachable";
   useEffect(() => {
-    if (!ready) return;
+    if (gone) return;
     const ws = openSocket(code, token);
     socket.current = ws;
     // `status` names two things on CabalSocket: the connection's state (a string) and the
@@ -158,7 +161,7 @@ export function useRoom(code: string): Room {
       ws.close();
       if (socket.current === ws) socket.current = null;
     };
-  }, [code, token, ready, dial]);
+  }, [code, token, gone, dial]);
 
   // The network is back: dial at once rather than wait out a grown backoff.
   useEffect(() => {
