@@ -66,7 +66,7 @@ A client remembers the highest `seq` it has applied. After a reconnect it sends 
 | `orders.default` | `{ orders }` | sealed movement orders used if the seat misses a deadline (the phase still counts as missed); answered with `orders.default.ack` |
 | `ready` | `{ phase, ready }` | the phase resolves when every seat that can act is ready |
 | `extend` | `{ phase }` | asks for more time; granted once per phase when two present players (or the only one) ask |
-| `press.send` | `{ to, body, pledge? }` | `to` is a power or `ALL`; `pledge` is `{ orders, sealed, nonce?, commitment? }`. In the lobby only `to: "ALL"` without a pledge |
+| `press.send` | `{ to, body, pledge?, quote? }` | `to` is a power or `ALL`; `pledge` is `{ orders, sealed, nonce?, commitment? }`; `quote` is the id of an earlier message in the same thread (refused with `bad_quote` otherwise). In the lobby only `to: "ALL"` without a pledge |
 | `press.read` | `{ with, upTo }` | marks the thread with a power (or `ALL`) read up to a message's `sentAt`; answered with `press.unread`. Allowed in every game status |
 | `vote` | `{ kind, value, include? }` | `kind` is `"draw"`; `include` names the sharers of a non-DIAS draw, absent means every survivor |
 | `sync` | `{ since }` | replays up to 500 stored frames after `since`, then `synced` |
@@ -80,7 +80,7 @@ A client remembers the highest `seq` it has applied. After a reconnect it sends 
 | `results` | `{ phase, results, dislodged, standoffs, civil_disorder, rejected?, summary, seq }` | per-order outcomes, see Results; `rejected` lists orders the engine could not adjudicate at all; `summary` is the entry this phase adds to `history` |
 | `orders.ack` | `{ phase, accepted, rejected, verdicts }` | `accepted` is what is now on file; `verdicts` has one `{ text, order, ok, code, reason, detail? }` per order sent |
 | `orders.default.ack` | `{ accepted, rejected }` | the sealed defaults now on file |
-| `press` | `{ id, phase, from, to, body, sentAt, pledge }` | `phase` is `LOBBY` for table talk before the start; `sentAt` is strictly increasing within a game |
+| `press` | `{ id, phase, from, to, body, sentAt, pledge, quote }` | `phase` is `LOBBY` for table talk before the start; `sentAt` is strictly increasing within a game; `quote` is null or `{ id, from, phase, excerpt }`, the quoted message as the server holds it (its first 280 characters) |
 | `press.unread` | `{ unread }` | the seat's unread counts per thread after a `press.read`, to every socket of the seat |
 | `pledge.receipt` | `{ pledgeId, receipt, revealed, nonce }` | `receipt` is `kept`, `broken` or `void`; to the pledge's audience and its pledger, after adjudication |
 | `seats` | `{ seats }` | join, start, orders in, ready, civil disorder, recovery, substitution, and (without `seq`) a player connecting or leaving |
