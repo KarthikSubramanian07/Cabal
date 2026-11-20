@@ -66,6 +66,34 @@ export function useAccount() {
     return readPlayer()!;
   }, []);
 
+  /**
+   * Sign in with the ID token Google's button handed the page. A device already signed in links
+   * its account to the Google account (or, when that Google account opens another account, moves
+   * to that one). Its old session ends either way: the device holds the new one.
+   */
+  const googleSignIn = useCallback(async (credential: string): Promise<StoredPlayer & { outcome: "signed_in" | "linked" | "created" }> => {
+    const { api } = await loadApi();
+    const before = readPlayer();
+    const session = await api.googleSignIn(credential, before?.secret);
+    const stored = { id: session.player.id, handle: session.player.handle, secret: session.secret };
+    savePlayer(stored);
+    if (before && before.id === stored.id && before.secret !== stored.secret) await api.logout(before.secret).catch(() => undefined);
+    await replaced(before, stored);
+    return { ...(readPlayer() ?? { ...stored, savedAt: Date.now() }), outcome: session.outcome };
+  }, []);
+
+  /** Unlink the Google account. The recovery code, if one was made, still works. */
+  const unlinkGoogle = useCallback(async (): Promise<MeResponse> => {
+    const current = readPlayer();
+    if (!current) throw localRefusal(401, "not signed in");
+    try {
+      const { api } = await loadApi();
+      return await api.unlinkGoogle(current.secret);
+    } catch (error) {
+      return signedOutIfRefused(error);
+    }
+  }, []);
+
   const me = useCallback(async (): Promise<MeResponse> => {
     const current = readPlayer();
     if (!current) throw localRefusal(401, "not signed in");
@@ -142,5 +170,5 @@ export function useAccount() {
     return result;
   }, []);
 
-  return { player, create, recover, me, rename, issueRecoveryCode, signOut, deleteAccount };
+  return { player, create, recover, googleSignIn, unlinkGoogle, me, rename, issueRecoveryCode, signOut, deleteAccount };
 }

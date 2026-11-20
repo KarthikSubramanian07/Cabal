@@ -191,16 +191,20 @@ async function notFound(env: AssetEnv, url: URL, request: Request, asMarkdown: b
 /**
  * Security headers for every response. Pages does not apply `_headers` to responses returned by a
  * `_worker.js`, so the gateway sets them itself. The game is fully client side: scripts, styles,
- * fonts and the WebAssembly engine are all same-origin.
+ * fonts and the WebAssembly engine are all same-origin. The one exception is Sign in with Google:
+ * Google Identity Services' script, button frame, styles and endpoints under
+ * accounts.google.com/gsi, as Google documents them, and an opener policy that lets its sign-in
+ * popup answer the page.
  */
 export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "Content-Security-Policy": [
     "default-src 'self'",
-    "script-src 'self' 'wasm-unsafe-eval'",
-    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self' 'wasm-unsafe-eval' https://accounts.google.com/gsi/client",
+    "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
     "img-src 'self' data:",
     "font-src 'self'",
-    "connect-src 'self'",
+    "connect-src 'self' https://accounts.google.com/gsi/",
+    "frame-src https://accounts.google.com/gsi/",
     "manifest-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
@@ -210,7 +214,7 @@ export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   ].join("; "),
   "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
   "X-Frame-Options": "DENY",
-  "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
