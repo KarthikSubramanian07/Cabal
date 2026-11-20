@@ -16,7 +16,9 @@
   "vars": {
     "VAPID_PUBLIC_KEY": "BJjrRWlws87Gk0wWOB0uOu62eA5vg50PTgvR9gwWJXs7cbE9BGmC2fRkF5LFmk2QpHFKeB0iOeNGAmp_Yo-ibsE",
     "VAPID_SUBJECT": "https://playcabal.pages.dev",
-    "PUSH_REMINDER_MINUTES": "60"
+    "PUSH_REMINDER_MINUTES": "60",
+    // Sign in with Google: the web OAuth client ID (public; no secret is used). Empty turns it off.
+    "GOOGLE_CLIENT_ID": ""
   },
   "durable_objects": {
     "bindings": [

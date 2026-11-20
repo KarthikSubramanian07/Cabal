@@ -20,7 +20,7 @@ describe("guest accounts", () => {
     expect(me.rating).toBeNull();
     expect(me.reliability.score).toBeCloseTo(0.9);
     expect(me.trust).toEqual({ score: 0.5, kept: 0, broken: 0, void: 0 });
-    expect(me.account).toEqual({ renameAvailableAt: null, recoveryIssuedAt: null, sessions: 1 });
+    expect(me.account).toEqual({ renameAvailableAt: null, recoveryIssuedAt: null, sessions: 1, google: false });
   });
 
   it("keeps handles unique whatever their case, and refuses reserved and abusive ones", async () => {

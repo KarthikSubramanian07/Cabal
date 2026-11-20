@@ -3,6 +3,8 @@
  *
  *   POST  /api/players            make a guest account on this device; the secret is shown once
  *   POST  /api/players/recover    restore an account on a new device from its recovery code
+ *   GET   /api/auth/google        the Google client ID the sign-in button needs, or null when off
+ *   POST  /api/auth/google        sign in with Google: open, link or make the account (google.ts)
  *   GET   /api/players/:handle    public profile: rating, rank, reliability, the ledger, recent results
  *   GET   /api/players/:handle/ratings  the rating after each rated game, oldest first (`limit`)
  *   POST  /api/players/:handle/report   signed in: report a player to the maintainers (moderation.ts)
@@ -11,6 +13,7 @@
  *   DELETE /api/me                delete the account for good (`{ handle }` to confirm); seats become ghosts
  *   POST  /api/me/recovery        a new recovery code, shown once; the old one stops working
  *   POST  /api/me/logout          end this device's session (or every one)
+ *   DELETE /api/me/google         unlink the Google account; the recovery code still works
  *   GET   /api/me/games           the player's own games, live and ended, listed or not
  *   GET   /api/leaderboard        established ratings, best first, paged by `offset`
  *   GET   /api/ledger             the global trust ledger, paged by `offset`
@@ -25,6 +28,7 @@
 import {
   CreatePlayerRequest,
   DeleteMeRequest,
+  GoogleSignInRequest,
   type DeleteMeResponse,
   LogoutRequest,
   PlayerReportRequest,
@@ -46,6 +50,7 @@ import { pushStore, subscriptionProblem } from "./push-store.js";
 import { isPlayerSecret } from "./tokens.js";
 import { handleKey } from "./handles.js";
 import { fileReport, noteAccountOrigin } from "./moderation.js";
+import { googleSubjectKey, verifyGoogleIdToken } from "./google.js";
 import { REQUEST_ID_HEADER, currentRequestId, describeError, log } from "./log.js";
 
 const PLAYER_PATH = /^\/api\/players\/([A-Za-z0-9_-]{1,32})$/;
@@ -93,7 +98,8 @@ const page = (url: URL) => ({
 /** Serve a player route, or return null when the path is not one. */
 export async function playerRoute(request: Request, env: Env, url: URL): Promise<Response | null> {
   const path = url.pathname;
-  const isPlayers = path === "/api/players" || path.startsWith("/api/players/") || path === "/api/me" || path.startsWith("/api/me/");
+  const isPlayers =
+    path === "/api/players" || path.startsWith("/api/players/") || path === "/api/me" || path.startsWith("/api/me/") || path === "/api/auth/google";
   if (!isPlayers && path !== "/api/leaderboard" && path !== "/api/ledger") return null;
   const store = playerStore(env);
   if (!store) return withCors(json({ error: "players are not available on this deployment" }, 503));
@@ -117,6 +123,36 @@ export async function playerRoute(request: Request, env: Env, url: URL): Promise
     const session = await store.recover(body.data.code, now);
     if (!session) return withCors(json({ error: "that recovery code is not valid", code: "bad_recovery_code" }, 401));
     return withCors(privateJson(session));
+  }
+
+  if (path === "/api/auth/google") {
+    const clientId = env.GOOGLE_CLIENT_ID?.trim() || null;
+    if (request.method === "GET") return withCors(publicJson({ clientId }, 300));
+    if (request.method !== "POST") return withCors(json({ error: "not found" }, 404));
+    if (!clientId) return withCors(json({ error: "Google sign-in is not set up on this deployment", code: "google_off" }, 503));
+    if (await limited(env.ACCOUNT_LIMITER, request, "google")) return tooMany();
+    const body = GoogleSignInRequest.safeParse(await readJson(request));
+    if (!body.success) return withCors(json({ error: "invalid request", issues: body.error.issues }, 400));
+    // Sent with this device's secret, the Google account is linked to the account it holds.
+    const who = await resolvePlayer(request, env);
+    if (who === "invalid") return unauthorised();
+    let checked: Awaited<ReturnType<typeof verifyGoogleIdToken>>;
+    try {
+      checked = await verifyGoogleIdToken(body.data.credential, clientId, now);
+    } catch (error) {
+      log("google_keys_failed", describeError(error), "error");
+      return withCors(json({ error: "Google could not be reached; try again", code: "google_unreachable" }, 503));
+    }
+    if (!checked.ok) {
+      log("google_refused", { reason: checked.reason });
+      return withCors(json({ error: "Google did not vouch for that sign-in; try again", code: "google_refused" }, 401));
+    }
+    const result = await store.googleSession(googleSubjectKey(checked.subject), who === "none" ? null : who.player.id, now);
+    if (result === "taken") {
+      return withCors(json({ error: "this account is already linked to another Google account", code: "google_taken" }, 409));
+    }
+    if (result.outcome === "created") await noteAccountOrigin(env, request, result.session.player.id, now);
+    return withCors(privateJson({ ...result.session, outcome: result.outcome }, result.outcome === "created" ? 201 : 200));
   }
 
   const reporting = REPORT_PATH.exec(path);
@@ -165,6 +201,10 @@ async function me(request: Request, env: Env, store: PlayerStore, player: Player
     const body = LogoutRequest.safeParse((await readJson(request)) ?? {});
     await store.logout(bearer, body.success ? body.data.everywhere : false);
     return new Response(null, { status: 204 });
+  }
+  if (path === "/api/me/google" && request.method === "DELETE") {
+    await store.unlinkGoogle(player.id);
+    return privateJson(await store.me(player.id, now));
   }
   if (path === "/api/me/games" && request.method === "GET") return privateJson({ games: await store.myGames(player.id) });
   if (path === "/api/me/push" || path === "/api/me/notifications") return notifications(request, env, player, bearer, path, now);

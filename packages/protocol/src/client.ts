@@ -23,6 +23,8 @@ import {
   type DatcReport,
   DeleteMeResponse,
   GameListing,
+  GoogleConfigResponse,
+  GoogleSignInResponse,
   GameRecord,
   GameSummary,
   HealthResponse,
@@ -684,6 +686,16 @@ export function createApi(options: ApiOptions = {}) {
     createPlayer: (handle?: string) => call(PlayerSession, "POST", "/api/players", { body: handle === undefined ? {} : { handle } }),
     /** Restore an account on this device from its recovery code. */
     recoverPlayer: (code: string) => call(PlayerSession, "POST", "/api/players/recover", { body: { code } }),
+    /** The Google client ID the sign-in button needs; null when Google sign-in is off. */
+    googleConfig: () => call(GoogleConfigResponse, "GET", "/api/auth/google"),
+    /**
+     * Sign in with the ID token Google's button handed the page. With this device's secret the
+     * Google account is linked to the account the device holds.
+     */
+    googleSignIn: (credential: string, secret?: string) =>
+      call(GoogleSignInResponse, "POST", "/api/auth/google", { body: { credential }, ...(secret ? { token: secret } : {}) }),
+    /** Unlink the Google account; the recovery code still works. */
+    unlinkGoogle: (secret: string) => call(MeResponse, "DELETE", "/api/me/google", { token: secret }),
     profile: (handle: string) => call(PlayerProfile, "GET", `/api/players/${encodeURIComponent(handle)}`),
     /** A player's rating after each rated game, oldest first. */
     ratingHistory: (handle: string, limit?: number) =>
