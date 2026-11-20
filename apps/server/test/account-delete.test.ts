@@ -139,6 +139,28 @@ describe("deleting an account", () => {
     expect(await sql(table.gameId, "SELECT * FROM stints WHERE player_id = ?", ann.player.id)).toEqual([]);
   });
 
+  it("lets the next player who takes a reopened lobby seat see it among their games", async () => {
+    const [ann, bob, cat] = await Promise.all([newPlayer(), newPlayer(), newPlayer()]);
+    const table = await createAs(ann.secret, { aiFill: true });
+    expect((await joinAs(bob.secret, table.gameId)).status).toBe(200);
+    expect((await deleted(ann.secret, ann.player.handle)).games).toBe(1);
+    // No anonymous holder stays behind in the index for a seat that was never played.
+    const left = await db().prepare("SELECT * FROM game_players WHERE game_id = ? AND power = ?").bind(table.gameId, table.power).all();
+    expect(left.results).toEqual([]);
+    // Cat sits in the very seat the deleted player opened again.
+    const sat = await joinAs(cat.secret, table.gameId, { power: table.power });
+    expect(sat.status, await sat.clone().text()).toBe(200);
+    await until(async () => {
+      const mine = (await (await call("/api/me/games", cat.secret)).json()) as { games: { gameId: string }[] };
+      return mine.games.some((g) => g.gameId === table.gameId);
+    }, "cat's games list to show the table");
+    const rows = (await db().prepare("SELECT stint, player_id FROM game_players WHERE game_id = ? AND power = ?").bind(table.gameId, table.power).all<{ stint: number; player_id: string | null }>()).results;
+    expect(rows).toEqual([{ stint: 1, player_id: cat.player.id }]);
+    // So deleting Cat's account later reaches this room too, and her name leaves the seat.
+    expect((await deleted(cat.secret, cat.player.handle)).games).toBe(1);
+    expect((await summary(table.gameId)).seats.find((x) => x.power === table.power)).toMatchObject({ kind: "open", name: null });
+  });
+
   it("ends a lobby nobody is left in", async () => {
     const ann = await newPlayer();
     const table = await createAs(ann.secret);
@@ -201,7 +223,7 @@ describe("deleting an account", () => {
     const again = await serverEnv.GAME_ROOM.get(serverEnv.GAME_ROOM.idFromName(table.gameId)).fetch(
       new Request("https://room/forsake", { method: "POST", body: JSON.stringify({ playerId: ann.player.id }) }),
     );
-    expect(await again.json()).toEqual({ gameId: table.gameId, seats: [] });
+    expect(await again.json()).toEqual({ gameId: table.gameId, seats: [], unplayed: true });
     expect({ ...(await summary(table.gameId)), serverTime: 0 }).toEqual({ ...before, serverTime: 0 });
   });
 });

@@ -93,6 +93,13 @@ type Status = "lobby" | "active" | "paused" | "finished" | "abandoned";
 /** What a seat is called once the player who held it has deleted their account. */
 export const GHOST_NAME = "Ghost";
 
+/** A room's answer to `/forsake`: the seats the deleted player left, and whether the game was still a lobby. */
+export interface ForsakeAnswer {
+  gameId: string;
+  seats: PowerName[];
+  unplayed: boolean;
+}
+
 /** How much of a quoted message travels with the reply that quotes it. */
 const QUOTE_CHARS = 280;
 
@@ -1017,7 +1024,9 @@ export class GameRoom extends DurableObject<Env> {
     if (!playerId) return bad("no player named", 400);
     const held = this.seats().filter((s) => s.player_id === playerId);
     const stints = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM stints WHERE player_id = ?", playerId).one().n;
-    if (held.length === 0 && stints === 0) return json({ gameId: this.meta.id, seats: [] });
+    // `unplayed`: the game had not begun, so the room keeps no stint of theirs and the index should
+    // drop its rows for them here rather than keep an anonymous holder of a seat that opened again.
+    if (held.length === 0 && stints === 0) return json({ gameId: this.meta.id, seats: [], unplayed: this.meta.status === "lobby" } satisfies ForsakeAnswer);
     const status = this.meta.status;
     this.atomic(() => {
       for (const seat of held) {
@@ -1044,7 +1053,17 @@ export class GameRoom extends DurableObject<Env> {
         this.sql.exec("DELETE FROM seat_tokens WHERE power = ?", seat.power);
       }
       // A lobby seat that opens again was never played: its stint goes, rather than staying anonymous.
-      if (status === "lobby") this.sql.exec("DELETE FROM stints WHERE player_id = ?", playerId);
+      // Its number is never handed out again, though: the index may still hold a row under it, and
+      // the next holder's row must not collide with that one (see `nextStint`).
+      if (status === "lobby") {
+        const dropped = this.sql.exec<{ power: PowerName; n: number }>("SELECT power, MAX(stint) AS n FROM stints WHERE player_id = ? GROUP BY power", playerId).toArray();
+        if (dropped.length > 0) {
+          const floor = { ...(this.kv.get<Partial<Record<PowerName, number>>>("stint-floor") ?? {}) };
+          for (const d of dropped) floor[d.power] = Math.max(floor[d.power] ?? 0, d.n + 1);
+          this.kv.put("stint-floor", floor);
+        }
+        this.sql.exec("DELETE FROM stints WHERE player_id = ?", playerId);
+      }
       this.sql.exec("UPDATE stints SET player_id = NULL, name = ? WHERE player_id = ?", GHOST_NAME, playerId);
       this.sql.exec("UPDATE pledges SET pledger_player = NULL WHERE pledger_player = ?", playerId);
       this.sql.exec("UPDATE pledges SET audience_player = NULL WHERE audience_player = ?", playerId);
@@ -1080,7 +1099,7 @@ export class GameRoom extends DurableObject<Env> {
     if (held.length > 0) this.touchListing();
     if (status === "active" && held.length > 0) this.advance();
     this.log("player_departed", { seats: held.map((s) => s.power), status });
-    return json({ gameId: this.meta.id, seats: held.map((s) => s.power) });
+    return json({ gameId: this.meta.id, seats: held.map((s) => s.power), unplayed: status === "lobby" } satisfies ForsakeAnswer);
   }
 
   /** True when this player holds or has held any seat in this game. */
@@ -1093,8 +1112,7 @@ export class GameRoom extends DurableObject<Env> {
 
   /** Start a holder's stint at a seat, closing the previous holder's. Runs inside the caller's transaction. */
   private openStint(power: PowerName, player: Signed | null, name: string, substitute: boolean): number {
-    const next = this.sql.exec<{ n: number | null }>("SELECT MAX(stint) AS n FROM stints WHERE power = ?", power).one().n;
-    const stint = next === null ? 0 : next + 1;
+    const stint = this.nextStint(power);
     this.sql.exec("UPDATE stints SET left_reason = 'replaced' WHERE power = ? AND left_reason IS NULL", power);
     this.sql.exec(
       "INSERT INTO stints (power, stint, player_id, name, joined_at, substitute) VALUES (?, ?, ?, ?, ?, ?)",
@@ -1106,6 +1124,17 @@ export class GameRoom extends DurableObject<Env> {
       substitute ? 1 : 0,
     );
     return stint;
+  }
+
+  /**
+   * The number the next stint at a seat takes. Numbers only ever grow, even past stints a deleted
+   * account took away, because the index keys its rows on them: a reused number would collide with
+   * the row the index still holds and the new holder's own row would never be written.
+   */
+  private nextStint(power: PowerName): number {
+    const max = this.sql.exec<{ n: number | null }>("SELECT MAX(stint) AS n FROM stints WHERE power = ?", power).one().n;
+    const floor = this.kv.get<Partial<Record<PowerName, number>>>("stint-floor")?.[power] ?? 0;
+    return Math.max(max === null ? 0 : max + 1, floor);
   }
 
   /** Tell the index a signed-in player took a seat, so it shows on their games list. Best effort. */

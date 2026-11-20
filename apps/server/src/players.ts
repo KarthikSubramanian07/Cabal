@@ -38,6 +38,7 @@ import {
 } from "@cabal/protocol";
 import type { PlayerStore, RenameOutcome } from "./d1-index.js";
 import type { Env } from "./env.js";
+import type { ForsakeAnswer } from "./room.js";
 import { playerStore } from "./game-index.js";
 import { json, limited, limitedKey, readJson, tooMany, withCors } from "./http.js";
 import { reminderMinutes } from "./notify.js";
@@ -216,6 +217,7 @@ async function deleteAccount(request: Request, env: Env, store: PlayerStore, pla
   }
   const games = await store.gamesOf(player.id);
   let unreached = 0;
+  const unplayed: string[] = [];
   for (let i = 0; i < games.length; i += FORSAKE_CONCURRENCY) {
     const told = await Promise.allSettled(
       games.slice(i, i + FORSAKE_CONCURRENCY).map(async (gameId) => {
@@ -225,6 +227,7 @@ async function deleteAccount(request: Request, env: Env, store: PlayerStore, pla
         const res = await env.GAME_ROOM.get(env.GAME_ROOM.idFromName(gameId)).fetch(forsake);
         // A game the room never stored (it was created and forgotten) has nothing to forget either.
         if (!res.ok && res.status !== 404) throw new Error(`room answered ${res.status}`);
+        if (res.ok && ((await res.json()) as Partial<ForsakeAnswer>).unplayed === true) unplayed.push(gameId);
       }),
     );
     for (const t of told) {
@@ -234,7 +237,7 @@ async function deleteAccount(request: Request, env: Env, store: PlayerStore, pla
       }
     }
   }
-  await store.deletePlayer(player.id);
+  await store.deletePlayer(player.id, unplayed);
   log("account_deleted", { games: games.length, unreached });
   return privateJson({ deleted: true, games: games.length, unreached } satisfies DeleteMeResponse);
 }

@@ -98,9 +98,11 @@ export interface PlayerStore {
   /**
    * Delete the player for good: the account, its sessions, devices, rating, history, totals and
    * switches go; their seats in the index stay as anonymous ghosts so other players' records and
-   * every finished game still add up; their id goes from other players' rating breakdowns. Idempotent.
+   * every finished game still add up; their id goes from other players' rating breakdowns. In the
+   * `unplayed` games (lobbies whose room has already reopened their seat) their rows go outright,
+   * because the room keeps no stint of theirs there. Idempotent.
    */
-  deletePlayer(playerId: string): Promise<void>;
+  deletePlayer(playerId: string, unplayed?: readonly string[]): Promise<void>;
 }
 
 interface PlayerRow {
@@ -917,7 +919,7 @@ export class D1Index implements GameIndex, PlayerStore {
     return rows.map((r) => r.game_id);
   }
 
-  async deletePlayer(playerId: string): Promise<void> {
+  async deletePlayer(playerId: string, unplayed: readonly string[] = []): Promise<void> {
     // The seats they held at the end of each recorded game, whose name the game's record still shows.
     const held = (
       await this.db
@@ -936,6 +938,8 @@ export class D1Index implements GameIndex, PlayerStore {
     }
     const quoted = JSON.stringify(playerId);
     await this.db.batch([
+      // A lobby seat that opened again was never played: no anonymous holder stays behind for it.
+      ...unplayed.map((gameId) => this.db.prepare("DELETE FROM game_players WHERE game_id = ? AND player_id = ?").bind(gameId, playerId)),
       ...[...games].map(([gameId, g]) =>
         this.db
           .prepare("UPDATE games_index SET seats_json = ? WHERE game_id = ?")
