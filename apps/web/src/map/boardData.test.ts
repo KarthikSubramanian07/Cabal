@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
-import board from "./board.json";
-import { type Board, LABEL_OUTLINE_TOLERANCE, insideOutline, insideRings, outlineOf, pathRings } from "./boardData.js";
+import standard from "../../../../crates/cabal-engine/data/maps/standard.json";
+import geometry from "./board.json";
+import { LABEL_OUTLINE_TOLERANCE, insideOutline, insideRings, outlineOf, pathRings } from "./boardData.js";
+import { type BoardGeometry, composeBoard } from "./variant.js";
 import { LABEL_CAP, boardSizes, leaderFor, placeLabels } from "./view.js";
 
-const data = board as unknown as Board;
+const data = composeBoard(standard, geometry as unknown as BoardGeometry);
 
 describe("pathRings", () => {
   it("reads absolute starts, relative lines and several rings", () => {
