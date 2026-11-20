@@ -32,7 +32,9 @@ export function seatState(seat: SeatView, running: boolean, finalScore?: number)
   if (seat.eliminated) return { word: "Out", tone: "out", sentence: `${power}: out of the game${seat.kind === "human" ? `, ${who(seat)} watching as a ghost` : ""}.` };
   if (seat.kind === "civil_disorder") {
     return seat.autopilot
-      ? { word: "Bot", tone: "disorder", sentence: `${power}: ${who(seat)} missed turns; the bot is covering the seat until they return.` }
+      ? seat.brain === "claude"
+        ? { word: "Claude", tone: "disorder", sentence: `${power}: ${who(seat)} missed turns; Claude is playing the seat until they return.` }
+        : { word: "Bot", tone: "disorder", sentence: `${power}: ${who(seat)} missed turns; the bot is covering the seat until they return.` }
       : { word: "C. D.", tone: "disorder", sentence: `${power}: in civil disorder. Its units hold.` };
   }
   if (!running) return seat.present ? { word: "Here", tone: "in", sentence: `${power}: ${who(seat)}, at the table.` } : { word: "Away", tone: "away", sentence: `${power}: ${who(seat)}, away.` };

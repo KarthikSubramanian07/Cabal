@@ -26,6 +26,12 @@ describe("what a seat is doing", () => {
     expect(seatState(seat({ canAct: false }), true).word).toBe("Rests");
     expect(seatState(seat({ kind: "ai", brain: "claude", name: "Automaton" }), true)).toMatchObject({ word: "Claude", tone: "machine" });
     expect(seatState(seat({ kind: "civil_disorder", autopilot: true }), true)).toMatchObject({ word: "Bot", tone: "disorder" });
+    expect(seatState(seat({ kind: "civil_disorder", autopilot: true, brain: "bot" }), true)).toMatchObject({ word: "Bot", tone: "disorder" });
+    expect(seatState(seat({ kind: "civil_disorder", autopilot: true, brain: "claude" }), true)).toMatchObject({
+      word: "Claude",
+      tone: "disorder",
+      sentence: "France: Ada missed turns; Claude is playing the seat until they return.",
+    });
     expect(seatState(seat({ kind: "civil_disorder" }), true).word).toBe("C. D.");
     expect(seatState(seat({ eliminated: true }), true).sentence).toBe("France: out of the game, Ada watching as a ghost.");
     expect(seatState(seat({ kind: "open", name: null }), false).word).toBe("Open");
