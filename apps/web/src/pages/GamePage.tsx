@@ -14,12 +14,14 @@ import { TableTalk } from "../lobby/TableTalk.jsx";
 import { type RoomView, canStart, humanSeats, openSeats } from "../lobby/room.js";
 import { describeTerms, phaseLabel, powerLabel, timeLeft } from "../lobby/terms.js";
 import { type Room, useRoom } from "../lobby/useRoom.js";
+import { loadBoard } from "../map/boardData.js";
 import { failureText } from "../net/api.js";
 import { isGameCode, spacedCode } from "../net/code.js";
 import { NotifyOffer } from "../profile/NotificationsPanel.jsx";
 import { useIdentity } from "../profile/Identity.jsx";
 
-const LiveTable = lazy(() => import("../room/LiveTable.jsx").then((m) => ({ default: m.LiveTable })));
+const loadRoom = () => import("../room/LiveTable.jsx");
+const LiveTable = lazy(() => loadRoom().then((m) => ({ default: m.LiveTable })));
 
 function useNow(every = 15_000): number {
   const [now, setNow] = useState(Date.now);
@@ -296,6 +298,15 @@ export default function GamePage({ code: raw }: { code: string }) {
 
 function Live({ code }: { code: string }) {
   const room = useRoom(code);
+  // A game under way is drawn by the room, from the map: fetch both while the socket opens, not
+  // after its welcome. (A page loaded at this address has them on the way already: the shell's
+  // hints, vite.config.ts. This is for arriving from inside the app.)
+  const underway = room.load.kind === "ready" && room.load.view.status !== "lobby";
+  useEffect(() => {
+    if (!underway) return;
+    void loadRoom().catch(() => undefined);
+    void loadBoard().catch(() => undefined);
+  }, [underway]);
   if (room.load.kind === "loading") return <PageLoading />;
   if (room.load.kind === "missing") return <MissingTable code={code} />;
   if (room.load.kind === "unreachable") {

@@ -174,8 +174,10 @@ function Floor({
   // Fetched while some phase cannot be drawn from what this device has; once it can, the results
   // frames carry each new phase and nothing is downloaded again.
   const gap = useMemo(() => missingPhases(saved, view.resolved, view.history.map((h) => h.phase)).length > 0, [saved, view.resolved, view.history]);
+  // Reading a saved game takes the rules engine, which arrives after the board.
+  const rulesReady = desk.rulesReady;
   useEffect(() => {
-    if (historyCount === 0 || !gap) return;
+    if (historyCount === 0 || !gap || !rulesReady) return;
     let live = true;
     const timer = window.setTimeout(() => {
       api.replay(view.gameId, room.seat?.token).then(
@@ -194,7 +196,7 @@ function Floor({
       live = false;
       window.clearTimeout(timer);
     };
-  }, [view.gameId, historyCount, gap, room.seat?.token]);
+  }, [view.gameId, historyCount, gap, room.seat?.token, rulesReady]);
 
   const history = useMemo(
     () => mergeRecords(saved, view.resolved, view.history.map((h) => h.phase)),
@@ -499,6 +501,7 @@ function Floor({
     if (!me) return "You are watching this game.";
     if (over) return "The game is over.";
     if (!canOrder) return seat?.eliminated ? "You are out of the game. You can still talk and vote." : "Waiting for the board.";
+    if (!rulesReady) return "Reading the rules. Your orders open in a moment.";
     if (message) return message;
     if (picker) return `${picker.title}: choose from the menu.`;
     if (due === 0) return kind === "A" ? "Nothing to build or disband this winter." : kind === "R" ? "None of your units has to retreat." : "You have no units to order.";
@@ -802,7 +805,7 @@ function Floor({
                 visible={pressVisible}
                 myOrders={Object.values(desk.book)}
                 resultsFor={resultsFor}
-                engineReady
+                engineReady={rulesReady}
                 connected={room.connection === "open"}
                 onSend={room.send}
                 onRead={room.markRead}
@@ -811,7 +814,7 @@ function Floor({
 
             <div role="tabpanel" id="panel-table" aria-labelledby="tab-table" hidden={tab !== "table"} className="live-panel">
               {over && view.finished ? (
-                <GameOver gameId={view.gameId} finished={view.finished} seats={view.seats} centres={centres} token={room.seat?.token} engineReady />
+                <GameOver gameId={view.gameId} finished={view.finished} seats={view.seats} centres={centres} token={room.seat?.token} engineReady={rulesReady} />
               ) : null}
               {running ? (
                 <DrawVote votes={view.votes} seats={view.seats} me={me} settings={view.settings} live={room.connection === "open" && view.status === "active"} onVote={room.vote} />
@@ -841,7 +844,7 @@ function Floor({
                 {last ? (over ? "Back to the final position" : continueLabel(view.phase)) : "Next phase"}
               </button>
             ) : me && canOrder && seat?.canAct ? (
-              <button type="button" className={`btn primary${isReady ? " is-ready" : ""}`} aria-pressed={isReady} onClick={toggleReady} disabled={inDisorder || room.connection !== "open"}>
+              <button type="button" className={`btn primary${isReady ? " is-ready" : ""}`} aria-pressed={isReady} onClick={toggleReady} disabled={inDisorder || room.connection !== "open" || !rulesReady}>
                 {isReady ? "Ready. Take it back" : `Ready for ${phaseLine(view.phase)}`}
               </button>
             ) : over ? (
