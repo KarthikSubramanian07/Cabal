@@ -703,12 +703,19 @@ dialog.how.create {
   opacity: 0.6;
 }
 
-.place-marks {
-  position: absolute;
-  top: 10px;
-  right: 10px;
+.place-head {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+}
+
+.place-marks {
+  display: flex;
+  flex-wrap: wrap;
   gap: 4px;
+  margin-left: auto;
 }
 
 .mark {
@@ -1000,9 +1007,15 @@ dialog.how.create {
     font-size: 16px;
   }
 
+  /* A phone's card is too narrow to share a line: the marks go over the power's name. */
+  .place-head {
+    flex-direction: column-reverse;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
   .place-marks {
-    position: static;
-    order: -1;
+    margin-left: 0;
   }
 
   /* The ledger of tables becomes one ruled entry per table. */

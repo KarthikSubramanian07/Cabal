@@ -194,16 +194,10 @@ proptest! {
             if !fits || asker >= 7 {
                 prop_assert!(d.orders.is_empty(), "a state off the map gets no orders");
             } else {
-                // made-up dislodgements may name provinces and powers that do not exist;
-                // the bot answers those with nothing, and everything else soundly
-                let real = state.dislodged.iter().all(|x| {
-                    x.unit.province().0 < n && x.unit.power.0 < 7 && x.attacker_from.0 < n
-                });
-                if kind != PhaseKind::Retreat || real {
-                    assert_sound(&state, Power(asker), &d, "arbitrary board");
-                } else {
-                    prop_assert!(d.orders.is_empty(), "a retreat list off the map gets no orders");
-                }
+                // made-up dislodgements may name provinces, powers and attackers that
+                // do not exist: the bot ignores exactly those and answers every real
+                // dislodged unit soundly
+                assert_sound(&on_the_map(map, &state), Power(asker), &d, "arbitrary board");
             }
         }
     }
@@ -248,5 +242,75 @@ fn a_power_with_nothing_to_do_gets_no_orders() {
     for level in Level::ALL {
         let d = decide(map, Rulebook::default(), &state, france, 5, level);
         assert!(d.orders.is_empty());
+    }
+}
+
+/// The dislodged entries that belong to the map: a real province, a real power and a
+/// real attacker. The bot answers these and ignores the rest.
+fn on_the_map(map: &Map, state: &GameState) -> GameState {
+    let n = map.provinces().len();
+    let np = map.powers().len();
+    let mut clean = state.clone();
+    clean.dislodged.retain(|x| {
+        (x.unit.province().0 as usize) < n
+            && (x.unit.power.0 as usize) < np
+            && (x.attacker_from.0 as usize) < n
+    });
+    clean
+}
+
+/// Pinned from a CI failure of `prop_never_panics_on_arbitrary_states`: a retreat list
+/// that mixes a real dislodged unit with one belonging to a power that does not
+/// exist (and, in a second case, one in a province that does not exist). The real
+/// unit still gets its one legal order; the made-up entries get none.
+#[test]
+fn a_made_up_dislodgement_does_not_cost_a_real_unit_its_retreat() {
+    let map = Map::standard();
+    let aus = map.find_power("AUS").unwrap();
+    let prov = |c: &str| map.find_province(c).unwrap();
+    let real = Dislodged {
+        unit: Unit {
+            power: aus,
+            kind: UnitKind::Army,
+            region: Region::land(prov("VIE")),
+        },
+        attacker_from: prov("BOH"),
+        by_convoy: false,
+    };
+    let ghost_power = Dislodged {
+        unit: Unit {
+            power: Power(7),
+            kind: UnitKind::Army,
+            region: Region::land(prov("BUD")),
+        },
+        attacker_from: prov("GAL"),
+        by_convoy: false,
+    };
+    let ghost_province = Dislodged {
+        unit: Unit {
+            power: aus,
+            kind: UnitKind::Army,
+            region: Region::land(ProvinceId(200)),
+        },
+        attacker_from: prov("TRI"),
+        by_convoy: false,
+    };
+    for extra in [ghost_power, ghost_province] {
+        let mut state = GameState::from_position(
+            Phase::new(1901, Season::Fall, PhaseKind::Retreat),
+            Position::default(),
+        );
+        state.dislodged = vec![real, extra];
+        let clean = on_the_map(map, &state);
+        for level in Level::ALL {
+            let d = decide(map, Rulebook::default(), &state, aus, 7, level);
+            assert_eq!(
+                d.orders.len(),
+                1,
+                "{}: the real unit is ordered ({extra:?})",
+                level.name()
+            );
+            assert_sound(&clean, aus, &d, level.name());
+        }
     }
 }
