@@ -938,6 +938,13 @@ export class D1Index implements GameIndex, PlayerStore {
     }
     const quoted = JSON.stringify(playerId);
     await this.db.batch([
+      // A listing still naming them as host (a room that could not be told) names a ghost instead.
+      this.db
+        .prepare(
+          `UPDATE games_live SET host_name = ? WHERE host_name = (SELECT handle FROM players WHERE id = ?)
+           AND game_id IN (SELECT game_id FROM game_players WHERE player_id = ?)`,
+        )
+        .bind(GHOST, playerId, playerId),
       // A lobby seat that opened again was never played: no anonymous holder stays behind for it.
       ...unplayed.map((gameId) => this.db.prepare("DELETE FROM game_players WHERE game_id = ? AND player_id = ?").bind(gameId, playerId)),
       ...[...games].map(([gameId, g]) =>

@@ -161,6 +161,25 @@ describe("deleting an account", () => {
     expect((await summary(table.gameId)).seats.find((x) => x.power === table.power)).toMatchObject({ kind: "open", name: null });
   });
 
+  it("takes the name off a listing whose room could not be told", async () => {
+    const ann = await newPlayer();
+    const gameId = code();
+    const now = Date.now();
+    await db()
+      .prepare(
+        `INSERT INTO games_live (game_id, status, settings_json, cluster, host_name, humans, open_seats, phase, deadline_at, created_at, updated_at)
+         VALUES (?, 'lobby', '{}', 'standard:full:async', ?, 1, 6, 'S1901M', NULL, ?, ?)`,
+      )
+      .bind(gameId, ann.player.handle, now, now)
+      .run();
+    await db()
+      .prepare("INSERT INTO game_players (game_id, power, stint, player_id, kind, name, joined_at, substitute, status) VALUES (?, 'FRANCE', 0, ?, 'human', ?, ?, 0, 'playing')")
+      .bind(gameId, ann.player.id, ann.player.handle, now)
+      .run();
+    await deleted(ann.secret, ann.player.handle);
+    expect(await db().prepare("SELECT host_name FROM games_live WHERE game_id = ?").bind(gameId).first()).toEqual({ host_name: "Ghost" });
+  });
+
   it("ends a lobby nobody is left in", async () => {
     const ann = await newPlayer();
     const table = await createAs(ann.secret);
