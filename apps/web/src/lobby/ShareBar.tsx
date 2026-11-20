@@ -3,14 +3,34 @@
  * one, or show it as a QR code for somebody in the same room. The link carries only the code, so
  * it is safe to share anywhere.
  */
-import { Suspense, lazy, useId, useState } from "react";
+import { Component, type ReactNode, Suspense, lazy, useId, useState } from "react";
 import { spacedCode } from "../net/code.js";
 
-const InviteQr = lazy(() => import("./InviteQr.jsx"));
+/** The QR card's code, fetched the first time it is shown. A fresh one for every try. */
+const loadQr = () => lazy(() => import("./InviteQr.jsx"));
+
+/**
+ * The QR card's own boundary: if its code cannot be fetched (a flaky connection, or a redeploy
+ * that took the old file away), the card says so and the lobby carries on, the link still a tap
+ * away. Without it the failure reached the page's boundary and the whole lobby was lost.
+ */
+class QrBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
+  override state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  override render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
 
 export function ShareBar({ code }: { code: string }) {
   const [said, setSaid] = useState("");
   const [qr, setQr] = useState(false);
+  const [InviteQr, setInviteQr] = useState(loadQr);
+  const [tries, setTries] = useState(0);
   const qrId = useId();
   const link = `${window.location.origin}/g/${code}`;
   const canShare = typeof navigator.share === "function";
@@ -53,9 +73,28 @@ export function ShareBar({ code }: { code: string }) {
       </div>
       <div className="share-qr" id={qrId} hidden={!qr}>
         {qr ? (
-          <Suspense fallback={<div className="invite-qr loading" aria-hidden="true" />}>
-            <InviteQr link={link} code={code} />
-          </Suspense>
+          <QrBoundary
+            key={tries}
+            fallback={
+              <div className="invite-qr failed" role="status">
+                <p>The QR code would not load. Copy the link instead, or try again.</p>
+                <button
+                  type="button"
+                  className="btn small"
+                  onClick={() => {
+                    setInviteQr(loadQr);
+                    setTries((n) => n + 1);
+                  }}
+                >
+                  Try again
+                </button>
+              </div>
+            }
+          >
+            <Suspense fallback={<div className="invite-qr loading" aria-hidden="true" />}>
+              <InviteQr link={link} code={code} />
+            </Suspense>
+          </QrBoundary>
         ) : null}
       </div>
     </>

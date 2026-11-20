@@ -197,6 +197,25 @@ test.describe("the lobby, live", () => {
     await expect(qr).toBeHidden();
   });
 
+  test("a QR code that cannot load leaves the lobby standing, and can be tried again", async ({ page, request }) => {
+    const created = await (await request.post("/api/games", { data: { name: "Dora", settings: { visibility: "unlisted", aiFill: true } } })).json();
+    const code = created.gameId as string;
+    // The card's code is out of reach: a flaky connection, or a redeploy that took the file away.
+    const chunk = /\/assets\/InviteQr-[\w-]+\.js$/;
+    await page.route(chunk, (route) => route.abort());
+    await page.goto(`/g/${code}`);
+    await page.getByRole("button", { name: "QR code" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "The QR code would not load." })).toBeVisible();
+    // The rest of the lobby is still here, the link a tap away.
+    await expect(page.getByRole("button", { name: "Copy link" })).toBeVisible();
+    await expect(page.getByText("Something on this page broke.")).toHaveCount(0);
+    await scan(page, "lobby with the QR code failed");
+    // Back on the network, the card can be fetched again.
+    await page.unroute(chunk);
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByRole("img", { name: `QR code that opens table ${code.slice(0, 3)} ${code.slice(3)}` })).toBeVisible();
+  });
+
   test("a code nobody dealt is a clear miss", async ({ page }) => {
     await page.goto("/g/ZZZZZZ");
     // The first call to a room that does not exist wakes a Durable Object to say so: allow it time.

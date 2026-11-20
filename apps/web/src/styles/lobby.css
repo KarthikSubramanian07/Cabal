@@ -514,6 +514,25 @@ dialog.how.create {
   animation: none;
 }
 
+.invite-qr.failed {
+  grid-template-columns: minmax(0, 28ch);
+  align-items: start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-style: dashed;
+  animation: none;
+}
+
+.invite-qr.failed p {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+
+.invite-qr.failed .btn {
+  justify-self: start;
+}
+
 .invite-qr svg {
   display: block;
   width: 168px;
