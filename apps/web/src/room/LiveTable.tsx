@@ -29,6 +29,7 @@ import { Board, type DrawnOrder } from "../map/Board.jsx";
 import { resultsTiming } from "../map/motion.js";
 import type { RoomView } from "../lobby/room.js";
 import { SeatingPlan } from "../lobby/SeatingPlan.jsx";
+import { useTrustMoments } from "../lobby/trust.js";
 import { describeTerms, phaseLabel, powerLabel } from "../lobby/terms.js";
 import type { Room } from "../lobby/useRoom.js";
 import { api } from "../net/api.js";
@@ -76,6 +77,8 @@ export function LiveTable({ room, view }: { room: Room; view: RoomView }) {
   const canOrder = Boolean(seat && running && !seat.eliminated && view.state);
   const kind = view.phase.endsWith("R") ? "R" : view.phase.endsWith("A") ? "A" : "M";
   const online = useOnline();
+  // Trust on the seats is looked at again when it may have moved: a phase turning, the game ending.
+  useTrustMoments(view.phase, over);
 
   const load = useDesk({
     power: me,
