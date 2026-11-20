@@ -240,7 +240,12 @@ async function tableCard(env: AssetEnv, url: URL, code: string, request: Request
   const bytes = new Uint8Array(await base.arrayBuffer());
   if (!env.SERVER) return png(bytes, 60);
   try {
-    const res = await env.SERVER.fetch(new Request(new URL(`/api/games/${code}/replay`, url).toString(), { headers: { Accept: "application/json" } }));
+    // The server limits reads per client address, so the card's read counts against the visitor
+    // (or the link previewer) who asked for it, not one bucket every card would share.
+    const headers = new Headers({ Accept: "application/json" });
+    const address = request.headers.get("cf-connecting-ip");
+    if (address) headers.set("cf-connecting-ip", address);
+    const res = await env.SERVER.fetch(new Request(new URL(`/api/games/${code}/centres`, url).toString(), { headers }));
     if (res.status === 404) return png(bytes, 60, 404);
     const centres = res.ok ? centresOf(await res.json()) : null;
     return centres ? png(shareCard(bytes, centres), CARD_MAX_AGE) : png(bytes, 60);

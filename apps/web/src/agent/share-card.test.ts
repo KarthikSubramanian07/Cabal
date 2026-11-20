@@ -77,4 +77,10 @@ describe("the share card", () => {
     expect(centresOf({ error: "no such game" })).toBeNull();
     expect(centresOf(null)).toBeNull();
   });
+
+  it("reads who holds what from the server's centres answer, without the whole saved game", () => {
+    expect(centresOf({ gameId: "K7Q2XZ", phase: "F1902M", centers: { FRANCE: ["PAR", "SPA/NC"], ENGLAND: [] } })).toEqual({ FRANCE: ["PAR", "SPA"], ENGLAND: [] });
+    expect(centresOf({ centers: null })).toBeNull();
+    expect(centresOf({ centers: ["PAR"] })).toBeNull();
+  });
 });

@@ -9,6 +9,7 @@
  *   POST /api/games/:id/substitute    a seated player opens a vacated seat to an invited substitute
  *   GET  /api/games/:id               public summary
  *   GET  /api/games/:id/replay        MILA saved game JSON, plus the resolved pledges and receipts
+ *   GET  /api/games/:id/centres       who holds which supply centres now (the share card's whole need)
  *   GET  /api/games/:id/ledger        pledge totals per power and every resolved pledge the caller may read
  *   GET  /api/games/:id/press         one page of press history (`before`, `with`, `limit`)
  *   GET  /api/games/:id/ws            WebSocket; a player then sends `hello { token }`
@@ -52,7 +53,7 @@ import { bearerOf, playerRoute, resolvePlayer } from "./players.js";
 export { GameRoom } from "./room.js";
 export { Registry } from "./registry.js";
 
-const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|seat|start|substitute|replay|ledger|press|ws))?$/;
+const GAME_PATH = /^\/api\/games\/([A-Z0-9]{6})(?:\/(join|seat|start|substitute|replay|centres|ledger|press|ws))?$/;
 
 /** A request to a room, carrying the current request id so the room's log lines share it. */
 function roomFetch(stub: { fetch(request: Request): Promise<Response> }, path: string, init: RequestInit | Request = {}): Promise<Response> {
@@ -235,6 +236,7 @@ async function route(request: Request, env: Env): Promise<Response> {
     }
     // Reads that depend on who is asking take the seat token as a bearer header, never in the URL.
     if (action === "replay" && request.method === "GET") return withCors(await roomFetch(stub, "/replay", { headers: authorization }));
+    if (action === "centres" && request.method === "GET") return withCors(await roomFetch(stub, "/centres"));
     if (action === "ledger" && request.method === "GET") return withCors(await roomFetch(stub, "/ledger", { headers: authorization }));
     if (action === "press" && request.method === "GET") {
       if (url.searchParams.has("token")) return withCors(json({ error: "send the seat token as a bearer header, not in the URL" }, 400));

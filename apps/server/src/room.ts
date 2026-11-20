@@ -822,6 +822,11 @@ export class GameRoom extends DurableObject<Env> {
         if (!this.game || !this.meta) return bad("no such game", 404);
         return json(this.replay(this.authorise(bearer(request))));
       }
+      if (request.method === "GET" && path === "/centres") {
+        // The board is public: the same centres every spectator sees, without the whole saved game.
+        if (!this.game || !this.meta) return bad("no such game", 404);
+        return json({ gameId: this.meta.id, phase: this.game.phase(), centers: this.game.state().centers });
+      }
       if (request.method === "GET" && path === "/press") {
         if (!this.meta) return bad("no such game", 404);
         return this.pressHistoryPage(request);

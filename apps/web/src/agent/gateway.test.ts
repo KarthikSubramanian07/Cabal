@@ -306,26 +306,31 @@ describe("handleAgentRequest", () => {
   describe("a table's share card", () => {
     const board = new Uint8Array(readFileSync(new URL("../../public/share/board.png", import.meta.url)));
     const withBoard = mockEnv({ ...files, "/share/board.png": { body: board, type: "image/png" } });
-    const saved = { phases: [{ name: "F1902M", state: { centers: { FRANCE: ["PAR", "MAR", "BRE", "SPA"], ENGLAND: ["LON"] } } }] };
+    const saved = { gameId: "K7Q2XZ", phase: "F1902M", centers: { FRANCE: ["PAR", "MAR", "BRE", "SPA"], ENGLAND: ["LON"] } };
     function live(answer: (path: string) => Response) {
       const asked: string[] = [];
+      const from: (string | null)[] = [];
       const server = {
         async fetch(input: RequestInfo | URL) {
           const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
           asked.push(path);
+          from.push(input instanceof Request ? input.headers.get("cf-connecting-ip") : null);
           return answer(path);
         },
       };
-      return { env: { ...withBoard, SERVER: server } satisfies AssetEnv, asked };
+      return { env: { ...withBoard, SERVER: server } satisfies AssetEnv, asked, from };
     }
 
-    it("draws the table's centres from its saved game, in any case of the code", async () => {
-      const { env: bound, asked } = live(() => Response.json(saved));
-      const res = await handleAgentRequest(new Request("https://playcabal.pages.dev/share/g/k7q2xz.png"), bound);
+    it("draws the table's centres from the server's light answer, in any case of the code", async () => {
+      const { env: bound, asked, from } = live(() => Response.json(saved));
+      const res = await handleAgentRequest(new Request("https://playcabal.pages.dev/share/g/k7q2xz.png", { headers: { "cf-connecting-ip": "203.0.113.9" } }), bound);
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Type")).toBe("image/png");
       expect(res.headers.get("Cache-Control")).toBe("public, max-age=300");
-      expect(asked).toEqual(["/api/games/K7Q2XZ/replay"]);
+      // Only the centres, not the whole saved game, and read as the visitor who asked, so one
+      // scraper cannot spend every other card's read budget.
+      expect(asked).toEqual(["/api/games/K7Q2XZ/centres"]);
+      expect(from).toEqual(["203.0.113.9"]);
       const card = new Uint8Array(await res.arrayBuffer());
       const palette = readPalette(card);
       expect(layout.notches.FRANCE.slice(0, 5).map((i) => palette[i]!.join())).toEqual([...Array(4).fill("78,163,208"), layout.notch.join()]);

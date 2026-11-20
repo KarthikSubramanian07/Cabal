@@ -113,6 +113,21 @@ describe("listing games", () => {
   });
 });
 
+describe("a table's centres", () => {
+  it("answers who holds which supply centres now, the same for anyone, without the saved game", async () => {
+    const seat = await create("Ann", { aiFill: true });
+    const res = await SELF.fetch(`http://cabal/api/games/${seat.gameId}/centres`, { headers: { "cf-connecting-ip": nextIp() } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    const body = (await res.json()) as { gameId: string; phase: string; centers: Record<string, string[]> };
+    expect(body.gameId).toBe(seat.gameId);
+    expect(body.phase).toBe("S1901M");
+    expect([...body.centers.RUSSIA!].sort()).toEqual(["MOS", "SEV", "STP", "WAR"]);
+    expect(Object.keys(body)).toEqual(["gameId", "phase", "centers"]);
+    expect((await SELF.fetch("http://cabal/api/games/ZZZZZZ/centres", { headers: { "cf-connecting-ip": nextIp() } })).status).toBe(404);
+  });
+});
+
 describe("health and failure", () => {
   it("needs exactly the schema the newest migration file makes", () => {
     expect(D1_SCHEMA_REQUIRED).toBe(D1_SCHEMA);

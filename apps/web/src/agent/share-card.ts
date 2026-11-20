@@ -55,14 +55,20 @@ export function shareCard(base: Uint8Array, centres: Centres): Uint8Array {
 }
 
 /**
- * Who holds which centres now, from a saved game (`GET /api/games/:id/replay`): the last phase's
- * state. Null when the answer is not a saved game.
+ * Who holds which centres now, from the server's answer for a table (`GET /api/games/:id/centres`,
+ * `{ centers }`) or from a saved game (`GET /api/games/:id/replay`, the last phase's state). Null
+ * when the answer is neither.
  */
-export function centresOf(saved: unknown): Centres | null {
-  const phases = (saved as { phases?: unknown } | null)?.phases;
-  if (!Array.isArray(phases) || phases.length === 0) return null;
-  const centers = (phases.at(-1) as { state?: { centers?: unknown } } | undefined)?.state?.centers;
-  if (!centers || typeof centers !== "object") return null;
+export function centresOf(answer: unknown): Centres | null {
+  const direct = (answer as { centers?: unknown } | null)?.centers;
+  const phases = (answer as { phases?: unknown } | null)?.phases;
+  const centers =
+    direct !== undefined
+      ? direct
+      : Array.isArray(phases) && phases.length > 0
+        ? (phases.at(-1) as { state?: { centers?: unknown } } | undefined)?.state?.centers
+        : undefined;
+  if (!centers || typeof centers !== "object" || Array.isArray(centers)) return null;
   const out: Record<string, string[]> = {};
   for (const [power, list] of Object.entries(centers as Record<string, unknown>)) {
     if (Array.isArray(list)) out[power] = list.filter((c): c is string => typeof c === "string").map((c) => c.slice(0, 3).toUpperCase());

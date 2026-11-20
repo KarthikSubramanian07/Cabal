@@ -254,6 +254,7 @@ A seal protects a player from the other players, not from the server, which must
 | `POST /api/games/:id/substitute` | `{ power }` with a seated player's bearer token: returns a one-time `invite` for a seat whose player has missed four movement phases |
 | `GET /api/games/:id` | the public summary: `{ id, settings, status, phase, host, deadlineAt, serverTime, createdAt, seats, finished, pauseReason, pausedUntil, pausedRemainingMs, history, ai }` |
 | `GET /api/games/:id/replay` | MILA-compatible saved game JSON, with one extra key `cabal`: `{ protocol, status, finished, pledges, history }` |
+| `GET /api/games/:id/centres` | `{ gameId, phase, centers }`: who holds which supply centres now, the same for every caller (what a table's share card draws) |
 | `GET /api/games/:id/ledger` | `{ gameId, ledger, entries }`: kept, broken and void counts per power, and the resolved pledges the caller may read as `{ id, pledger, audience, phase, sealed, commitment, nonce, orders, receipt }` |
 | `GET /api/games/:id/press` | `{ gameId, press, more }`: one page of press, oldest first. `before=<sentAt>` pages backwards, `with=<power or ALL>` narrows to one thread, `limit` is at most 200 |
 | `GET /api/games/:id/ws` | the WebSocket |

@@ -1,5 +1,5 @@
 /**
- * A table's share card against the real server: the edge reads the table's saved game and colours
+ * A table's share card against the real server: the edge reads the table's centres and colours
  * the opening's supply centres into the board, as a link preview fetches it. Run once, on desktop.
  */
 import { readFileSync, writeFileSync } from "node:fs";
