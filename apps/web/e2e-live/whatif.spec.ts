@@ -116,7 +116,7 @@ test.describe("what if, live", () => {
     await expect(ru.locator(".sketch-stamp")).toBeVisible();
     // Guessing Germany's retreat: picking up its dislodged army brings the retreat tools.
     await tap(ru, "PRU");
-    await expect(tools.locator(".hint")).toContainText("A PRU: tap an empty neighbour, or disband it.");
+    await expect(tools.locator(".hint")).toContainText(/A PRU: (tap|click) an empty neighbour, or disband it\./);
     await tools.getByRole("button", { name: /^Disband/ }).click();
     await expect(ru.locator("svg.board-live g.order")).toHaveCount(1);
     await expect(ru.locator('svg.board-live g.order[data-order="A PRU D"]')).toHaveCount(1);
