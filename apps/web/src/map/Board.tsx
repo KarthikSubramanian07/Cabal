@@ -35,11 +35,11 @@ import {
   type TapCandidate,
   clampView,
   homeView,
+  boardSizes,
   isWholeView,
-  labelSize,
-  layoutLabels,
+  placeLabels,
   resolveTap,
-  unitRadius,
+  touchReach,
   wholeView,
   zoomView,
 } from "./view.js";
@@ -136,11 +136,6 @@ export interface BoardProps {
 
 /** The map is drawn in this many passes after the first (see Board). */
 const LAST_PASS = 4;
-
-/** How close, in CSS pixels, a touch must land to a province it can act on to count for it. */
-const TOUCH_REACH_PX = 26;
-/** The same reach in board units is capped, so on a far-out overview a tap cannot jump provinces away. */
-const TOUCH_REACH_MAX = 48;
 
 const OrderMark = memo(function OrderMark({
   order,
@@ -397,7 +392,9 @@ const Labels = memo(function Labels({ board, size, r }: { board: BoardData; size
         .map(([code, p]) => {
           // A thinned outline is plenty for placing a label, and far cheaper to test against.
           const outline = outlineOf(pathRings(p.d, LABEL_OUTLINE_TOLERANCE));
-          return { code, unit: p.unit, label: p.label, inside: (point: Point) => insideOutline(outline, point[0], point[1]) };
+          // Supply centres keep their codes first when not all fit, then the land, then the seas.
+          const worth = p.sc ? 0 : p.kind === "sea" ? 2 : 1;
+          return { code, unit: p.unit, label: p.label, worth, inside: (point: Point) => insideOutline(outline, point[0], point[1]) };
         }),
     [board],
   );
@@ -407,7 +404,7 @@ const Labels = memo(function Labels({ board, size, r }: { board: BoardData; size
     const key = `${r}/${size}`;
     let layout = cache.current.get(key);
     if (!layout) {
-      layout = layoutLabels(spots, r, size);
+      layout = placeLabels(spots, r, size);
       cache.current.set(key, layout);
     }
     return layout;
@@ -416,7 +413,8 @@ const Labels = memo(function Labels({ board, size, r }: { board: BoardData; size
     <g className="labels" style={{ "--label-size": `${size}px` } as CSSProperties}>
       {spots.map(({ code }) => {
         const p = board.provinces[code]!;
-        const [x, y] = at[code]!;
+        if (!at[code]) return null;
+        const [x, y] = at[code];
         return (
           <text key={code} className={`label ${p.kind === "sea" ? "sea" : "land"}`} x={x} y={y}>
             {code}
@@ -595,9 +593,7 @@ export function Board({
   }, [focusKey]);
 
   const scale = frame.w / view.w;
-  // Round so a pan or a hair of zoom does not re-render every label.
-  const r = Math.round(unitRadius(scale) * 4) / 4;
-  const size = Math.round(labelSize(scale) * 4) / 4;
+  const { r, size } = boardSizes(scale);
 
   /** The phase that has finished playing: the territory is then tinted as the phase leaves it. */
   const [settledKey, setSettledKey] = useState<string | null>(null);
@@ -935,7 +931,7 @@ export function Board({
     const code =
       e.pointerType === "mouse"
         ? under
-        : resolveTap(toBoard(e.clientX, e.clientY, view), under, candidates, Math.min(TOUCH_REACH_PX / scale, TOUCH_REACH_MAX));
+        : resolveTap(toBoard(e.clientX, e.clientY, view), under, candidates, touchReach(scale));
     if (code) onProvince(code, { x: e.clientX, y: e.clientY });
   };
 
