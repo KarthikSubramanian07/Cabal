@@ -47,7 +47,7 @@
   --p-turkey: #d9a82c;
 
   /* ---- type */
-  --font-ui: "Inter Tight Variable", system-ui, sans-serif;
+  --font-ui: "Inter Tight Variable", "Inter Tight Arial", "Inter Tight Roboto", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   --font-display: "Archivo Black", "Arial Black", sans-serif;
 
