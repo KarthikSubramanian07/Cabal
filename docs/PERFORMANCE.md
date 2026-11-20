@@ -258,7 +258,18 @@ A deployed Worker's clock does not advance during pure computation (a Spectre mi
 `engine_*` lines read near zero there. The production figures are the `cpuTime` and `wallTime`
 Workers Logs records for the invocation that carries an `engine_first_process` line (filter on
 `event`), and the client-side difference between a request to a fresh game code and to a warm one.
-These have not been recorded yet: they need a deploy that includes this harness and its log lines.
+Recorded on 2026-11-20 against build `4eaf613daef1`, minutes after a deploy, with
+`wrangler tail cabal-server --format json` while three fresh games were created:
+
+| Invocation | Rooms | CPU time | Wall time |
+|---|---|---|---|
+| A fresh room's first request (`engine_ready` and `engine_first_game`, `/create`) | 3 | 12 to 17 ms | 40 to 89 ms |
+| A woken room's first request that also resolves a phase (`engine_first_process` too) | 4 | 56 to 105 ms | 75 to 179 ms |
+| Other room requests in the same window, median | 3 | 8 ms | |
+
+The `engine_*` lines themselves read 0 ms, as expected. Starting the engine adds a few
+milliseconds of CPU over a warm request, well inside the Workers limits; the first adjudication
+is the larger cost.
 
 ## Recorded baseline
 

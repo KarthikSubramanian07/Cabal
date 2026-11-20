@@ -6,6 +6,10 @@ Written by `tools/metrics`; see its README for the command behind each line.
 |---|---|---|---|---|---|---|
 | DATC v3.0 | 100 percent, zero skipped | 171 of 171 passed, 0 failed, 0 skipped | local (cargo) | 2026-11-20 | `2b4ff1396e59` | pass |
 | Full 7 seat game | finishes with no manual intervention | finished: draw by vote after 16 phases, 2.5 s, 2 people and 5 bots | local (wrangler dev) | 2026-11-20 | `2b4ff1396e59` | pass |
+| Full 7 seat game | finishes with no manual intervention | finished: draw by vote after 17 phases, 2.9 s, 2 people and 5 bots | production | 2026-11-20 | `4eaf613daef1` | pass |
 | Landing page to a game in progress | under 60 s, AI seats filling the table | 1.8 s | local (wrangler dev), desktop | 2026-11-20 | `2b4ff1396e59` | pass |
 | Landing page to a game in progress | under 60 s, AI seats filling the table | 2.0 s | local (wrangler dev), phone | 2026-11-20 | `2b4ff1396e59` | pass |
+| Landing page to a game in progress | under 60 s, AI seats filling the table | 6.6 s | production, desktop | 2026-11-20 | `4eaf613daef1` | pass |
+| Landing page to a game in progress | under 60 s, AI seats filling the table | 3.3 s | production, phone | 2026-11-20 | `4eaf613daef1` | pass |
 | Order submit round trip | p95 under 150 ms (Europe or North America) | p95 39.9 ms (p50 7, p99 111.3, n 100) | local (wrangler dev) | 2026-11-20 | `2b4ff1396e59` | pass |
+| Order submit round trip | p95 under 150 ms (Europe or North America) | p95 111.3 ms (p50 70.2, p99 148.5, n 100) | production, from the US West Coast | 2026-11-20 | `4eaf613daef1` | pass |
