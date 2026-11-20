@@ -219,6 +219,53 @@ describe("handleAgentRequest", () => {
       expect(asked).toContain("/api/players/Nobody_ever_here");
     });
 
+    it("asks the server as the visitor who asked, so page lookups never share one rate-limit bucket", async () => {
+      const from: (string | null)[] = [];
+      const server = {
+        async fetch(input: RequestInfo | URL) {
+          const request = input instanceof Request ? input : new Request(String(input));
+          from.push(request.headers.get("cf-connecting-ip"));
+          return request.url.includes("/api/players/") ? Response.json({ player: { id: "p1", handle: "Kestrel", createdAt: 1 } }) : Response.json({ status: "finished", settings: { visibility: "public" } });
+        },
+      };
+      const live = { ...env, SERVER: server } satisfies AssetEnv;
+      for (const path of ["/u/kestrel", "/replay/K7Q2XZ"]) {
+        await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, { headers: { ...html.headers, "cf-connecting-ip": "203.0.113.9" } }), live);
+      }
+      expect(from).toEqual(["203.0.113.9", "203.0.113.9"]);
+    });
+
+    it("lets search indexes keep the replay of a public game that has ended, and no other", async () => {
+      const games: Record<string, unknown> = {
+        "/api/games/PUB4ED": { status: "finished", settings: { visibility: "public" } },
+        "/api/games/PUB4AB": { status: "abandoned", settings: { visibility: "public" } },
+        "/api/games/PUB4NW": { status: "active", settings: { visibility: "public" } },
+        "/api/games/UNL4ED": { status: "finished", settings: { visibility: "unlisted" } },
+      };
+      const asked: string[] = [];
+      const server = {
+        async fetch(input: RequestInfo | URL) {
+          const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+          asked.push(path);
+          if (path === "/api/games/DWN444") return new Response("down", { status: 503 });
+          return games[path] ? Response.json(games[path]) : Response.json({ error: "no such game" }, { status: 404 });
+        },
+      };
+      const live = { ...env, SERVER: server } satisfies AssetEnv;
+      const page = async (path: string) => {
+        const res = await handleAgentRequest(new Request(`https://playcabal.pages.dev${path}`, html), live);
+        return { status: res.status, header: res.headers.get("X-Robots-Tag"), robots: /<meta name="robots" content="([^"]+)"/.exec(await res.text())?.[1] };
+      };
+      for (const code of ["PUB4ED", "PUB4AB"]) expect(await page(`/replay/${code}`), code).toEqual({ status: 200, header: null, robots: "index, follow" });
+      // Still being played, or never listed: a replay for the people sent the code.
+      for (const code of ["PUB4NW", "UNL4ED", "DWN444"]) expect(await page(`/replay/${code}`), code).toEqual({ status: 200, header: "noindex", robots: "noindex, follow" });
+      // A code nobody has is a 404 no index keeps.
+      expect(await page("/replay/NNE444")).toEqual({ status: 404, header: "noindex", robots: "noindex, follow" });
+      // A table's own page never waits on the server, and is never indexed, public or not.
+      expect(await page("/g/PUB4ED")).toEqual({ status: 200, header: "noindex", robots: "noindex, follow" });
+      expect(asked.filter((p) => p.endsWith("/PUB4ED"))).toEqual(["/api/games/PUB4ED"]);
+    });
+
     it("gives agents the home Markdown at /sandbox and a 404 for routes with no content", async () => {
       const md = { headers: { Accept: "text/markdown" } };
       const sandbox = await handleAgentRequest(new Request("https://playcabal.pages.dev/sandbox", md), env);

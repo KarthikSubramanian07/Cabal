@@ -8,6 +8,7 @@
  */
 import type { GameSummary, PowerName } from "@cabal/protocol";
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { applyHead, metaFor, replayIndexable } from "../app/meta.js";
 import { shortcutsEnabled } from "../app/prefs.js";
 import { PageLoading } from "../app/PageLoading.jsx";
 import { StatusPage } from "../app/StatusPage.jsx";
@@ -272,6 +273,11 @@ export default function ReplayPage({ code: raw }: { code: string }) {
 
 function Loaded({ code, attempt, retry }: { code: string; attempt: number; retry: () => void }) {
   const load = useReplay(code, attempt);
+  // A public game's replay may be indexed, as the edge said in the head it served (`replayIndexable`).
+  const indexable = load.kind === "ready" && replayIndexable(load.summary);
+  useEffect(() => {
+    if (indexable) applyHead({ ...metaFor(`/replay/${code}`), index: true });
+  }, [indexable, code]);
   if (load.kind === "loading") return <PageLoading />;
   if (load.kind === "missing") return <MissingReplay code={code} />;
   if (load.kind === "running") {

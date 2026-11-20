@@ -130,12 +130,22 @@ export function metaForRoute(route: RouteMatch | null, path: string): PageMeta {
         title: `Replay of table ${code} — ${BRAND}`,
         description: `Every phase of Diplomacy table ${code}, played back on the board with each order's result and every sealed promise opened.`,
         canonical,
+        // Unless its game was public and has ended (`replayIndexable`), which only the server knows.
         index: false,
         type: "article",
         ...withImage(tableCard(p["code"] ?? "")),
       };
     }
   }
+}
+
+/**
+ * Whether a replay is one a search index may keep: its game was played in public (it was listed
+ * in the games room) and has ended. Every other replay, and every table, stays out of indexes.
+ * The Pages worker asks the server before it writes the head; the page agrees once it has loaded.
+ */
+export function replayIndexable(summary: { status?: unknown; settings?: { visibility?: unknown } }): boolean {
+  return summary.settings?.visibility === "public" && (summary.status === "finished" || summary.status === "abandoned");
 }
 
 export function metaFor(path: string): PageMeta {
