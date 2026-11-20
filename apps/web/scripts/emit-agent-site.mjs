@@ -149,6 +149,7 @@ ${bodyHtml}
           <a href="/about">About</a>
           <a href="/contact">Contact</a>
           <a href="/privacy">Privacy</a>
+          <a href="/status">Status</a>
           <a href="/llms.txt">llms.txt</a>
           <a href="https://github.com/KarthikSubramanian07/Cabal">Source</a>
         </span>

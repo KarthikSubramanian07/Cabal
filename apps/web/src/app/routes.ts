@@ -4,7 +4,7 @@
  * the client can render and a real 404 for everything else.
  */
 
-export type RouteName = "home" | "sandbox" | "game" | "games" | "ledger" | "profile" | "replay";
+export type RouteName = "home" | "sandbox" | "game" | "games" | "ledger" | "profile" | "replay" | "status";
 
 export interface RouteDef {
   name: RouteName;
@@ -20,6 +20,7 @@ export const ROUTES: readonly RouteDef[] = [
   { name: "ledger", pattern: "/ledger" },
   { name: "profile", pattern: "/u/:handle" },
   { name: "replay", pattern: "/replay/:code" },
+  { name: "status", pattern: "/status" },
 ];
 
 export interface RouteMatch {

@@ -105,6 +105,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <a href="/about">About</a>
           <a href="/contact">Contact</a>
           <a href="/privacy">Privacy</a>
+          <Link href="/status">Status</Link>
           <a href="/llms.txt">llms.txt</a>
           <a href={SOURCE_URL}>Source</a>
         </span>

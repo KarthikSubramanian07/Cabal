@@ -93,6 +93,15 @@ export function metaForRoute(route: RouteMatch | null, path: string): PageMeta {
         type: "article",
       };
     }
+    case "status":
+      return {
+        title: `Status — ${BRAND}`,
+        description: "Whether Cabal's game server is answering, which build is deployed, and how long it takes to answer, checked live.",
+        canonical,
+        // A live reading, not a page for a search index.
+        index: false,
+        type: "website",
+      };
     case "replay": {
       const code = spaced(p["code"] ?? "");
       return {
