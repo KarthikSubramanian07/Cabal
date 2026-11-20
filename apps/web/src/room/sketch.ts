@@ -65,3 +65,13 @@ export function sketchGhosts(prediction: Prediction | null): Ghost[] {
 export function sketchCount(book: OrderBook): number {
   return Object.values(book).reduce((sum, o) => sum + Object.keys(o).length, 0);
 }
+
+/**
+ * The line under a sketch when the seat's real orders, which keep filing while it is open, did not
+ * all land: the failure, or how many the server refused. Null when they did.
+ */
+export function sketchSyncLine(error: string | null, refused: number): string | null {
+  if (error) return `Your real orders were not filed: ${error}`;
+  if (refused > 0) return `${refused === 1 ? "One of your real orders was" : `${refused} of your real orders were`} refused. Leave what if to see why.`;
+  return null;
+}

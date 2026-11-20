@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { Game, ready } from "@cabal/engine";
 import { beforeAll, describe, expect, it } from "vitest";
 import { predict } from "../game/explain/whatIf.js";
-import { legalForEveryone, sketchCount, sketchGhosts, sketchMarks, sketchPowers } from "./sketch.js";
+import { legalForEveryone, sketchCount, sketchGhosts, sketchMarks, sketchPowers, sketchSyncLine } from "./sketch.js";
 
 beforeAll(async () => {
   await ready(readFileSync(fileURLToPath(new URL("../../../../packages/engine/pkg/cabal_engine_bg.wasm", import.meta.url))));
@@ -45,5 +45,18 @@ describe("the sketch on the board", () => {
     const list = sketchPowers(all, "TURKEY", "M");
     expect(list[0]).toBe("TURKEY");
     expect(list.slice(1)).toEqual(["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA"]);
+  });
+});
+
+describe("sketchSyncLine", () => {
+  it("says nothing when the real orders landed", () => {
+    expect(sketchSyncLine(null, 0)).toBeNull();
+  });
+  it("says a filing failed, while the sketch is still open", () => {
+    expect(sketchSyncLine("The phase has moved on.", 0)).toBe("Your real orders were not filed: The phase has moved on.");
+  });
+  it("counts the real orders the server refused", () => {
+    expect(sketchSyncLine(null, 1)).toBe("One of your real orders was refused. Leave what if to see why.");
+    expect(sketchSyncLine(null, 3)).toBe("3 of your real orders were refused. Leave what if to see why.");
   });
 });

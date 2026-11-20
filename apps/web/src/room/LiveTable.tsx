@@ -45,7 +45,7 @@ import { DispatchBoard, useDispatches } from "../toast/DispatchBoard.jsx";
 import { useNarrow } from "../app/useNarrow.js";
 import { filedLine } from "./settle.js";
 import { useDesk } from "./useDesk.js";
-import { sketchCount, sketchGhosts, sketchMarks, sketchPowers } from "./sketch.js";
+import { sketchCount, sketchGhosts, sketchMarks, sketchPowers, sketchSyncLine } from "./sketch.js";
 import { WhatIfPanel } from "./WhatIfPanel.jsx";
 
 type Tab = "orders" | "press" | "table";
@@ -1044,6 +1044,11 @@ function Floor({
             {!record && !sketching && me && canOrder && seat?.canAct ? (
               <p className={`sync-line${desk.sync === "failed" ? " alert" : ""}`} role="status">
                 {syncLine}
+              </p>
+            ) : !record && sketching && (desk.sync === "failed" || rejected.length > 0) ? (
+              // The real orders still file while a sketch is open: a failure is not kept for later.
+              <p className="sync-line alert" role="status">
+                {sketchSyncLine(desk.sync === "failed" ? desk.syncError : null, rejected.length)}
               </p>
             ) : null}
           </div>
