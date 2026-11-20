@@ -5,7 +5,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Browser, Page } from "@playwright/test";
 import { clientHeaders, expect, test } from "./fixtures.js";
-import { chooseHandle, uniqueHandle } from "./room.js";
+import { chooseHandle, guestDialog, uniqueHandle } from "./room.js";
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
@@ -180,7 +180,7 @@ test.describe("the lobby, live", () => {
 
     // Taking any seat; the first sit-down asks for a handle, and the server can pick one.
     await page.getByRole("button", { name: "Take any open seat" }).click();
-    const handleDialog = page.getByRole("dialog", { name: "Choose your handle" });
+    const handleDialog = await guestDialog(page);
     await handleDialog.getByRole("button", { name: "Pick one for me" }).click();
     await expect(handleDialog).toBeHidden();
     await expect(page.getByText(/You sit as \w+/)).toBeVisible();

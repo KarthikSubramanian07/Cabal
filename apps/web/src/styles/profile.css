@@ -521,14 +521,102 @@ dialog.account .how-body section {
   border: 1px dashed var(--rule);
 }
 
-.player-google {
-  padding: 10px 14px 6px;
+/* Signed out: the seal's place holds a brass-edged Sign in, the one way in. */
+.player-button.signin-button {
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--brass) 70%, transparent);
+  color: var(--bone);
 }
 
-.player-list .player-error {
-  margin: 0;
-  padding: 4px 14px 8px;
+.player-button.signin-button .player-seal.empty {
+  display: none;
+}
+
+.player-button.signin-button:hover {
+  border-color: var(--brass);
+  background: color-mix(in srgb, var(--brass) 14%, transparent);
+}
+
+.player-button.signin-button:hover .player-name {
+  text-decoration: none;
+}
+
+/* On a phone the bar hides names, but Sign in is the way in: keep it. */
+.player-button.signin-button .player-name {
+  position: static;
+  width: auto;
+  height: auto;
+  clip: auto;
+  overflow: visible;
+}
+
+.player-kind {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-4);
+  font-size: var(--text-xs, 0.75rem);
+  letter-spacing: 0.02em;
+}
+
+/* A guest account's way to keep itself: set apart in brass, above the rest. */
+.player-list .player-keep {
+  margin: 8px 10px 4px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--brass-deep);
+  background: color-mix(in srgb, var(--brass) 16%, var(--paper));
+  color: var(--brass-ink);
   font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.player-list .player-keep:hover {
+  background: color-mix(in srgb, var(--brass) 28%, var(--paper));
+}
+
+/* ---- the sign-in dialog: Google first, a guest handle after the rule */
+
+dialog.signin-dialog {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.seal-form.signin {
+  display: grid;
+  justify-items: stretch;
+}
+
+.seal-form.signin .seal-google {
+  justify-self: center;
+  margin: var(--space-2) 0 var(--space-2);
+}
+
+.signin-privacy {
+  margin: 0 0 var(--space-4);
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  text-align: center;
+}
+
+.signin-guest {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin-bottom: var(--space-3);
+  text-align: center;
+}
+
+.signin-guest .btn {
+  min-width: 200px;
+}
+
+.signin-guest .field-note {
+  margin: 0;
+  max-width: 32ch;
+}
+
+.seal-form.signin .seal-fine {
+  text-align: center;
 }
 
 .seal-google {

@@ -4,7 +4,7 @@
  * missed. And a keyboard player arriving by Play now starts on the table, not on the page body.
  */
 import { expect, test } from "./fixtures.js";
-import { chooseHandle, closeSheet, primary, tab, uniqueHandle } from "./room.js";
+import { chooseHandle, closeSheet, guestDialog, primary, tab, uniqueHandle } from "./room.js";
 
 /** Openings that win most powers a centre in 1901 against the bot. */
 const OPEN: Record<string, { S: string[]; F: string[] }> = {
@@ -65,7 +65,7 @@ test.describe("readying, live", () => {
     await page.goto("/");
     await page.getByRole("button", { name: /Play now/ }).focus();
     await page.keyboard.press("Enter");
-    await page.getByRole("dialog", { name: "Choose your handle" }).getByLabel("Handle").fill(uniqueHandle("keys"));
+    await (await guestDialog(page)).getByLabel("Handle").fill(uniqueHandle("keys"));
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/g\//, { timeout: 20_000 });
     await expect(page.locator("svg.board text.label").first()).toBeVisible({ timeout: 30_000 });

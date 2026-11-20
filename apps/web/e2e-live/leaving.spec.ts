@@ -27,7 +27,7 @@ test.describe("deleting an account, live", () => {
     await section.getByRole("button", { name: "Delete for good" }).click();
     await expect(card.getByRole("status")).toContainText("The account is deleted.");
     await card.getByRole("button", { name: "Close", exact: true }).last().click();
-    await expect(page.locator(".player-button")).toHaveAccessibleName("Your account");
+    await expect(page.locator(".player-button")).toHaveAccessibleName("Sign in");
 
     // The seat is a ghost in civil disorder. (With nobody else at this table, the game then ends by
     // its own rule rather than playing on for nobody.)
