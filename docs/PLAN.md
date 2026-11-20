@@ -67,15 +67,16 @@ flowchart LR
     API --> DO[(Durable Object: GameRoom)]
     DO --> SQL[(DO SQLite)]
     DO --> WASM2[cabal-engine.wasm + heuristic bot]
-    API --> REG[(Durable Object: Registry\naccounts, ratings, history)]
-    DO -->|game over| REG
+    API --> D1[(D1: cabal\nplayers, ratings, ledger, games index)]
+    DO -->|game over| D1
+    DO -->|Claude admission| REG[(Durable Object: Registry\nClaude budget)]
     DO --> Q[Queue: cabal-agent-turns]
     Q -->|opt-in Claude seats| Claude[Anthropic API]
   end
   UI <-->|HTTPS and WebSocket, same origin| Pages
 ```
 
-One Rust crate, `cabal-engine`, is compiled once with `wasm-bindgen` and loaded in two places: the browser (instant legality checks, order preview, what-if sandbox) and the `GameRoom` Durable Object (authoritative adjudication). The Durable Object owns one game: its SQLite tables, its WebSocket connections, and one alarm for the phase deadline. Cross-game data (accounts, ratings, match history, the trust ledger) lives in a singleton `Registry` Durable Object, not D1 ([ADR 0009](adr/0009-registry-durable-object-instead-of-d1.md)). The browser reaches the server through the Pages origin, which forwards `/api` to the Worker. Full detail in [ARCHITECTURE.md](ARCHITECTURE.md).
+One Rust crate, `cabal-engine`, is compiled once with `wasm-bindgen` and loaded in two places: the browser (instant legality checks, order preview, what-if sandbox) and the `GameRoom` Durable Object (authoritative adjudication). The Durable Object owns one game: its SQLite tables, its WebSocket connections, and one alarm for the phase deadline. Cross-game data (accounts, ratings, match history, the trust ledger, push subscriptions) lives in the D1 database `cabal` behind the `GameIndex` and `PlayerStore` ports; a singleton `Registry` Durable Object keeps the deployment-wide Claude budget ([ADR 0010](adr/0010-d1-index-registry-for-the-claude-budget.md)). The browser reaches the server through the Pages origin, which forwards `/api` to the Worker. Full detail in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## 5. Roadmap
 
@@ -110,8 +111,8 @@ The seven issues are grouped into three subteams, each named after a job at a re
 | [#6](https://github.com/KarthikSubramanian07/Cabal/issues/6) | Adjudicators | Engine: order normalisation, second oracle corpus, fuzzing, explanation graph | Rust | Zero skipped cases in any corpus; `cabal explain --graph` |
 | [#7](https://github.com/KarthikSubramanian07/Cabal/issues/7) | Adjudicators | Engine: deterministic replay fixtures, variant map format, performance gates | Rust | Every fixture replays with zero divergence; variants load from JSON |
 | [#11](https://github.com/KarthikSubramanian07/Cabal/issues/11) | Adjudicators | Agents: arena runner, prompt tuning, cost controls, nightly evaluation | TS / LLM | Seven agents finish 1901 to 1910 with zero illegal orders under budget |
-| [#8](https://github.com/KarthikSubramanian07/Cabal/issues/8) | Couriers | Server: GameRoom lifecycle, deadlines, NMR policy, press channels, game-over hand-off to the Registry | TS / Durable Objects | A full game with two humans and five AI seats, no operator |
-| [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12) | Couriers | Platform: guest identity, Registry Durable Object, ratings and trust ledger, manual deploy runbook, observability, SEO, integrations (Discord bot, email digests, Slack bridge) | TS / Cloudflare | A maintainer deploys web and server with one command from a green `main`, with the deploy dry run gated in CI ([ADR 0008](adr/0008-manual-wrangler-deploys.md)); ratings and the trust ledger update after each game |
+| [#8](https://github.com/KarthikSubramanian07/Cabal/issues/8) | Couriers | Server: GameRoom lifecycle, deadlines, NMR policy, press channels, game-over hand-off to the games index | TS / Durable Objects | A full game with two humans and five AI seats, no operator |
+| [#12](https://github.com/KarthikSubramanian07/Cabal/issues/12) | Couriers | Platform: guest identity, the D1 games index, ratings and trust ledger, manual deploy runbook, observability, SEO, integrations (Discord bot, email digests, Slack bridge) | TS / Cloudflare | A maintainer deploys web and server with one command from a green `main`, with the deploy dry run gated in CI ([ADR 0008](adr/0008-manual-wrangler-deploys.md)); ratings and the trust ledger update after each game |
 | [#9](https://github.com/KarthikSubramanian07/Cabal/issues/9) | Cartographers | Web: every order type polished, animated results, replay scrubber, multiplayer mode, accessibility | React | A full game against AI seats on a phone without typing |
 | [#10](https://github.com/KarthikSubramanian07/Cabal/issues/10) | Cartographers | Web: lobby, press, seals and receipts, trust ledger, notifications, PWA | React | Create, invite, negotiate with sealed pledges and see receipts from a phone |
 

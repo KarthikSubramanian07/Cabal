@@ -14,8 +14,9 @@ flowchart TB
   end
 
   subgraph Edge["Cloudflare"]
-    Pages[(Pages: playcabal\nstatic site + /api proxy)]
-    API[Worker: cabal-server\nrouting, lobby, rate limits]
+    Pages[(Pages: playcabal\nstatic site + gateway worker)]
+    API[Worker: cabal-server\nrouting, lobby, accounts, rate limits]
+    Consumer[Queue consumer\nin cabal-server]
     subgraph DO["Durable Object: GameRoom (one per game)"]
       WS[Hibernating WebSockets]
       SM[Phase state machine]
@@ -38,7 +39,8 @@ flowchart TB
   API --> D1
   DO -->|game over, seat taken| D1
   DO -->|Claude admission| Registry
-  SM --> Queue --> Anthropic[(Anthropic API)]
+  SM --> Queue --> Consumer --> Anthropic[(Anthropic API)]
+  Consumer -->|orders, or nothing and the bot stands| DO
   DO -->|Web Push to away players| PushSvc
 ```
 
@@ -47,7 +49,7 @@ Five principles:
 1. **One engine, two hosts.** The Rust crate is compiled once to WebAssembly. The browser uses it for instant feedback; the Durable Object uses it as the authority. They cannot disagree because they are the same bytes.
 2. **One object owns one game.** All state for a game (positions, orders, press, pledges, deadlines, sockets) lives in one Durable Object with SQLite storage. Adjudication, persistence and broadcast are one transaction. No cross-service hop on the hot path.
 3. **Layers above the line never touch the resolver.** Pledges, cabals, vendettas and ratings consume adjudication results. They cannot change them.
-4. **One origin.** The browser only ever talks to `playcabal.pages.dev`. The Pages project proxies `/api/*`, including WebSocket upgrades, to the `cabal-server` Worker through a service binding named `SERVER`, so the content security policy can stay `connect-src 'self'`. In `vite dev` the same path is proxied to `http://localhost:8787`. The web app calls it through the typed client in `@cabal/protocol/client`: the games room (`/games`) and each table's lobby (`/g/:code`) are live; a seat token is kept in `localStorage` under the game's code and is never put in a URL.
+4. **One origin.** The browser only ever talks to `playcabal.pages.dev`. The Pages project's gateway worker (section 8) proxies `/api/*`, including WebSocket upgrades, to the `cabal-server` Worker through a service binding named `SERVER`, so the content security policy can stay `connect-src 'self'`. In `vite dev` the same path is proxied to `http://localhost:8787`. The web app calls it through the typed client in `@cabal/protocol/client`: the games room (`/games`) and each table's lobby (`/g/:code`) are live; a seat token is kept in `localStorage` under the game's code and is never put in a URL.
 5. **A service worker that never serves an old app.** `sw.js` is built after every build (`apps/web/src/sw`, bundled by `scripts/emit-agent-site.mjs`) with a version hashed from the files it precaches, so each deploy ships a new worker. Navigations go to the network first and fall back to the installed shell only offline and only for app routes; hashed `/assets` files are cache first; `/api`, sockets and other origins are never touched. A new build waits until the player chooses Reload on the update prompt.
 
 ## 2. Repository layout
@@ -65,8 +67,10 @@ cabal/
     agents/          @cabal/agents  LLM player harness
   apps/
     web/             @cabal/web  Vite + React 19, Cloudflare Pages
-    server/          @cabal/server  Worker + GameRoom Durable Object
-  docs/              PLAN, ARCHITECTURE, RULES, PROTOCOL, ADRs, diagrams
+    server/          @cabal/server  Worker, GameRoom and Registry Durable Objects, D1 migrations
+  tools/             mapgen (the board from Natural Earth), the bench gate, the godip oracle check
+  fuzz/              cargo fuzz targets for the parser and legal order sets
+  docs/              PLAN, ARCHITECTURE, RULES, PROTOCOL, BOT, PERFORMANCE, ADRs
   .github/           CI, issue and PR templates
 ```
 
@@ -160,7 +164,11 @@ stateDiagram-v2
   Adjustment --> Movement
   Movement --> Finished: 18 centres or draw vote passes
   Adjustment --> Finished: 18 centres
+  Movement --> Finished: no human power survives
+  Movement --> Abandoned: three movement phases with no human order
+  Lobby --> Abandoned: never started
   Finished --> [*]
+  Abandoned --> [*]
 ```
 
 - Connections use the Durable Object WebSocket Hibernation API directly (`ctx.acceptWebSocket`, no framework). Each socket carries the seat it authenticated as in a serialised attachment, so it survives hibernation.
@@ -222,7 +230,7 @@ Web Push tells a signed-in player who is away from a game (no socket open for th
 
 ## 6. Protocol
 
-The WebSocket protocol is specified in [PROTOCOL.md](PROTOCOL.md) and enforced with zod schemas in `@cabal/protocol`. Order text follows the MILA / Cicero notation (`A PAR - BUR`, `F NTH C A LON - BRE`, `A LON - BRE VIA`) so existing AI research tooling and saved games interoperate.
+The WebSocket protocol (version 2, `PROTOCOL_VERSION` in `@cabal/protocol`, also reported by `/health`) is specified in [PROTOCOL.md](PROTOCOL.md) and enforced with zod schemas in `@cabal/protocol`; a test fails when the page and the schemas disagree. A socket opens as a spectator and binds to a seat with a first `hello` frame, every broadcast carries a sequence number, and a client that reconnects resumes with `sync { since }` instead of reloading the game. Order text follows the MILA / Cicero notation (`A PAR - BUR`, `F NTH C A LON - BRE`, `A LON - BRE VIA`) so existing AI research tooling and saved games interoperate.
 
 ## 7. Agents (`packages/agents`)
 
@@ -237,6 +245,8 @@ A Claude agent (`@cabal/agents`) is just another client. It receives the same st
 - `src/game/compose.ts` is a pure, unit-tested state machine for Backstabbr-style ordering (unit then destination, click twice to hold, S and C for support and convoy, coast picker). It only emits orders present in the engine's legal list.
 - `src/game/useSandbox.ts` owns the engine `Game`, the order book per power, the phase history (for replay and undo by re-adjudication) and MILA import and export.
 - The board supports zoom (buttons, ctrl or pinch wheel, two-finger pinch) and drag to pan when zoomed.
+- **The edge.** Pages runs in advanced mode: `scripts/emit-agent-site.mjs` bundles `worker/entry.ts` (which calls `src/agent/gateway.ts`) into `dist/_worker.js`. The gateway forwards `/api/*`, sockets included, to `cabal-server` through the `SERVER` service binding; answers every app route with the shell and that route's own title, description and share card; serves the prerendered front door; hands Markdown to clients that ask for it (`Accept: text/markdown`, `/llms.txt`); and returns real 404s.
+- **Counts the site quotes.** The number of adjudication test cases on the footer, the front door and How to play comes from `src/app/adjudication.json`, which `src/app/adjudication.test.ts` holds to the engine's own fixtures.
 
 ## 9. Deployment
 

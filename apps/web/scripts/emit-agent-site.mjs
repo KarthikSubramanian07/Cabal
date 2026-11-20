@@ -17,6 +17,11 @@ const require = createRequire(import.meta.url);
 
 const SITE = "https://playcabal.pages.dev";
 
+/** The case counts every page quotes (src/app/adjudication.json; src/app/adjudication.test.ts keeps them true). */
+const ADJUDICATION = JSON.parse(readFileSync(join(root, "src/app/adjudication.json"), "utf8"));
+/** The footer's sentence, the same as `ENGINE_CLAIM` in src/app/adjudication.ts. */
+export const ENGINE_CLAIM = `Adjudicated in your browser by a Rust engine that passes all ${ADJUDICATION.datc + ADJUDICATION.cabal} DATC and Cabal test cases.`;
+
 function md(name) {
   return readFileSync(join(site, name), "utf8");
 }
@@ -143,7 +148,7 @@ ${bodyHtml}
       </main>
       <footer class="footer">
         <span>Diplomacy with receipts.</span>
-        <span>Adjudicated in your browser by a Rust engine that passes all 171 DATC cases.</span>
+        <span>${ENGINE_CLAIM}</span>
         <span>Board drawn from Natural Earth.</span>
         <span class="footer-links">
           <a href="/about">About</a>
