@@ -3,7 +3,8 @@
  * are two people on two devices: separate storage, separate sockets.
  */
 import AxeBuilder from "@axe-core/playwright";
-import { type Browser, type Page, expect, test } from "@playwright/test";
+import type { Browser, Page } from "@playwright/test";
+import { clientHeaders, expect, test } from "./fixtures.js";
 import { chooseHandle, uniqueHandle } from "./room.js";
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
@@ -19,7 +20,7 @@ async function scan(page: Page, state: string) {
 /** A second person on their own device, with the same screen size as this project's. */
 async function stranger(browser: Browser, page: Page): Promise<Page> {
   const viewport = page.viewportSize()!;
-  const context = await browser.newContext({ viewport, serviceWorkers: "block", baseURL: new URL(page.url()).origin });
+  const context = await browser.newContext({ viewport, serviceWorkers: "block", baseURL: new URL(page.url()).origin, extraHTTPHeaders: clientHeaders() });
   return context.newPage();
 }
 

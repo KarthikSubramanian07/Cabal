@@ -3,7 +3,7 @@
  * a dispatch slip that opens the thread it is about, a reply quotes the message it answers in the
  * original's own words, and each signed-in player's trust and record are a tap away from their seat.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { type Seat, liveTable, scan, sitDown, tab, titleCase, uniqueHandle } from "./room.js";
 
 test.describe("the social layer, live", () => {

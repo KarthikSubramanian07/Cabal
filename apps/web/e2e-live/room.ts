@@ -4,6 +4,7 @@
  */
 import AxeBuilder from "@axe-core/playwright";
 import { type APIRequestContext, type Browser, type Page, type TestInfo, expect } from "@playwright/test";
+import { clientHeaders } from "./fixtures.js";
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
@@ -56,6 +57,7 @@ export async function sitDown(browser: Browser, info: TestInfo, seat: Seat | nul
     hasTouch: Boolean(use.hasTouch),
     baseURL: use.baseURL ?? `http://localhost:${process.env.E2E_LIVE_PORT ?? 4184}`,
     serviceWorkers: "block",
+    extraHTTPHeaders: clientHeaders(),
   });
   if (seat) {
     await context.addInitScript((s) => localStorage.setItem(`cabal.seat.${s.gameId}`, JSON.stringify({ ...s, savedAt: Date.now() })), seat);
