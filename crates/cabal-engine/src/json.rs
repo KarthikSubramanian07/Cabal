@@ -430,6 +430,11 @@ pub fn state_from_mila(map: &Map, s: &MilaState) -> Result<GameState, ImportErro
         let p = find_power(map, power).ok_or_else(|| ImportError::UnknownPower(power.clone()))?;
         for u in list {
             match u.strip_prefix('*') {
+                // Only a retreat phase has dislodged units: anywhere else the mark would load a
+                // unit the export never writes back.
+                Some(_) if phase.kind != PhaseKind::Retreat => {
+                    return Err(ImportError::BadUnit(u.clone()));
+                }
                 Some(text) => dislodged.push((power.clone(), parse_unit(map, p, text)?)),
                 None => state.position.add_unit(parse_unit(map, p, u)?),
             }

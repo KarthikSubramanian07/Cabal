@@ -187,3 +187,16 @@ fn an_export_from_an_early_year_reads_back() {
     assert_eq!(again.state, game.state);
     load_every_way(&serde_json::to_value(&saved).unwrap());
 }
+
+/// Found by the fuzzer, from the seed above: a movement-phase state listing a dislodged unit
+/// (`*A MUN`). It loaded with that unit dislodged, the export (which only lists dislodged units
+/// in retreat phases) dropped it, and the read-back differed. A dislodged unit outside a retreat
+/// phase is now refused.
+#[test]
+fn a_dislodged_unit_outside_a_retreat_phase_is_refused() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data/untrusted/dislodged_in_movement.json");
+    let saved: SavedGame = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    assert!(Game::from_saved(&saved, Rulebook::default()).is_err());
+    load_every_way(&serde_json::to_value(&saved).unwrap());
+}
