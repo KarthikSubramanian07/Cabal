@@ -118,7 +118,7 @@ describe("quoting a message", () => {
     // Quoted at the table before the start, in a private thread and at the table during the game.
     const lobby = await say(a, "l1", { to: "ALL", body: "Before we begin: I keep my word." });
     await say(b, "l2", { to: "ALL", body: "We shall see.", quote: lobby.id });
-    expect((await start({ gameId: table.gameId, power: table.power, token: table.token, name: ann.player.handle })).status).toBe(200);
+    expect((await start(table)).status).toBe(200);
     await b.next("state");
     const whisper = await say(a, "w1", { to: seat.power, body: "Between us: Munich is yours." });
     await say(b, "w2", { to: table.power, body: "Then hold Bohemia.", quote: whisper.id });
