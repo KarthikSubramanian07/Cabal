@@ -38,6 +38,7 @@ import { readiness } from "./seatState.js";
 import { threadList, totalUnread } from "./threads.js";
 import { NotifyOffer } from "../profile/NotificationsPanel.jsx";
 import { DispatchBoard, useDispatches } from "../toast/DispatchBoard.jsx";
+import { useNarrow } from "../app/useNarrow.js";
 import { filedLine } from "./settle.js";
 import { useDesk } from "./useDesk.js";
 
@@ -444,7 +445,7 @@ function Floor({
 
   // News from out of sight (a message for a thread not on screen, a seal stamped, a phase
   // resolved) is pinned up as a slip, and said once to screen readers.
-  const narrow = window.matchMedia?.("(max-width: 1000px)").matches ?? false;
+  const narrow = useNarrow();
   const resultsInView = narrow ? !sheet || tab === "orders" : tab === "orders";
   const dispatches = useDispatches(view, { me, reading: pressVisible ? thread : null, resultsInView });
 
@@ -905,6 +906,7 @@ function Floor({
       </div>
       <DispatchBoard
         dispatches={dispatches}
+        tucked={narrow && sheet}
         onOpen={(d) => {
           dispatches.dismiss(d.key);
           if (d.thread) {

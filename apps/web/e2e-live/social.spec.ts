@@ -4,7 +4,7 @@
  * original's own words, and each signed-in player's trust and record are a tap away from their seat.
  */
 import { expect, test } from "./fixtures.js";
-import { type Seat, liveTable, scan, sitDown, tab, titleCase, uniqueHandle } from "./room.js";
+import { type Seat, closeSheet, liveTable, scan, sitDown, tab, titleCase, uniqueHandle } from "./room.js";
 
 test.describe("the social layer, live", () => {
   test("a dispatch slip brings a private message in, and the reply quotes it", async ({ browser, request }, info) => {
@@ -23,6 +23,19 @@ test.describe("the social layer, live", () => {
 
     const board = bea.getByRole("region", { name: "News from the table" });
     const slip = board.getByRole("listitem").filter({ hasText: `Dispatch from ${Host}` });
+    if (info.project.name === "phone") {
+      // On a phone Bea's order sheet fills the screen, its header (Close, the phase, the clock)
+      // just under the seat strip, where slips hang. The slip waits out of sight and lets her
+      // reach that header, and the sheet's Press tab counts the message.
+      await expect(bea.getByRole("tab", { name: /^Press/ })).toContainText("1", { timeout: 15_000 });
+      await expect(board).toHaveCount(0);
+      const bar = (await bea.locator(".sheet-bar").boundingBox())!;
+      const hit = await bea.evaluate(([x, y]) => Boolean(document.elementFromPoint(x!, y!)?.closest(".sheet-bar")), [bar.x + bar.width / 2, bar.y + bar.height / 2]);
+      expect(hit).toBe(true);
+      // Past a slip's whole time with the sheet open: it is still waiting when the sheet closes.
+      await bea.waitForTimeout(10_000);
+      await closeSheet(bea);
+    }
     await expect(slip).toContainText("Keep out of the Channel this year");
     // Ada is reading that very thread: her own words bring her no slip.
     await expect(ada.getByRole("region", { name: "News from the table" })).toHaveCount(0);

@@ -50,18 +50,23 @@ export function useDispatches(view: RoomView, ctx: DispatchContext): Dispatches 
   return { up, said, dismiss };
 }
 
-export function DispatchBoard({ dispatches, onOpen }: { dispatches: Dispatches; onOpen: (d: Dispatch) => void }) {
+/**
+ * `tucked`: the order sheet is open over a phone's map, and a slip would sit on its header (its
+ * Close button, the phase, the clock). The slips wait out of sight, their time stopped, until the
+ * sheet closes; the news is still said, and the sheet's own tabs count the unread messages.
+ */
+export function DispatchBoard({ dispatches, tucked = false, onOpen }: { dispatches: Dispatches; tucked?: boolean; onOpen: (d: Dispatch) => void }) {
   const { up, said, dismiss } = dispatches;
   return (
     <>
-      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+      <div className="sr-only dispatch-said" role="status" aria-live="polite" aria-atomic="true">
         {said}
       </div>
       {up.length ? (
-        <section className="dispatch-board" aria-label="News from the table">
+        <section className="dispatch-board" aria-label="News from the table" hidden={tucked}>
           <ol>
             {up.map((d) => (
-              <Slip key={d.key} d={d} onOpen={onOpen} onDismiss={dismiss} />
+              <Slip key={d.key} d={d} paused={tucked} onOpen={onOpen} onDismiss={dismiss} />
             ))}
           </ol>
         </section>
@@ -70,17 +75,18 @@ export function DispatchBoard({ dispatches, onOpen }: { dispatches: Dispatches; 
   );
 }
 
-function Slip({ d, onOpen, onDismiss }: { d: Dispatch; onOpen: (d: Dispatch) => void; onDismiss: (key: string) => void }) {
+function Slip({ d, paused, onOpen, onDismiss }: { d: Dispatch; paused: boolean; onOpen: (d: Dispatch) => void; onDismiss: (key: string) => void }) {
   const [held, setHeld] = useState(false);
   const self = useRef<HTMLLIElement>(null);
   const titleId = useId();
 
-  // Gone after a while, unless the player is reading it. New words for the slip start the wait again.
+  // Gone after a while, unless the player is reading it or it is tucked away unseen. New words for
+  // the slip, or the slip coming back into sight, start the wait again.
   useEffect(() => {
-    if (held) return;
+    if (held || paused) return;
     const timer = window.setTimeout(() => onDismiss(d.key), STAY_MS[d.kind]);
     return () => window.clearTimeout(timer);
-  }, [held, d.key, d.kind, d.count, d.line, onDismiss]);
+  }, [held, paused, d.key, d.kind, d.count, d.line, onDismiss]);
 
   const release = () => {
     // Focus moving within the slip keeps it held.

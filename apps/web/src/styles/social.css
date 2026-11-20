@@ -103,6 +103,10 @@
   pointer-events: none;
 }
 
+.dispatch-board[hidden] {
+  display: none;
+}
+
 .dispatch-board ol {
   display: grid;
   gap: var(--space-2);
