@@ -7,6 +7,10 @@
  */
 import { z } from "zod";
 
+// Parse without zod's compiled fast path: it probes `new Function`, which the site's CSP forbids, and
+// the browser reports every probe as a violation. Set here, before any schema parses, for every runtime.
+z.config({ jitless: true });
+
 export { QUOTE_CHARS, excerpt, graphemes } from "./text.js";
 
 /**

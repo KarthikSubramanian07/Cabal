@@ -42,6 +42,19 @@ test.describe("the front door", () => {
     }
   });
 
+  test("breaks none of the site's content security policy", async ({ page }) => {
+    const broken: string[] = [];
+    await page.exposeFunction("cspBroken", (what: string) => broken.push(what));
+    await page.addInitScript(() =>
+      document.addEventListener("securitypolicyviolation", (e) => (window as unknown as { cspBroken: (w: string) => void }).cspBroken(`${e.violatedDirective} ${e.blockedURI}`)),
+    );
+    await page.goto("/");
+    await page.waitForFunction(() => (document.querySelector("#root") as HTMLElement).dataset["prerendered"] === "home");
+    await page.locator(".player-button").click();
+    await expect(page.getByRole("button", { name: "Choose a handle" })).toBeVisible();
+    expect(broken).toEqual([]);
+  });
+
   test("never scrolls sideways, and tells the dispatch story in words too", async ({ page }) => {
     await page.goto("/");
     await page.waitForTimeout(4200);

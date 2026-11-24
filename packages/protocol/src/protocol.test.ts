@@ -246,3 +246,10 @@ describe("notifications and metrics", () => {
     expect(DatcReport.safeParse({ passed: 171, failed: 0, skipped: 0, commit: "main" }).success).toBe(false);
   });
 });
+
+describe("zod under the site's content security policy", () => {
+  it("parses without compiling, so it never probes new Function", async () => {
+    const { z } = await import("zod");
+    expect(z.config().jitless).toBe(true);
+  });
+});
