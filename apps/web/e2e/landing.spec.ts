@@ -19,6 +19,8 @@ test.describe("the front door", () => {
   test("hydrates without redrawing, and says what Cabal is", async ({ page }) => {
     const errors: string[] = [];
     page.on("console", (m) => m.type() === "error" && !/Service Worker/.test(m.text()) && errors.push(m.text()));
+    // A production build reports a mismatch as an uncaught "Minified React error #418" (or #423, #425).
+    page.on("pageerror", (e) => errors.push(e.message));
     await page.goto("/");
     const hero = page.locator(".hero-title");
     await expect(hero).toBeVisible();
@@ -32,12 +34,25 @@ test.describe("the front door", () => {
     await page.locator(".player-button").click();
     await expect(page.getByRole("button", { name: "Choose a handle" })).toBeVisible();
     expect(await hero.evaluate((el) => (el as HTMLElement & { marked?: boolean }).marked === true)).toBe(true);
-    expect(errors.filter((e) => /hydrat/i.test(e))).toEqual([]);
+    expect(errors.filter((e) => /hydrat|React error #(418|423|425)\b/i.test(e))).toEqual([]);
 
     await expect(page.getByRole("list", { name: "The seven great powers" }).getByRole("listitem")).toHaveCount(7);
     for (const name of ["A phase at the table", "The Ledger remembers", "Rivals that never miss a turn", "Rules you can check"]) {
       await expect(page.getByRole("heading", { level: 2, name })).toBeVisible();
     }
+  });
+
+  test("breaks none of the site's content security policy", async ({ page }) => {
+    const broken: string[] = [];
+    await page.exposeFunction("cspBroken", (what: string) => broken.push(what));
+    await page.addInitScript(() =>
+      document.addEventListener("securitypolicyviolation", (e) => (window as unknown as { cspBroken: (w: string) => void }).cspBroken(`${e.violatedDirective} ${e.blockedURI}`)),
+    );
+    await page.goto("/");
+    await page.waitForFunction(() => (document.querySelector("#root") as HTMLElement).dataset["prerendered"] === "home");
+    await page.locator(".player-button").click();
+    await expect(page.getByRole("button", { name: "Choose a handle" })).toBeVisible();
+    expect(broken).toEqual([]);
   });
 
   test("never scrolls sideways, and tells the dispatch story in words too", async ({ page }) => {

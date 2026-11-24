@@ -1,5 +1,5 @@
 import { type CSSProperties, type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PressWord, pressWord } from "../app/pointer.js";
+import { usePressWords } from "../app/pointer.js";
 import { ConfirmDialog } from "../app/ConfirmDialog.jsx";
 import { PageLoading } from "../app/PageLoading.jsx";
 import { StatusPage } from "../app/StatusPage.jsx";
@@ -92,6 +92,7 @@ export default function SandboxPage() {
 }
 
 function Table({ sb }: { sb: Sandbox }) {
+  const [tap, Tap] = usePressWords();
   const [draft, setDraft] = useState<Draft>(IDLE);
   const [active, setActiveState] = useState(sb.resumedActive ?? "FRANCE");
   const [message, setMessage] = useState<string | null>(null);
@@ -616,8 +617,6 @@ function Table({ sb }: { sb: Sandbox }) {
   const boardText = describeBoard(mapState, sb.board.provinces);
 
   const hint: ReactNode = (() => {
-    const tap = pressWord();
-    const Tap = PressWord();
     if (record) {
       return (
         <>

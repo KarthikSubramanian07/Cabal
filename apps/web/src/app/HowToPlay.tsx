@@ -1,4 +1,4 @@
-import { PressWord, pressWord } from "./pointer.js";
+import { usePressWords } from "./pointer.js";
 import { useEffect, useRef } from "react";
 import { ADJUDICATION_CASES, CABAL_CASES, DATC_CASES } from "./adjudication.js";
 
@@ -16,8 +16,7 @@ export function HowToPlay({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   // "Tap" on a touch screen, "Click" with a mouse.
-  const tap = pressWord();
-  const Tap = PressWord();
+  const [tap, Tap] = usePressWords();
 
   useEffect(() => {
     const d = ref.current;
