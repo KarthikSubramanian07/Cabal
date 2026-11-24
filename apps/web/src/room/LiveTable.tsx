@@ -8,7 +8,7 @@
  * first screen and the sidebar is a sheet docked to the bottom with the phase's main action
  * always in reach.
  */
-import { PressWord, pressWord } from "../app/pointer.js";
+import { usePressWords } from "../app/pointer.js";
 import type { PowerName, Recipient } from "@cabal/protocol";
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageLoading } from "../app/PageLoading.jsx";
@@ -135,6 +135,7 @@ function Floor({
   online: boolean;
   desk: Extract<ReturnType<typeof useDesk>, { status: "ready" }>["desk"];
 }) {
+  const [tap, Tap] = usePressWords();
   const seat = view.seats.find((s) => s.power === me);
   const [tab, setTab] = useState<Tab>(over ? "table" : me ? "orders" : "press");
   const [sheet, setSheet] = useState(false);
@@ -659,8 +660,6 @@ function Floor({
 
   const hint: ReactNode = (() => {
     if (record) return "Showing how the phase resolved.";
-    const tap = pressWord();
-    const Tap = PressWord();
     if (!me) return "You are watching this game.";
     if (over) return "The game is over.";
     if (!canOrder) return seat?.eliminated ? "You are out of the game. You can still talk and vote." : "Waiting for the board.";
